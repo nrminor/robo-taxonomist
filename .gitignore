@@ -1,0 +1,22 @@
+# Deny by default; allow only files intended for version control.
+*
+!/.gitignore
+!/mise.toml
+!/package.json
+!/pnpm-lock.yaml
+!/pnpm-workspace.yaml
+!/tsconfig.json
+!/tsconfig.test.json
+!/.oxlintrc.json
+!/.oxfmtrc.json
+!/knip.json
+!/vitest.config.ts
+!/LICENSE
+!/README.md
+
+!/src/
+!/src/**/
+!/src/**/*.ts
+!/test/
+!/test/**/
+!/test/**/*.ts

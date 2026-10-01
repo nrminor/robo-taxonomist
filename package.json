@@ -1,0 +1,47 @@
+{
+  "name": "robo-taxonomist",
+  "version": "0.0.0",
+  "description": "Effect-based taxonomy reconciliation and set operations across taxonomic databases.",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsc --project tsconfig.json",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run knip && pnpm run build",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings .",
+    "typecheck": "tsc --noEmit --project tsconfig.json && tsc --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "knip": "knip",
+    "prepack": "pnpm run build"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.47.2",
+    "@effect/vitest": "4.0.0",
+    "@types/node": "24.19.0",
+    "effect": "4.0.0",
+    "knip": "6.39.0",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.0"
+  },
+  "packageManager": "pnpm@12.8.1"
+}

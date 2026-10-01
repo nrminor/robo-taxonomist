@@ -1,0 +1,20 @@
+[tools]
+node = "24.21.0"
+pnpm = "12.8.1"
+
+# Reference source only; package dependencies are managed separately by pnpm.
+[bootstrap.repos]
+".agents/repos/discern" = { url = "https://github.com/doeixd/discern.git", ref = "main" }
+".agents/repos/effect" = { url = "https://github.com/Effect-TS/effect.git", ref = "main" }
+
+[tasks]
+bootstrap = { description = "Install locked package dependencies", run = "pnpm install --frozen-lockfile" }
+check = { description = "Run all repository checks and build the library", run = "pnpm run check" }
+build = { description = "Build ESM and TypeScript declarations", run = "pnpm run build" }
+fmt = { description = "Format project files", run = "pnpm run fmt" }
+"fmt:check" = { description = "Check project formatting", run = "pnpm run fmt:check" }
+lint = { description = "Run type-aware Oxlint", run = "pnpm run lint" }
+typecheck = { description = "Check TypeScript and Effect diagnostics", run = "pnpm run typecheck" }
+test = { description = "Run tests", run = "pnpm run test" }
+"test:watch" = { description = "Run tests in watch mode", run = "pnpm run test:watch", interactive = true }
+knip = { description = "Check unused code and dependencies", run = "pnpm run knip" }
