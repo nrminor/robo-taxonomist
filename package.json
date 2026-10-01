@@ -16,9 +16,9 @@
     }
   },
   "scripts": {
-    "build": "pnpm run clean && tsc --project tsconfig.json",
-    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run knip && pnpm run build",
+    "build": "tsc --project tsconfig.json",
+    "check": "pnpm run fmt:check && pnpm run check:fast && pnpm run test && pnpm run knip && pnpm run build",
+    "check:fast": "pnpm run lint && pnpm run typecheck",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings .",

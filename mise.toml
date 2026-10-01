@@ -10,6 +10,7 @@ pnpm = "12.8.1"
 [tasks]
 bootstrap = { description = "Install locked package dependencies", run = "pnpm install --frozen-lockfile" }
 check = { description = "Run all repository checks and build the library", run = "pnpm run check" }
+"check:fast" = { description = "Run lint, TypeScript, and Effect feedback between edits", run = "pnpm run check:fast" }
 build = { description = "Build ESM and TypeScript declarations", run = "pnpm run build" }
 fmt = { description = "Format project files", run = "pnpm run fmt" }
 "fmt:check" = { description = "Check project formatting", run = "pnpm run fmt:check" }

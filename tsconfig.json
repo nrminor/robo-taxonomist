@@ -17,7 +17,65 @@
     "outDir": "dist",
     "plugins": [
       {
-        "name": "@effect/language-service"
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "anyUnknownInErrorContext": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "floatingEffect": "error",
+          "floatingEffectInVitest": "error",
+          "missingReturnYieldStar": "error",
+          "leakingRequirements": "error",
+          "returnEffectInGen": "error",
+          "runEffectInsideEffect": "error",
+          "unnecessaryEffectGen": "error",
+          "effectFnOpportunity": "error",
+          "catchUnfailableEffect": "error",
+          "unnecessaryFailYieldableError": "error",
+          "effectMapVoid": "error",
+          "effectSucceedWithVoid": "error",
+          "flatMapToMap": "error",
+          "effectMapFlatten": "error",
+          "allOfMapToForEach": "error",
+          "unnecessaryPipe": "error",
+          "unnecessaryPipeChain": "error",
+          "tryCatchInEffectGen": "error",
+          "unknownInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "globalErrorInEffectCatch": "error",
+          "layerMergeAllWithDependencies": "error",
+          "multipleEffectProvide": "error",
+          "lazyPromiseInEffectSync": "error",
+          "promiseInEffectSuccess": "error",
+          "effectDoNotation": "error",
+          "nestedEffectGenYield": "error",
+          "redundantMapError": "error",
+          "redundantOrDie": "error"
+        },
+        "overrides": [
+          {
+            "include": ["src/**/*.ts", "test/**/*.ts"],
+            "options": {
+              "diagnosticSeverity": {
+                "nodeBuiltinImport": "error",
+                "asyncFunction": "error",
+                "newPromise": "error",
+                "globalFetch": "error",
+                "globalFetchInEffect": "error",
+                "globalDate": "error",
+                "globalDateInEffect": "error",
+                "globalRandom": "error",
+                "globalRandomInEffect": "error",
+                "globalTimers": "error",
+                "globalTimersInEffect": "error",
+                "globalConsole": "error",
+                "globalConsoleInEffect": "error",
+                "processEnv": "error",
+                "processEnvInEffect": "error",
+                "extendsNativeError": "error"
+              }
+            }
+          }
+        ]
       }
     ]
   },
