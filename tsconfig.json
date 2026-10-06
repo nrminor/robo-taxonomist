@@ -5,8 +5,11 @@
     "lib": ["ES2022", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "rewriteRelativeImportExtensions": true,
     "types": [],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
@@ -72,6 +75,14 @@
                 "processEnv": "error",
                 "processEnvInEffect": "error",
                 "extendsNativeError": "error"
+              }
+            }
+          },
+          {
+            "include": ["src/Taxonomy.ts", "test/rank-comparison.test.ts"],
+            "options": {
+              "diagnosticSeverity": {
+                "unstableApiUsage": "message"
               }
             }
           }
