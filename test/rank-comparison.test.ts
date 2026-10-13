@@ -16,8 +16,27 @@ it.effect("compares the original record descriptions at the requested rank", () 
   const modelLayer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
-      decide: ({ state }) => {
-        expect(state).toEqual({ left: first, right: second, rank: "species" });
+      decide: ({ state, decisions }) => {
+        expect(state).toBeNull();
+        expect(decisions.comparison).toMatchObject({
+          _tag: "Classify",
+          instructions:
+            "Do these records represent the same taxon at species rank?\n" +
+            'Left record:\nRecord label: "Voucher A17 | Quercus robur"\n' +
+            'Right record:\nRecord label: "Voucher B42 | Quercus robur"',
+          criteria: {
+            same: "Each record represents one taxon at the requested rank, and these taxa are the same, including resolved synonyms.",
+            different:
+              "Each record represents one taxon at the requested rank, and these taxa differ.",
+            undetermined: "The available information is insufficient.",
+            multipleLeft:
+              "The left record jointly represents distinct taxa at the requested rank; this is not established for the right record.",
+            multipleRight:
+              "The right record jointly represents distinct taxa at the requested rank; this is not established for the left record.",
+            multipleBoth: "Each record jointly represents distinct taxa at the requested rank.",
+          },
+        });
+        expect(Object.keys(decisions)).toEqual(["comparison"]);
 
         return Effect.succeed({
           answers: {
@@ -44,6 +63,144 @@ it.effect("compares the original record descriptions at the requested rank", () 
     const result = yield* Taxonomy.sameTaxonAtRank(first, second, "species");
 
     expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "species" });
+  }).pipe(Effect.provide(modelLayer));
+});
+
+it.effect(
+  "quotes multiline facts and keeps conflicting supplied fields together without changing records",
+  () => {
+    const taxonId = TaxonId.make({ taxonomy: "local\\taxonomy", id: 'id"17', release: "2026\n01" });
+    const first = {
+      ...TaxonomicRecord.make({
+        label: RecordLabel.make('Voucher "A17"\nFagus sylvatica'),
+        scientificName: TaxonName.make("Quercus robur"),
+        taxonId,
+      }),
+      sampleId: "caller-only",
+    };
+    const second = TaxonomicRecord.make({ scientificName: TaxonName.make("Quercus petraea") });
+    const original = { ...first };
+    const modelLayer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state, decisions }) => {
+          expect(state).toBeNull();
+          expect(decisions.comparison).toMatchObject({
+            instructions:
+              "Do these records represent the same taxon at genus rank?\n" +
+              'Left record:\nRecord label: "Voucher \\"A17\\"\\nFagus sylvatica"\n' +
+              'Scientific name: "Quercus robur"\nTaxonomy: "local\\\\taxonomy"\n' +
+              'Taxon ID: "id\\"17"\nTaxonomy release: "2026\\n01"\n' +
+              'Right record:\nScientific name: "Quercus petraea"',
+          });
+          return Effect.succeed({
+            answers: {
+              comparison: {
+                _tag: "Classify",
+                label: "undetermined",
+                probabilities: {
+                  same: 0,
+                  different: 0,
+                  undetermined: 1,
+                  multipleLeft: 0,
+                  multipleRight: 0,
+                  multipleBoth: 0,
+                },
+              },
+            },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          });
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      expect(yield* Taxonomy.sameGenus(first, second)).toEqual({
+        _tag: "Undetermined",
+        rank: "genus",
+      });
+      expect(first).toEqual(original);
+      expect(first.taxonId).toBe(original.taxonId);
+      expect(second).toEqual({ scientificName: "Quercus petraea" });
+    }).pipe(Effect.provide(modelLayer));
+  },
+);
+
+it.effect("validates the original rank and operands before provider transport", () => {
+  let calls = 0;
+  const modelLayer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () => {
+        calls += 1;
+        return Effect.die("Invalid input must not reach transport");
+      },
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const label = RecordLabel.make("Voucher A17");
+    const invalidRequests = [
+      // @ts-expect-error Exercise an unsupported rank supplied by untyped callers.
+      Taxonomy.sameTaxonAtRank(label, label, "strain"),
+      // @ts-expect-error Exercise a blank label supplied by untyped callers.
+      Taxonomy.sameSpecies("  ", label),
+      // @ts-expect-error Exercise a record with no identifying fields.
+      Taxonomy.sameSpecies(label, {}),
+      // Identifier strings are checked at runtime, even with a valid label.
+      Taxonomy.sameSpecies({ label, taxonId: { taxonomy: "ncbi", id: " " } }, label),
+    ];
+    for (const request of invalidRequests) {
+      const error = yield* Effect.flip(request);
+      expect(error.module).toBe("Taxonomy");
+      expect(error.method).toBe("sameTaxonAtRank");
+      expect(error.reason._tag).toBe("InvalidUserInputError");
+    }
+    expect(calls).toBe(0);
+  }).pipe(Effect.provide(modelLayer));
+});
+
+it.effect("builds fresh direct context for repeated and interleaved executions", () => {
+  const seen: string[] = [];
+  const modelLayer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state, decisions }) => {
+        expect(state).toBeNull();
+        const question = decisions.comparison;
+        if (question?._tag !== "Classify") return Effect.die("Expected a classification");
+        seen.push(question.instructions);
+        return Effect.succeed({
+          answers: {
+            comparison: {
+              _tag: "Classify",
+              label: "same",
+              probabilities: {
+                same: 1,
+                different: 0,
+                undetermined: 0,
+                multipleLeft: 0,
+                multipleRight: 0,
+                multipleBoth: 0,
+              },
+            },
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+  const first = Taxonomy.sameSpecies(RecordLabel.make("A"), RecordLabel.make("B"));
+  const second = Taxonomy.sameFamily(RecordLabel.make("C"), RecordLabel.make("D"));
+
+  return Effect.gen(function* () {
+    yield* Effect.all([first, second], { concurrency: 2 });
+    yield* first;
+    expect(seen).toEqual([
+      'Do these records represent the same taxon at species rank?\nLeft record:\nRecord label: "A"\nRight record:\nRecord label: "B"',
+      'Do these records represent the same taxon at family rank?\nLeft record:\nRecord label: "C"\nRight record:\nRecord label: "D"',
+      'Do these records represent the same taxon at species rank?\nLeft record:\nRecord label: "A"\nRight record:\nRecord label: "B"',
+    ]);
   }).pipe(Effect.provide(modelLayer));
 });
 
@@ -318,15 +475,15 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
   const modelLayer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
-      decide: ({ state }) => {
-        expect(state).toEqual({
-          left: {
-            label: "Voucher A17",
-            scientificName: "Quercus robur",
-            taxonId: { taxonomy: "example-taxonomy", id: "oak-17", release: "2026-01" },
-          },
-          right: { taxonId: { taxonomy: "example-taxonomy", id: "oak-18" } },
-          rank: "family",
+      decide: ({ state, decisions }) => {
+        expect(state).toBeNull();
+        expect(decisions.comparison).toMatchObject({
+          instructions:
+            "Do these records represent the same taxon at family rank?\n" +
+            'Left record:\nRecord label: "Voucher A17"\n' +
+            'Scientific name: "Quercus robur"\nTaxonomy: "example-taxonomy"\n' +
+            'Taxon ID: "oak-17"\nTaxonomy release: "2026-01"\n' +
+            'Right record:\nTaxonomy: "example-taxonomy"\nTaxon ID: "oak-18"',
         });
 
         return Effect.succeed({

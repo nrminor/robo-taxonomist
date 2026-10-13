@@ -30,6 +30,22 @@ Provide your application's `DecisionModel` layer before running this Effect. Res
 
 `RecordLabel` describes a record; `TaxonName` describes a whole taxon. Constructors reject blank text and preserve accepted text exactly, without lookup. `TaxonomicRecord` accepts a label, scientific name, or scoped `TaxonId`, without requiring invented labels. `sameLabel` stays pure and compares only original text. Effect's AI APIs are currently unstable, even in Effect 4.
 
+```ts
+import { TaxonId, TaxonomicRecord, TaxonName, Taxonomy } from "robo-taxonomist";
+
+const first = TaxonomicRecord.make({
+  scientificName: TaxonName.make("Quercus robur"),
+  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "38942" }),
+});
+const second = TaxonomicRecord.make({
+  scientificName: TaxonName.make("Quercus petraea"),
+});
+
+export const comparison = Taxonomy.sameGenus(first, second);
+```
+
+The question names the requested rank and quotes every supplied identifying field once. Conflicting labels, names, and IDs stay together; no field is chosen as authoritative. An omitted taxonomy release stays unspecified, not “latest.” Custom `DecisionModel` adapters receive `null` state: the record facts are already in the question. This presentation does not certify the model's answer.
+
 ## Development
 
 Install [mise](https://mise.jdx.dev/) and Git, then review and trust the project configuration:
