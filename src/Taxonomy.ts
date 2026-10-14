@@ -1,6 +1,27 @@
-import { Array, Effect, Equivalence, Match, Number, Predicate, Record, Schema, pipe } from "effect";
+import {
+  Array,
+  Effect,
+  Equivalence,
+  Match,
+  Number,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+  Struct,
+  pipe,
+} from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
-import { RankComparisonPolicy, RecordLabel, TaxonomicRecord } from "./schemas.ts";
+import type { TaxonSet } from "./TaxonSet.ts";
+import {
+  JudgmentPolicy,
+  RankComparisonPolicy,
+  RecordLabel,
+  TaxonomicRecord,
+  TaxonName,
+  collectTaxonNames,
+  taxonSetSchema,
+} from "./schemas.ts";
 
 /**
  * Compares original label text, not species or taxonomic identity.
@@ -353,3 +374,357 @@ export const sameGenus = (
   right: RecordOperand,
   options: RankComparisonOptions = {},
 ): RankComparisonEffect => sameTaxonAtRank(left, right, "genus", options);
+
+const identityResultSchema = Schema.TaggedUnion({
+  SameTaxon: {},
+  DifferentTaxa: {},
+  MultipleTaxa: { side: Schema.Literals(["left", "right", "both"]) },
+  Undetermined: {},
+});
+
+/**
+ * Taxonomic grouping identity, uncertainty, or a localized joint-name diagnosis.
+ * @example
+ * import type { TaxonIdentityResult } from "robo-taxonomist";
+ * export const tag = (result: TaxonIdentityResult) => result._tag;
+ */
+export type TaxonIdentityResult = typeof identityResultSchema.Type;
+
+type JudgmentOptions = { readonly policy?: JudgmentPolicy };
+const defaultJudgmentPolicy = JudgmentPolicy.make({ minimumSupport: 0.5, minimumMargin: 0 });
+
+const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy): boolean => {
+  if (answer.label === "undetermined") return false;
+  const support = Record.get(answer.probabilities, answer.label).pipe(Option.getOrThrow);
+  const strongestAlternative = Record.reduce(
+    answer.probabilities,
+    0,
+    (strongest, probability, label) =>
+      label === answer.label ? strongest : Number.max(strongest, probability),
+  );
+  const margin = support - strongestAlternative;
+  return (
+    margin > 0 &&
+    support >= policy.minimumSupport &&
+    (margin >= policy.minimumMargin || policy.minimumMargin - margin <= globalThis.Number.EPSILON)
+  );
+};
+
+const scalarInputSchema = Schema.Struct({ left: TaxonName, right: TaxonName });
+const makeIdentityQuestion = (input: typeof scalarInputSchema.Encoded) =>
+  Decision.make({
+    input: Schema.Null,
+    decisions: {
+      identity: Decision.classify({
+        instructions:
+          "Do these names refer to the same taxon?\n" +
+          `Left taxon name: ${quoteText(input.left)}\n` +
+          `Right taxon name: ${quoteText(input.right)}`,
+        criteria: {
+          same: "Both names refer to the same taxonomic grouping, including resolved synonyms.",
+          different: "The names refer to distinct taxonomic groupings.",
+          undetermined: "The available information is insufficient.",
+          multipleLeft:
+            "The left name is established to jointly name distinct taxa rather than one taxon; this is not established for the right name.",
+          multipleRight:
+            "The right name is established to jointly name distinct taxa rather than one taxon; this is not established for the left name.",
+          multipleBoth:
+            "Each name is established to jointly name distinct taxa rather than one taxon.",
+        },
+      }),
+    },
+  });
+
+type IdentityAnswer = Decision.Answer<
+  ReturnType<typeof makeIdentityQuestion>["decisions"]["identity"]
+>;
+const interpretIdentity = (answer: IdentityAnswer, policy: JudgmentPolicy): TaxonIdentityResult => {
+  if (!accepts(answer, policy)) return identityResultSchema.cases.Undetermined.make({});
+  return Match.value(answer.label).pipe(
+    Match.when("same", () => identityResultSchema.cases.SameTaxon.make({})),
+    Match.when("different", () => identityResultSchema.cases.DifferentTaxa.make({})),
+    Match.when("multipleLeft", () =>
+      identityResultSchema.cases.MultipleTaxa.make({ side: "left" }),
+    ),
+    Match.when("multipleRight", () =>
+      identityResultSchema.cases.MultipleTaxa.make({ side: "right" }),
+    ),
+    Match.when("multipleBoth", () =>
+      identityResultSchema.cases.MultipleTaxa.make({ side: "both" }),
+    ),
+    Match.when("undetermined", () => identityResultSchema.cases.Undetermined.make({})),
+    Match.exhaustive,
+  );
+};
+
+/**
+ * Asks whether names describe the same taxonomic grouping, including resolved synonyms.
+ * Even identical text needs one model judgment. Negative does not mean disjoint.
+ * @example
+ * import { TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const identity = Taxonomy.sameTaxon(TaxonName.make("Quercus"), TaxonName.make("Fagus"));
+ */
+export const sameTaxon = Effect.fn("Taxonomy.sameTaxon")(function* (
+  left: TaxonName,
+  right: TaxonName,
+  options: JudgmentOptions = {},
+): Effect.fn.Return<TaxonIdentityResult, AiError.AiError, DecisionModel.DecisionModel> {
+  const encoded = yield* Schema.encodeEffect(scalarInputSchema)({ left, right }).pipe(
+    Effect.mapError((error) =>
+      AiError.make({
+        module: "Taxonomy",
+        method: "sameTaxon",
+        reason: new AiError.InvalidUserInputError({ description: error.message }),
+      }),
+    ),
+  );
+  const { answers } = yield* DecisionModel.decide(makeIdentityQuestion(encoded), { input: null });
+  return interpretIdentity(answers.identity, options.policy ?? defaultJudgmentPolicy);
+});
+
+const containmentResultSchema = Schema.TaggedUnion({
+  Contained: {},
+  NotContained: {},
+  MultipleTaxa: { side: Schema.Literals(["left", "right", "both"]) },
+  Undetermined: {},
+});
+
+/**
+ * Whole-taxon inclusion, uncertainty, or a joint-name diagnosis; left means inner.
+ * @example
+ * import type { TaxonContainmentResult } from "robo-taxonomist";
+ * export const tag = (result: TaxonContainmentResult) => result._tag;
+ */
+export type TaxonContainmentResult = typeof containmentResultSchema.Type;
+
+const makeContainmentQuestion = (input: typeof scalarInputSchema.Encoded) =>
+  Decision.make({
+    input: Schema.Null,
+    decisions: {
+      containment: Decision.classify({
+        instructions:
+          "Is the inner taxon contained in the outer taxon?\n" +
+          `Left (inner) taxon name: ${quoteText(input.left)}\n` +
+          `Right (outer) taxon name: ${quoteText(input.right)}`,
+        criteria: {
+          contained:
+            "Every organism belonging to the inner taxon belongs to the outer taxon; equality counts.",
+          notContained:
+            "At least one organism belonging to the inner taxon is outside the outer taxon.",
+          undetermined: "The available information is insufficient.",
+          multipleLeft:
+            "The inner name is established to jointly name distinct taxa rather than one taxon; this is not established for the outer name.",
+          multipleRight:
+            "The outer name is established to jointly name distinct taxa rather than one taxon; this is not established for the inner name.",
+          multipleBoth:
+            "Each name is established to jointly name distinct taxa rather than one taxon.",
+        },
+      }),
+    },
+  });
+
+type ContainmentAnswer = Decision.Answer<
+  ReturnType<typeof makeContainmentQuestion>["decisions"]["containment"]
+>;
+const interpretContainment = (
+  answer: ContainmentAnswer,
+  policy: JudgmentPolicy,
+): TaxonContainmentResult => {
+  if (!accepts(answer, policy)) return containmentResultSchema.cases.Undetermined.make({});
+  return Match.value(answer.label).pipe(
+    Match.when("contained", () => containmentResultSchema.cases.Contained.make({})),
+    Match.when("notContained", () => containmentResultSchema.cases.NotContained.make({})),
+    Match.when("multipleLeft", () =>
+      containmentResultSchema.cases.MultipleTaxa.make({ side: "left" }),
+    ),
+    Match.when("multipleRight", () =>
+      containmentResultSchema.cases.MultipleTaxa.make({ side: "right" }),
+    ),
+    Match.when("multipleBoth", () =>
+      containmentResultSchema.cases.MultipleTaxa.make({ side: "both" }),
+    ),
+    Match.when("undetermined", () => containmentResultSchema.cases.Undetermined.make({})),
+    Match.exhaustive,
+  );
+};
+
+/**
+ * Asks whether every organism in inner belongs to outer; equality counts.
+ * NotContained does not establish disjointness. Supply your application's DecisionModel.
+ * @example
+ * import { TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const inclusion = Taxonomy.taxonWithin(TaxonName.make("Quercus"), TaxonName.make("Fagaceae"));
+ */
+export const taxonWithin = Effect.fn("Taxonomy.taxonWithin")(function* (
+  inner: TaxonName,
+  outer: TaxonName,
+  options: JudgmentOptions = {},
+): Effect.fn.Return<TaxonContainmentResult, AiError.AiError, DecisionModel.DecisionModel> {
+  const encoded = yield* Schema.encodeEffect(scalarInputSchema)({ left: inner, right: outer }).pipe(
+    Effect.mapError((error) =>
+      AiError.make({
+        module: "Taxonomy",
+        method: "taxonWithin",
+        reason: new AiError.InvalidUserInputError({ description: error.message }),
+      }),
+    ),
+  );
+  const { answers } = yield* DecisionModel.decide(makeContainmentQuestion(encoded), {
+    input: null,
+  });
+  return interpretContainment(answers.containment, options.policy ?? defaultJudgmentPolicy);
+});
+
+const membershipResultSchema = Schema.TaggedUnion({
+  Member: {},
+  NotMember: {},
+  MixedMembership: {},
+  MultipleTaxaInTargetName: { targetName: TaxonName },
+  Undetermined: {},
+});
+
+/**
+ * Whole-record membership, mixed/uncertain membership, or an original target-name diagnosis.
+ * @example
+ * import { Match } from "effect";
+ * import type { TaxonMembershipResult } from "robo-taxonomist";
+ * export const describe = (result: TaxonMembershipResult) => Match.value(result).pipe(
+ *   Match.tagsExhaustive({
+ *     Member: () => "Wholly inside", NotMember: () => "Wholly outside",
+ *     MixedMembership: () => "Subjects both inside and outside",
+ *     Undetermined: () => "Needs review",
+ *     MultipleTaxaInTargetName: ({ targetName }) => `Review the target name ${targetName}`,
+ *   }),
+ * );
+ */
+export type TaxonMembershipResult = typeof membershipResultSchema.Type;
+
+type MembershipJudgment = (
+  record: RecordOperand,
+  target: TaxonName | TaxonSet,
+  options?: JudgmentOptions,
+) => Effect.Effect<TaxonMembershipResult, AiError.AiError, DecisionModel.DecisionModel>;
+
+const targetSchema = Schema.Union([TaxonName, taxonSetSchema]);
+const batchRecordsSchema = Schema.NonEmptyArray(recordOperandSchema);
+const membershipBatchInputSchema = Schema.Struct({
+  records: batchRecordsSchema,
+  target: targetSchema,
+});
+const targetNamesSchema = Schema.Array(TaxonName);
+
+const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
+  records: typeof batchRecordsSchema.Type,
+  target: typeof targetSchema.Type,
+) {
+  const encoded = yield* Schema.encodeEffect(membershipBatchInputSchema)({ records, target }).pipe(
+    Effect.mapError((error) =>
+      AiError.make({
+        module: "Taxonomy",
+        method: "makeMembershipBatchQuestion",
+        reason: new AiError.InvalidUserInputError({ description: error.message }),
+      }),
+    ),
+  );
+  const targetNames = targetNamesSchema.make(
+    Predicate.isString(target) ? [target] : collectTaxonNames(target),
+  );
+  const membershipChoices = {
+    member: "Everything represented by the record belongs.",
+    notMember: "Everything represented by the record is outside.",
+    mixed: "The record jointly represents taxa inside and outside.",
+    undetermined: "The available information is insufficient.",
+  };
+  const targetNameChoices = Record.fromEntries(
+    Array.map(
+      targetNames,
+      (name, index) =>
+        [
+          `multipleTarget${index}`,
+          `The name ${quoteText(name)} jointly names distinct taxa, rather than one taxon.`,
+        ] as const,
+    ),
+  );
+  const criteria = pipe(membershipChoices, Struct.assign(targetNameChoices));
+  return {
+    input: encoded.target,
+    targetNames,
+    definition: Decision.make({
+      input: Schema.toEncoded(targetSchema),
+      decisions: Record.fromEntries(
+        Array.map(
+          encoded.records,
+          (record, index) =>
+            [
+              `record${index}`,
+              Decision.classify({
+                instructions:
+                  "Classify this record's membership in the supplied taxon or taxon-set expression.\n" +
+                  describeRecord(record),
+                criteria,
+              }),
+            ] as const,
+        ),
+      ),
+    }),
+  };
+});
+
+const interpretMembership = (
+  answer: Decision.ClassifyAnswer<string>,
+  targetNames: typeof targetNamesSchema.Type,
+  policy: JudgmentPolicy,
+): TaxonMembershipResult => {
+  if (!accepts(answer, policy)) return membershipResultSchema.cases.Undetermined.make({});
+  return Match.value(answer.label).pipe(
+    Match.when("member", () => membershipResultSchema.cases.Member.make({})),
+    Match.when("notMember", () => membershipResultSchema.cases.NotMember.make({})),
+    Match.when("mixed", () => membershipResultSchema.cases.MixedMembership.make({})),
+    Match.orElse(() =>
+      Array.findFirst(
+        targetNames,
+        (_name, index) => answer.label === `multipleTarget${index}`,
+      ).pipe(
+        Option.map((targetName) =>
+          membershipResultSchema.cases.MultipleTaxaInTargetName.make({ targetName }),
+        ),
+        Option.getOrThrow,
+      ),
+    ),
+  );
+};
+
+const decideMembershipBatch = Effect.fnUntraced(function* (
+  records: typeof batchRecordsSchema.Type,
+  target: typeof targetSchema.Type,
+  options: JudgmentOptions = {},
+) {
+  const request = yield* makeMembershipBatchQuestion(records, target);
+  const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
+  const policy = options.policy ?? defaultJudgmentPolicy;
+  return Array.map(records, (_record, index) =>
+    interpretMembership(
+      Record.get(answers, `record${index}`).pipe(Option.getOrThrow),
+      request.targetNames,
+      policy,
+    ),
+  );
+});
+
+/**
+ * Asks about every subject represented by one record against the complete target.
+ * MixedMembership is established subjects on both sides, not mere plurality.
+ * Literal Empty returns NotMember without a call; other targets use one classification.
+ * @example
+ * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const membership = Taxonomy.recordBelongsTo(RecordLabel.make("Quercus robur specimen"), TaxonName.make("Quercus"));
+ */
+export const recordBelongsTo: MembershipJudgment = Effect.fn("Taxonomy.recordBelongsTo")(function* (
+  record: RecordOperand,
+  target: TaxonName | TaxonSet,
+  options: JudgmentOptions = {},
+) {
+  if (taxonSetSchema.guards.Empty(target)) return membershipResultSchema.cases.NotMember.make({});
+  const results = yield* decideMembershipBatch([record], target, options);
+  return Array.head(results).pipe(Option.getOrThrow);
+});

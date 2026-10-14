@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Array, Option, Schema } from "effect";
 
 /**
  * A record description that keeps your original text.
@@ -132,3 +132,109 @@ export const RankComparisonPolicy = Schema.Struct({
  *   Taxonomy.sameSpecies(first, second, { policy });
  */
 export type RankComparisonPolicy = typeof RankComparisonPolicy.Type;
+
+/**
+ * Acceptance thresholds for taxon, membership, and set judgments; not calibrated accuracy.
+ * Requires a uniquely leading selection; margin boundaries allow machine precision.
+ * @example
+ * import { JudgmentPolicy } from "robo-taxonomist";
+ * export const cautious = JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
+ */
+export const JudgmentPolicy = Schema.Struct({
+  minimumSupport: UnitInterval,
+  minimumMargin: UnitInterval,
+}).pipe(Schema.brand("JudgmentPolicy"));
+
+/**
+ * A validated non-rank acceptance policy.
+ * @example
+ * import { TaxonName, Taxonomy, type JudgmentPolicy } from "robo-taxonomist";
+ * export const compare = (left: TaxonName, right: TaxonName, policy: JudgmentPolicy) =>
+ *   Taxonomy.sameTaxon(left, right, { policy });
+ */
+export type JudgmentPolicy = typeof JudgmentPolicy.Type;
+
+class Empty extends Schema.TaggedClass<Empty>("robo-taxonomist/TaxonSet/Empty")("Empty", {}) {}
+class Taxon extends Schema.TaggedClass<Taxon>("robo-taxonomist/TaxonSet/Taxon")("Taxon", {
+  name: TaxonName,
+}) {}
+
+type Expression = Empty | Taxon | Union | Intersection | Difference;
+type EncodedExpression =
+  | typeof Empty.Encoded
+  | typeof Taxon.Encoded
+  | {
+      readonly _tag: "Union" | "Intersection";
+      readonly operands: readonly [EncodedExpression, ...EncodedExpression[]];
+    }
+  | {
+      readonly _tag: "Difference";
+      readonly left: EncodedExpression;
+      readonly right: EncodedExpression;
+    };
+
+const expressionRef: Schema.Codec<Expression, EncodedExpression> = Schema.suspend(
+  () => taxonSetSchema,
+);
+
+class Union extends Schema.TaggedClass<Union>("robo-taxonomist/TaxonSet/Union")("Union", {
+  operands: Schema.NonEmptyArray(expressionRef),
+}) {
+  declare readonly operands: readonly [Expression, ...Expression[]];
+}
+
+class Intersection extends Schema.TaggedClass<Intersection>(
+  "robo-taxonomist/TaxonSet/Intersection",
+)("Intersection", {
+  operands: Schema.NonEmptyArray(expressionRef),
+}) {
+  declare readonly operands: readonly [Expression, ...Expression[]];
+}
+
+class Difference extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSet/Difference")(
+  "Difference",
+  { left: expressionRef, right: expressionRef },
+) {
+  declare readonly left: Expression;
+  declare readonly right: Expression;
+}
+
+export const taxonSetSchema = Schema.Union([Empty, Taxon, Union, Intersection, Difference]).pipe(
+  Schema.toTaggedUnion("_tag"),
+);
+
+export const collectTaxonNames = (set: Expression): readonly TaxonName[] => {
+  const stack: Expression[] = [set];
+  const visited = new Set<Expression>();
+  const seenNames = new Set<TaxonName>();
+  const names: TaxonName[] = [];
+  while (stack.length > 0) {
+    const node = Option.fromUndefinedOr(stack.pop()).pipe(Option.getOrThrow);
+    if (visited.has(node)) continue;
+    visited.add(node);
+    taxonSetSchema.match(node, {
+      Empty: () => {},
+      Taxon: ({ name }) => {
+        if (!seenNames.has(name)) {
+          seenNames.add(name);
+          names.push(name);
+        }
+      },
+      Union: ({ operands }) => {
+        for (let index = operands.length - 1; index >= 0; index--) {
+          stack.push(Array.get(operands, index).pipe(Option.getOrThrow));
+        }
+      },
+      Intersection: ({ operands }) => {
+        for (let index = operands.length - 1; index >= 0; index--) {
+          stack.push(Array.get(operands, index).pipe(Option.getOrThrow));
+        }
+      },
+      Difference: ({ left, right }) => {
+        stack.push(right);
+        stack.push(left);
+      },
+    });
+  }
+  return names;
+};

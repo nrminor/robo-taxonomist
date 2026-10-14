@@ -79,7 +79,13 @@
             }
           },
           {
-            "include": ["src/Taxonomy.ts", "test/rank-comparison.test.ts"],
+            "include": [
+              "src/Taxonomy.ts",
+              "src/TaxonSet.ts",
+              "test/rank-comparison.test.ts",
+              "test/taxon-judgments.test.ts",
+              "test/taxon-set.test.ts"
+            ],
             "options": {
               "diagnosticSeverity": {
                 "unstableApiUsage": "message"
