@@ -2,7 +2,7 @@
 
 An Effect-based TypeScript library for taxonomic comparison, membership, and set algebra across databases, for browser and backend applications.
 
-Early development. Text/record constructors, literal equality, rank and whole-taxon comparisons, singleton record membership, and symbolic set algebra are implemented. Collection workflows and npm publication are planned.
+Early development. Text/record constructors, literal equality, rank and whole-taxon comparisons, record membership, symbolic set algebra, and batched collection workflows are implemented. npm publication is planned.
 
 ```ts
 import { Effect, Match } from "effect";
@@ -96,9 +96,65 @@ Set questions return `Yes`, `No`, `Undetermined`, or `MultipleTaxaInSetName`, re
 
 All these questions use your application's `DecisionModel`. Pass `{ policy: JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 }) }` to change non-rank thresholds. The default requires at least half the support and a uniquely leading selected answer. Thresholds are reporting preferences, not calibrated biological accuracy; separate calls need not agree.
 
-Each execution makes one classification in one `DecisionModel.decide` call except for literal top-level `Empty` facts: membership is `NotMember`; an empty left is a subset; nothing is a proper subset of an empty right; two empty sets are equivalent; either empty operand prevents overlap and establishes disjointness. These shortcuts do not inspect or certify the other operand. Nonliteral expressions such as `difference(A, A)` are not simplified and still need a judgment outside those cases.
+Each scalar, singleton membership, or set question makes one classification in one `DecisionModel.decide` call except for literal top-level `Empty` facts: membership is `NotMember`; an empty left is a subset; nothing is a proper subset of an empty right; two empty sets are equivalent; either empty operand prevents overlap and establishes disjointness. These shortcuts do not inspect or certify the other operand. Nonliteral expressions such as `difference(A, A)` are not simplified and still need a judgment outside those cases.
 
 Adapters receive null state for scalar questions, encoded `{ left, right }` for set questions, and only the shared target for membership. Record facts occur once in membership questions. No provider, runtime, retry, cache, lookup, or consistency repair is supplied by the library.
+
+## Collections
+
+Keep the original records, including your own fields, in five membership buckets:
+
+```ts
+import { Effect } from "effect";
+import { TaxonName, Taxonomy } from "robo-taxonomist";
+
+const records = [
+  { scientificName: TaxonName.make("Quercus robur"), sampleId: "A17" },
+  { scientificName: TaxonName.make("Fagus sylvatica"), sampleId: "B42" },
+];
+const oaks = TaxonName.make("Quercus");
+
+export const review = Effect.gen(function* () {
+  const partition = yield* Taxonomy.partitionRecordsByMembership(records, oaks);
+  return {
+    memberIds: partition.pipe((value) => value.Member.map((record) => record.sampleId)),
+    outside: partition.NotMember,
+    mixed: partition.MixedMembership,
+    uncertain: partition.Undetermined,
+    nameProblems: partition.MultipleTaxaInTargetName.map(({ record, targetName }) => ({
+      sampleId: record.sampleId,
+      targetName,
+    })),
+  };
+});
+
+export const grouped = Taxonomy.groupRecordsByTaxa(records, [oaks, TaxonName.make("Fagaceae")]);
+export const all = Taxonomy.allRecordsBelongTo(records, oaks);
+export const any = Taxonomy.anyRecordBelongsTo(records, oaks);
+export const none = Taxonomy.noRecordBelongsTo(records, oaks);
+```
+
+Partitions retain each original record occurrence and its order within the bucket, without cloning or deduplicating. Grouping returns `.groups`, one `{ target, partition }` per supplied target in order, including repeats; both the grouped value and each partition support `.pipe()`.
+
+Groups may overlap, including when one supplied target contains another. Grouping does not choose a preferred rank or verify that targets are mutually exclusive. The same original record may appear in the Member buckets of multiple target partitions.
+
+Quantifiers return `Yes`, `No`, `Undetermined`, or `MultipleTaxaInTargetName`, retaining `quantifier` (`all`, `any`, or `none`) and the diagnosed original `targetName` where applicable. Only a whole-record `Member` counts: a mixed record alone gives `No` for `any` and `Yes` for `none`. Empty records give `Yes` for `all`/`none` and `No` for `any`. Against literal `TaxonSet.empty()`, nonempty records give `No` for `all`/`any` and `Yes` for `none`; partitions put every record in `NotMember`. These cases make no model calls.
+
+By default, collections classify up to 16 record occurrences per request, with one active batch call. Each request shares one complete target and asks one classification per record. Override the bounds for one operation:
+
+```ts
+import { CollectionExecution, RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+
+export const partition = Taxonomy.partitionRecordsByMembership(
+  [RecordLabel.make("Voucher A17 | Quercus robur")],
+  TaxonName.make("Quercus"),
+  { execution: CollectionExecution.make({ batchSize: 32, concurrency: 2 }) },
+);
+```
+
+Grouping processes targets sequentially, so the cap does not multiply by target count. Independent operations have independent caps. These are record/request counts, not byte limits or measured optimal settings. Collections also accept the same optional `JudgmentPolicy`.
+
+Quantifiers wait for each window of up to `concurrency` batches to succeed, then scan answers in input order. The first decisive membership answer or accepted name diagnosis wins; uncertainty is remembered if no later answer settles the question. No later window starts after settlement. Already-requested records may extend beyond that answer, and cancellation cannot recall sent requests. Any current-window failure fails the operation before its answers are scanned, even beside a decisive answer. Partitions and groups need every judgment and return no successful partial output. Defects and caller interruption retain normal Effect behavior.
 
 ### Inspecting expressions
 

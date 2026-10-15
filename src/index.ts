@@ -1,4 +1,5 @@
 export {
+  CollectionExecution,
   JudgmentPolicy,
   RankComparisonPolicy,
   RecordLabel,
@@ -7,7 +8,7 @@ export {
   TaxonName,
 } from "./schemas.ts";
 /**
- * Literal label equality, rank/taxon comparisons, and whole-record membership.
+ * Literal equality, rank/taxon comparisons, and singleton or batched whole-record membership.
  *
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
@@ -17,6 +18,9 @@ export {
  */
 export * as Taxonomy from "./Taxonomy.ts";
 export type {
+  RecordMembershipPartition,
+  RecordsGroupedByTaxa,
+  CollectionMembershipResult,
   RankComparisonResult,
   TaxonomicRank,
   TaxonIdentityResult,

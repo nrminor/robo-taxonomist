@@ -1,5 +1,6 @@
 import {
   Array,
+  Data,
   Effect,
   Equivalence,
   Match,
@@ -14,6 +15,7 @@ import {
 import { AiError, Decision, DecisionModel } from "effect/ai";
 import type { TaxonSet } from "./TaxonSet.ts";
 import {
+  CollectionExecution,
   JudgmentPolicy,
   RankComparisonPolicy,
   RecordLabel,
@@ -728,3 +730,310 @@ export const recordBelongsTo: MembershipJudgment = Effect.fn("Taxonomy.recordBel
   const results = yield* decideMembershipBatch([record], target, options);
   return Array.head(results).pipe(Option.getOrThrow);
 });
+
+const defaultCollectionExecution = CollectionExecution.make({ batchSize: 16, concurrency: 1 });
+
+type CollectionOptions = {
+  readonly policy?: JudgmentPolicy;
+  readonly execution?: CollectionExecution;
+};
+
+class MembershipPartition<A extends RecordOperand> extends Data.Class<{
+  readonly Member: readonly A[];
+  readonly NotMember: readonly A[];
+  readonly MixedMembership: readonly A[];
+  readonly Undetermined: readonly A[];
+  readonly MultipleTaxaInTargetName: readonly {
+    readonly record: A;
+    readonly targetName: TaxonName;
+  }[];
+}> {}
+
+/**
+ * Five ordered buckets retaining original records and caller fields; supports .pipe().
+ * @example
+ * import type { RecordMembershipPartition, TaxonomicRecord } from "robo-taxonomist";
+ * export const members = (partition: RecordMembershipPartition<TaxonomicRecord>) =>
+ *   partition.pipe(value => value.Member);
+ */
+export type RecordMembershipPartition<A extends RecordOperand> = MembershipPartition<A>;
+
+type PartitionRecords = <A extends RecordOperand>(
+  records: readonly A[],
+  target: TaxonName | TaxonSet,
+  options?: CollectionOptions,
+) => Effect.Effect<RecordMembershipPartition<A>, AiError.AiError, DecisionModel.DecisionModel>;
+
+/**
+ * Separates whole-record memberships, keeping mixed, uncertain, and name-problem answers.
+ * Defaults to 16 records per request and one active batch call; failures return no partial partition.
+ * @example
+ * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const partition = Taxonomy.partitionRecordsByMembership(
+ *   [RecordLabel.make("Quercus robur specimen")], TaxonName.make("Quercus"),
+ * );
+ */
+export const partitionRecordsByMembership: PartitionRecords = Effect.fn(
+  "Taxonomy.partitionRecordsByMembership",
+)(function* <A extends RecordOperand>(
+  records: readonly A[],
+  target: typeof targetSchema.Type,
+  options: CollectionOptions = {},
+) {
+  const Member: A[] = [];
+  const NotMember: A[] = [];
+  const MixedMembership: A[] = [];
+  const Undetermined: A[] = [];
+  const MultipleTaxaInTargetName: { readonly record: A; readonly targetName: TaxonName }[] = [];
+
+  if (taxonSetSchema.guards.Empty(target)) {
+    for (const record of records) NotMember.push(record);
+  } else {
+    const execution = options.execution ?? defaultCollectionExecution;
+    const batches = Array.chunksOf(records, execution.batchSize);
+    const resultsByBatch = yield* Effect.forEach(
+      batches,
+      (batch) => decideMembershipBatch(batch, target, options),
+      { concurrency: execution.concurrency },
+    );
+    for (const [batchIndex, batch] of batches.entries()) {
+      const results = Array.get(resultsByBatch, batchIndex).pipe(Option.getOrThrow);
+      for (const [recordIndex, record] of batch.entries()) {
+        const result = Array.get(results, recordIndex).pipe(Option.getOrThrow);
+        Match.value(result).pipe(
+          Match.tagsExhaustive({
+            Member: () => {
+              Member.push(record);
+            },
+            NotMember: () => {
+              NotMember.push(record);
+            },
+            MixedMembership: () => {
+              MixedMembership.push(record);
+            },
+            Undetermined: () => {
+              Undetermined.push(record);
+            },
+            MultipleTaxaInTargetName: ({ targetName }) => {
+              MultipleTaxaInTargetName.push({ record, targetName });
+            },
+          }),
+        );
+      }
+    }
+  }
+  return new MembershipPartition<A>({
+    Member,
+    NotMember,
+    MixedMembership,
+    Undetermined,
+    MultipleTaxaInTargetName,
+  });
+});
+
+class TaxonGroups<A extends RecordOperand> extends Data.Class<{
+  readonly groups: readonly {
+    readonly target: TaxonName | TaxonSet;
+    readonly partition: RecordMembershipPartition<A>;
+  }[];
+}> {}
+
+/**
+ * Ordered targets paired with complete pipeable partitions of the original records.
+ * @example
+ * import type { RecordsGroupedByTaxa, TaxonomicRecord } from "robo-taxonomist";
+ * export const members = (grouped: RecordsGroupedByTaxa<TaxonomicRecord>) =>
+ *   grouped.pipe(value => value.groups.map(group => group.partition.Member));
+ */
+export type RecordsGroupedByTaxa<A extends RecordOperand> = TaxonGroups<A>;
+
+type GroupRecords = <A extends RecordOperand>(
+  records: readonly A[],
+  targets: readonly (TaxonName | TaxonSet)[],
+  options?: CollectionOptions,
+) => Effect.Effect<RecordsGroupedByTaxa<A>, AiError.AiError, DecisionModel.DecisionModel>;
+
+/**
+ * Partitions records for each supplied target in order, processing targets sequentially.
+ * Groups may overlap, including when one supplied target contains another. Grouping does not choose a preferred rank or verify that targets are mutually exclusive.
+ * @example
+ * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const grouped = Taxonomy.groupRecordsByTaxa(
+ *   [RecordLabel.make("Quercus robur specimen")],
+ *   [TaxonName.make("Quercus"), TaxonName.make("Fagaceae")],
+ * );
+ */
+export const groupRecordsByTaxa: GroupRecords = Effect.fn("Taxonomy.groupRecordsByTaxa")(function* <
+  A extends RecordOperand,
+>(
+  records: readonly A[],
+  targets: readonly (typeof targetSchema.Type)[],
+  options: CollectionOptions = {},
+) {
+  const groups: {
+    readonly target: typeof targetSchema.Type;
+    readonly partition: RecordMembershipPartition<A>;
+  }[] = [];
+  for (const target of targets) {
+    const partition = yield* partitionRecordsByMembership(records, target, options);
+    groups.push({ target, partition });
+  }
+  return new TaxonGroups<A>({ groups });
+});
+
+const quantifierSchema = Schema.Literals(["all", "any", "none"]);
+type RecordQuantifier = typeof quantifierSchema.Type;
+
+const collectionMembershipResultSchema = Schema.TaggedUnion({
+  Yes: { quantifier: quantifierSchema },
+  No: { quantifier: quantifierSchema },
+  Undetermined: { quantifier: quantifierSchema },
+  MultipleTaxaInTargetName: { quantifier: quantifierSchema, targetName: TaxonName },
+});
+
+/**
+ * A whole-record quantifier answer, uncertainty, or an original target-name diagnosis.
+ * @example
+ * import type { CollectionMembershipResult } from "robo-taxonomist";
+ * export const describe = (result: CollectionMembershipResult) =>
+ *   `${result.quantifier}: ${result._tag}`;
+ */
+export type CollectionMembershipResult = typeof collectionMembershipResultSchema.Type;
+
+const yes = (quantifier: RecordQuantifier) =>
+  collectionMembershipResultSchema.cases.Yes.make({ quantifier });
+const no = (quantifier: RecordQuantifier) =>
+  collectionMembershipResultSchema.cases.No.make({ quantifier });
+const undetermined = (quantifier: RecordQuantifier) =>
+  collectionMembershipResultSchema.cases.Undetermined.make({ quantifier });
+const multipleTaxaInTargetName = (quantifier: RecordQuantifier, targetName: TaxonName) =>
+  collectionMembershipResultSchema.cases.MultipleTaxaInTargetName.make({ quantifier, targetName });
+
+const completedScanResult = (quantifier: RecordQuantifier): CollectionMembershipResult =>
+  Match.value(quantifier).pipe(
+    Match.when("all", () => yes(quantifier)),
+    Match.when("any", () => no(quantifier)),
+    Match.when("none", () => yes(quantifier)),
+    Match.exhaustive,
+  );
+
+const emptyTargetResult = (quantifier: RecordQuantifier): CollectionMembershipResult =>
+  Match.value(quantifier).pipe(
+    Match.when("all", () => no(quantifier)),
+    Match.when("any", () => no(quantifier)),
+    Match.when("none", () => yes(quantifier)),
+    Match.exhaustive,
+  );
+
+const quantifyRecords = Effect.fnUntraced(function* (
+  quantifier: RecordQuantifier,
+  records: readonly RecordOperand[],
+  target: typeof targetSchema.Type,
+  options: CollectionOptions = {},
+): Effect.fn.Return<CollectionMembershipResult, AiError.AiError, DecisionModel.DecisionModel> {
+  if (!Array.isReadonlyArrayNonEmpty(records)) return completedScanResult(quantifier);
+  if (taxonSetSchema.guards.Empty(target)) return emptyTargetResult(quantifier);
+
+  const execution = options.execution ?? defaultCollectionExecution;
+  const batches = Array.chunksOf(records, execution.batchSize);
+  const windows = Array.chunksOf(batches, execution.concurrency);
+  let encounteredUncertainty = false;
+
+  for (const window of windows) {
+    const resultsByBatch = yield* Effect.forEach(
+      window,
+      (batch) => decideMembershipBatch(batch, target, options),
+      { concurrency: execution.concurrency },
+    );
+    for (const results of resultsByBatch) {
+      for (const membership of results) {
+        const decisive: Option.Option<CollectionMembershipResult> = Match.value(membership).pipe(
+          Match.when({ _tag: "Member" }, () =>
+            Match.value(quantifier).pipe(
+              Match.when("all", () => Option.none<CollectionMembershipResult>()),
+              Match.when("any", () => Option.some(yes(quantifier))),
+              Match.when("none", () => Option.some(no(quantifier))),
+              Match.exhaustive,
+            ),
+          ),
+          Match.whenOr({ _tag: "NotMember" }, { _tag: "MixedMembership" }, () =>
+            Match.value(quantifier).pipe(
+              Match.when("all", () => Option.some(no(quantifier))),
+              Match.when("any", () => Option.none<CollectionMembershipResult>()),
+              Match.when("none", () => Option.none<CollectionMembershipResult>()),
+              Match.exhaustive,
+            ),
+          ),
+          Match.when({ _tag: "Undetermined" }, () => {
+            encounteredUncertainty = true;
+            return Option.none<CollectionMembershipResult>();
+          }),
+          Match.when({ _tag: "MultipleTaxaInTargetName" }, ({ targetName }) =>
+            Option.some(multipleTaxaInTargetName(quantifier, targetName)),
+          ),
+          Match.exhaustive,
+        );
+        if (Option.isSome(decisive)) return decisive.value;
+      }
+    }
+  }
+  if (encounteredUncertainty) return undetermined(quantifier);
+  return completedScanResult(quantifier);
+});
+
+type QuantifyRecords = (
+  records: readonly RecordOperand[],
+  target: TaxonName | TaxonSet,
+  options?: CollectionOptions,
+) => Effect.Effect<CollectionMembershipResult, AiError.AiError, DecisionModel.DecisionModel>;
+
+/**
+ * Asks whether every complete record is a Member; mixed membership gives No.
+ * Empty records give Yes. Stops between successful bounded windows, not individual requests.
+ * @example
+ * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const all = Taxonomy.allRecordsBelongTo([RecordLabel.make("oak specimen")], TaxonName.make("Quercus"));
+ */
+export const allRecordsBelongTo: QuantifyRecords = Effect.fn("Taxonomy.allRecordsBelongTo")(
+  function* (
+    records: readonly RecordOperand[],
+    target: typeof targetSchema.Type,
+    options: CollectionOptions = {},
+  ) {
+    return yield* quantifyRecords("all", records, target, options);
+  },
+);
+
+/**
+ * Asks whether at least one complete record is a Member, not merely one subject in a mixed record.
+ * Empty records give No. A failed current window fails before any answers are scanned.
+ * @example
+ * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const any = Taxonomy.anyRecordBelongsTo([RecordLabel.make("oak specimen")], TaxonName.make("Quercus"));
+ */
+export const anyRecordBelongsTo: QuantifyRecords = Effect.fn("Taxonomy.anyRecordBelongsTo")(
+  function* (
+    records: readonly RecordOperand[],
+    target: typeof targetSchema.Type,
+    options: CollectionOptions = {},
+  ) {
+    return yield* quantifyRecords("any", records, target, options);
+  },
+);
+
+/**
+ * Asks whether no complete record is a Member; mixed records alone do not make this No.
+ * Empty records give Yes. Already-sent requests may include records beyond the decisive answer.
+ * @example
+ * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+ * export const none = Taxonomy.noRecordBelongsTo([RecordLabel.make("beech specimen")], TaxonName.make("Quercus"));
+ */
+export const noRecordBelongsTo: QuantifyRecords = Effect.fn("Taxonomy.noRecordBelongsTo")(
+  function* (
+    records: readonly RecordOperand[],
+    target: typeof targetSchema.Type,
+    options: CollectionOptions = {},
+  ) {
+    return yield* quantifyRecords("none", records, target, options);
+  },
+);

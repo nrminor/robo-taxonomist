@@ -154,6 +154,28 @@ export const JudgmentPolicy = Schema.Struct({
  */
 export type JudgmentPolicy = typeof JudgmentPolicy.Type;
 
+const positiveInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+
+/**
+ * Bounds records per request and active batch calls within one collection operation.
+ * @example
+ * import { CollectionExecution } from "robo-taxonomist";
+ * export const execution = CollectionExecution.make({ batchSize: 32, concurrency: 2 });
+ */
+export const CollectionExecution = Schema.Struct({
+  batchSize: positiveInteger,
+  concurrency: positiveInteger,
+}).pipe(Schema.brand("CollectionExecution"));
+
+/**
+ * Validated positive-integer collection execution bounds.
+ * @example
+ * import { Taxonomy, type CollectionExecution, type RecordLabel, type TaxonName } from "robo-taxonomist";
+ * export const partition = (records: readonly RecordLabel[], target: TaxonName, execution: CollectionExecution) =>
+ *   Taxonomy.partitionRecordsByMembership(records, target, { execution });
+ */
+export type CollectionExecution = typeof CollectionExecution.Type;
+
 class Empty extends Schema.TaggedClass<Empty>("robo-taxonomist/TaxonSet/Empty")("Empty", {}) {}
 class Taxon extends Schema.TaggedClass<Taxon>("robo-taxonomist/TaxonSet/Taxon")("Taxon", {
   name: TaxonName,
