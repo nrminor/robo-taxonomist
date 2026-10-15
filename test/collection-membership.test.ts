@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Record } from "effect";
+import { Array, Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Record, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
@@ -11,6 +11,11 @@ import {
   TaxonSet,
   type CollectionMembershipResult,
 } from "../src/index.ts";
+
+const namedTargetState = Schema.Struct({
+  nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon"), name: Schema.String })]),
+  target: Schema.Literal(0),
+});
 
 // Supplied answers exercise collection behavior, not biological accuracy.
 it.effect(
@@ -31,7 +36,7 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           calls++;
-          expect(state).toBe(target);
+          expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: target }], target: 0 });
           expect(Object.keys(decisions)).toEqual([
             "record0",
             "record1",
@@ -99,8 +104,10 @@ it.effect("keeps overlapping genus/family groups and repeated targets in supplie
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state }) => {
-        if (typeof state !== "string") return Effect.die("Expected named target");
-        seen.push(state);
+        const {
+          nodes: [node],
+        } = Schema.decodeUnknownSync(namedTargetState)(state);
+        seen.push(node.name);
         return Effect.succeed({
           answers: {
             record0: {
@@ -189,6 +196,41 @@ const response = (labels: readonly string[]): DecisionModel.ProviderResponse => 
     labels.map((label, index) => [`record${index}`, membershipAnswer(label)] as const),
   ),
   usage: { inputTokens: undefined, outputTokens: undefined },
+});
+
+it.effect("snapshots one prepared target across batches but prepares it afresh on rerun", () => {
+  const expression = TaxonSet.of(TaxonName.make("A"));
+  const seen: unknown[] = [];
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state, decisions }) => {
+        seen.push(state);
+        const question = decisions.record0;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        expect(question.criteria.multipleTarget0).toContain(seen.length <= 2 ? '"A"' : '"B"');
+        if (seen.length === 1) Object.assign(expression, { name: TaxonName.make("B") });
+        return Effect.succeed(response(["multipleTarget0"]));
+      },
+    }),
+  );
+  const operation = Taxonomy.partitionRecordsByMembership(
+    [RecordLabel.make("first"), RecordLabel.make("second")],
+    expression,
+    { execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }) },
+  );
+  return Effect.gen(function* () {
+    const first = yield* operation;
+    const second = yield* operation;
+    expect(first.MultipleTaxaInTargetName.map(({ targetName }) => targetName)).toEqual(["A", "A"]);
+    expect(second.MultipleTaxaInTargetName.map(({ targetName }) => targetName)).toEqual(["B", "B"]);
+    expect(seen).toEqual([
+      { nodes: [{ _tag: "Taxon", name: "A" }], target: 0 },
+      { nodes: [{ _tag: "Taxon", name: "A" }], target: 0 },
+      { nodes: [{ _tag: "Taxon", name: "B" }], target: 0 },
+      { nodes: [{ _tag: "Taxon", name: "B" }], target: 0 },
+    ]);
+  }).pipe(Effect.provide(layer));
 });
 
 const target = TaxonName.make("A and B");
@@ -288,20 +330,39 @@ it.effect("reconstructs partitions in input order after batches finish in revers
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
-        decide: () =>
+        decide: ({ decisions }) =>
           Effect.gen(function* () {
-            const index = calls++;
+            calls++;
+            const question = decisions.record0;
+            if (question?._tag !== "Classify") return yield* Effect.die("Expected classification");
+            const index = question.instructions.endsWith('Scientific name: "F"')
+              ? 2
+              : question.instructions.endsWith('Scientific name: "C"')
+                ? 1
+                : 0;
+            const names = [["A", "B", "A"], ["C", "D", "E"], ["F"]][index];
+            if (names === undefined) return yield* Effect.die("Unexpected batch");
+            expect(Object.keys(decisions)).toEqual(names.map((_name, local) => `record${local}`));
+            for (const [local, name] of names.entries()) {
+              expect(decisions[`record${local}`]).toMatchObject({
+                instructions: expect.stringContaining(`Scientific name: "${name}"`),
+              });
+            }
             active++;
             maximum = Math.max(maximum, active);
             const slot = Array.get(
               [
-                { started: firstStarted, release: firstRelease, labels: ["member", "notMember"] },
+                {
+                  started: firstStarted,
+                  release: firstRelease,
+                  labels: ["member", "notMember", "member"],
+                },
                 {
                   started: secondStarted,
                   release: secondRelease,
-                  labels: ["member", "multipleTarget0"],
+                  labels: ["multipleTarget0", "mixed", "member"],
                 },
-                { started: thirdStarted, release: thirdRelease, labels: ["mixed", "member"] },
+                { started: thirdStarted, release: thirdRelease, labels: ["undetermined"] },
               ],
               index,
             ).pipe(Option.getOrThrow);
@@ -319,11 +380,12 @@ it.effect("reconstructs partitions in input order after batches finish in revers
     const diagnosed = { scientificName: TaxonName.make("C"), sampleId: "diagnosed" };
     const mixed = { scientificName: TaxonName.make("D"), sampleId: "mixed" };
     const last = { scientificName: TaxonName.make("E"), sampleId: "last" };
+    const tail = { scientificName: TaxonName.make("F"), sampleId: "tail" };
     const fiber = yield* Taxonomy.partitionRecordsByMembership(
-      [repeated, outside, repeated, diagnosed, mixed, last],
+      [repeated, outside, repeated, diagnosed, mixed, last, tail],
       target,
       {
-        execution: CollectionExecution.make({ batchSize: 2, concurrency: 2 }),
+        execution: CollectionExecution.make({ batchSize: 3, concurrency: 2 }),
       },
     ).pipe(Effect.provide(layer), Effect.forkChild);
     yield* Deferred.await(firstStarted);
@@ -343,6 +405,7 @@ it.effect("reconstructs partitions in input order after batches finish in revers
     expect(partition.Member[2]).toBe(last);
     expect(partition.NotMember[0]).toBe(outside);
     expect(partition.MixedMembership[0]).toBe(mixed);
+    expect(partition.Undetermined[0]).toBe(tail);
     expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(diagnosed);
   }),
 );
@@ -359,22 +422,35 @@ it.effect.each(quantifiers)(
       const layer = Layer.effect(
         DecisionModel.DecisionModel,
         DecisionModel.make({
-          decide: () =>
+          decide: ({ decisions }) =>
             Effect.gen(function* () {
-              const index = calls++;
-              if (index === 1) yield* Deferred.succeed(bothStarted, undefined);
+              calls++;
+              const question = decisions.record0;
+              if (question?._tag !== "Classify")
+                return yield* Effect.die("Expected classification");
+              const index = question.instructions.endsWith('Record label: "first"') ? 0 : 1;
+              expect(Object.keys(decisions)).toEqual(["record0", "record1"]);
+              for (const [local, name] of (index === 0
+                ? ["first", "second"]
+                : ["third", "fourth"]
+              ).entries()) {
+                expect(decisions[`record${local}`]).toMatchObject({
+                  instructions: expect.stringContaining(`Record label: "${name}"`),
+                });
+              }
+              if (calls === 2) yield* Deferred.succeed(bothStarted, undefined);
               yield* Deferred.await(bothStarted);
               if (index === 0) {
                 yield* Deferred.await(releaseFirst);
-                return response([quantifier === "all" ? "notMember" : "member"]);
+                return response([quantifier === "all" ? "notMember" : "member", "undetermined"]);
               }
               yield* Deferred.succeed(secondCompleted, undefined);
-              return response(["multipleTarget0"]);
+              return response(["multipleTarget0", "undetermined"]);
             }),
         }),
       );
-      const fiber = yield* operation(records, target, {
-        execution: CollectionExecution.make({ batchSize: 1, concurrency: 2 }),
+      const fiber = yield* operation([...records, RecordLabel.make("unrequested")], target, {
+        execution: CollectionExecution.make({ batchSize: 2, concurrency: 2 }),
       }).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
@@ -431,11 +507,13 @@ it.effect("bounds grouping batches without multiplying the cap across sequential
       DecisionModel.make({
         decide: ({ state, decisions }) =>
           Effect.gen(function* () {
-            if (typeof state !== "string") return yield* Effect.die("Expected named target");
+            const {
+              nodes: [node],
+            } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
             calls++;
             active++;
             maximum = Math.max(maximum, active);
-            seen.push(state);
+            seen.push(node.name);
             expect(Object.keys(decisions)).toEqual(["record0"]);
             if (calls === 2) yield* Deferred.succeed(firstWindowStarted, undefined);
             yield* Deferred.await(release);
@@ -698,20 +776,19 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           expect(state).toEqual({
-            _tag: "Union",
-            operands: [
+            nodes: [
               { _tag: "Taxon", name: "A" },
               { _tag: "Taxon", name: 'B and "C"' },
+              { _tag: "Union", operands: [0, 1] },
             ],
+            target: 2,
           });
           expect(Object.keys(decisions)).toEqual(["record0", "record1"]);
           expect(decisions.record0).toMatchObject({
-            instructions:
-              'Classify this record\'s membership in the supplied taxon or taxon-set expression.\nRecord label: "voucher \\"one\\"\\nline"',
+            instructions: expect.stringContaining('Record label: "voucher \\"one\\"\\nline"'),
           });
           expect(decisions.record1).toMatchObject({
-            instructions:
-              'Classify this record\'s membership in the supplied taxon or taxon-set expression.\nScientific name: "second name"',
+            instructions: expect.stringContaining('Scientific name: "second name"'),
           });
           return Effect.succeed({
             answers: {
@@ -915,9 +992,13 @@ it.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: ({ state }) => {
-          if (typeof state !== "string") return Effect.die("Expected named target");
-          seen.push(state);
-          return state === "second" ? Effect.fail(failure) : Effect.succeed(response(["member"]));
+          const {
+            nodes: [node],
+          } = Schema.decodeUnknownSync(namedTargetState)(state);
+          seen.push(node.name);
+          return node.name === "second"
+            ? Effect.fail(failure)
+            : Effect.succeed(response(["member"]));
         },
       }),
     );
@@ -1061,9 +1142,8 @@ it.effect("does not turn nonliteral empty expressions into collection shortcuts"
       decide: ({ state }) => {
         calls++;
         expect(state).toEqual({
-          _tag: "Difference",
-          left: { _tag: "Empty" },
-          right: { _tag: "Empty" },
+          nodes: [{ _tag: "Empty" }, { _tag: "Empty" }, { _tag: "Difference", left: 0, right: 1 }],
+          target: 2,
         });
         return Effect.succeed({
           answers: {

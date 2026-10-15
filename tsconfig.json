@@ -82,6 +82,7 @@
             "include": [
               "src/Taxonomy.ts",
               "src/TaxonSet.ts",
+              "src/TaxonSetGraph.ts",
               "test/rank-comparison.test.ts",
               "test/taxon-judgments.test.ts",
               "test/collection-membership.test.ts",

@@ -1,6 +1,7 @@
 import { Array, Effect, Match, Number, Option, Record, Schema, Struct, pipe } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
 import { JudgmentPolicy, TaxonName, collectTaxonNames, taxonSetSchema } from "./schemas.ts";
+import * as TaxonSetGraph from "./TaxonSetGraph.ts";
 
 /**
  * An inspectable readonly expression, not an enumeration of organisms.
@@ -111,7 +112,6 @@ type SetJudgment = (
   options?: JudgmentOptions,
 ) => Effect.Effect<TaxonSetRelationResult, AiError.AiError, DecisionModel.DecisionModel>;
 const defaultJudgmentPolicy = JudgmentPolicy.make({ minimumSupport: 0.5, minimumMargin: 0 });
-const relationInputSchema = Schema.Struct({ left: taxonSetSchema, right: taxonSetSchema });
 const relationNamesSchema = Schema.Struct({
   leftNames: Schema.Array(TaxonName),
   rightNames: Schema.Array(TaxonName),
@@ -143,9 +143,27 @@ const relationQuestions = {
 
 const makeRelationQuestion = Effect.fnUntraced(function* (
   relation: keyof typeof relationQuestions,
-  input: typeof relationInputSchema.Type,
+  input: { readonly left: TaxonSet; readonly right: TaxonSet },
 ) {
-  const encoded = yield* Schema.encodeEffect(relationInputSchema)(input).pipe(
+  const compiled = yield* TaxonSetGraph.compile(
+    Effect.fnUntraced(function* (compiler) {
+      const left = yield* compiler.add(input.left);
+      const right = yield* compiler.add(input.right);
+      return { left, right };
+    }),
+  ).pipe(
+    Effect.mapError((reason) =>
+      AiError.make({
+        module: "TaxonSet",
+        method: "makeRelationQuestion",
+        reason,
+      }),
+    ),
+  );
+  const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)({
+    nodes: compiled.nodes,
+    ...compiled.roots,
+  }).pipe(
     Effect.mapError((error) =>
       AiError.make({
         module: "TaxonSet",
@@ -193,13 +211,18 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
     input: encoded,
     names,
     definition: Decision.make({
-      input: Schema.toEncoded(relationInputSchema),
-      decisions: { relation: Decision.classify({ instructions: question.instructions, criteria }) },
+      input: Schema.toEncoded(TaxonSetGraph.relationInputSchema),
+      decisions: {
+        relation: Decision.classify({
+          instructions: `${question.instructions}\n${TaxonSetGraph.instructions} Roots are left and right.`,
+          criteria,
+        }),
+      },
     }),
   };
 });
 
-const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy): boolean => {
+const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy) => {
   if (answer.label === "undetermined") return false;
   const support = Record.get(answer.probabilities, answer.label).pipe(Option.getOrThrow);
   const strongestAlternative = Record.reduce(
@@ -221,7 +244,7 @@ const interpretRelation = (
   answer: Decision.ClassifyAnswer<string>,
   input: typeof relationNamesSchema.Type,
   policy: JudgmentPolicy,
-): TaxonSetRelationResult => {
+) => {
   if (!accepts(answer, policy))
     return setRelationResultSchema.cases.Undetermined.make({ relation: requestedRelation });
   return Match.value(answer.label).pipe(

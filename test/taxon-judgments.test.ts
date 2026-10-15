@@ -157,27 +157,17 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           expect(state).toEqual({
-            _tag: "Difference",
-            left: {
-              _tag: "Union",
-              operands: [
-                { _tag: "Taxon", name: 'A "quoted"' },
-                {
-                  _tag: "Intersection",
-                  operands: [
-                    { _tag: "Taxon", name: "B" },
-                    { _tag: "Taxon", name: 'A "quoted"' },
-                  ],
-                },
-              ],
-            },
-            right: {
-              _tag: "Union",
-              operands: [
-                { _tag: "Taxon", name: 'A "quoted"' },
-                { _tag: "Taxon", name: "b" },
-              ],
-            },
+            nodes: [
+              { _tag: "Taxon", name: 'A "quoted"' },
+              { _tag: "Taxon", name: "B" },
+              { _tag: "Intersection", operands: [1, 0] },
+              { _tag: "Union", operands: [0, 2] },
+              { _tag: "Taxon", name: 'A "quoted"' },
+              { _tag: "Taxon", name: "b" },
+              { _tag: "Union", operands: [4, 5] },
+              { _tag: "Difference", left: 3, right: 6 },
+            ],
+            target: 7,
           });
           expect(decisions.record0).toMatchObject({
             criteria: {
@@ -245,11 +235,9 @@ it.effect.each([
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state, decisions }) => {
-        expect(state).toBe("target");
+        expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: "target" }], target: 0 });
         expect(decisions.record0).toMatchObject({
-          instructions:
-            "Classify this record's membership in the supplied taxon or taxon-set expression.\n" +
-            facts,
+          instructions: expect.stringContaining(facts),
         });
         return Effect.succeed({
           answers: {
@@ -298,8 +286,8 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         expect(state).toEqual({
-          _tag: "Intersection",
-          operands: [{ _tag: "Empty" }, { _tag: "Empty" }],
+          nodes: [{ _tag: "Empty" }, { _tag: "Empty" }, { _tag: "Intersection", operands: [0, 1] }],
+          target: 2,
         });
         const question = decisions.record0;
         if (question?._tag !== "Classify") return Effect.die("Expected classification");
@@ -385,7 +373,7 @@ it.effect(
           seen.push(state);
           const answers = Record.map(decisions, (question) => {
             if (question._tag !== "Classify") throw new Error("Expected classification");
-            if (state === "target1")
+            if ("multipleTarget0" in question.criteria && !("multipleTarget1" in question.criteria))
               expect(Object.keys(question.criteria)).toEqual([
                 "member",
                 "notMember",
@@ -423,16 +411,17 @@ it.effect(
       );
       yield* first;
       expect(seen).toEqual([
-        "target1",
+        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
         {
-          _tag: "Union",
-          operands: [
+          nodes: [
             { _tag: "Taxon", name: "target2" },
             { _tag: "Taxon", name: "target3" },
+            { _tag: "Union", operands: [0, 1] },
           ],
+          target: 2,
         },
         null,
-        "target1",
+        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
       ]);
     }).pipe(Effect.provide(layer));
   },
@@ -646,13 +635,13 @@ it.effect("provides shared target once and record facts once in singleton member
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         calls++;
-        expect(state).toBe("Quercus");
+        expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: "Quercus" }], target: 0 });
         expect(Object.keys(decisions)).toEqual(["record0"]);
         expect(decisions.record0).toEqual({
           _tag: "Classify",
-          instructions:
-            "Classify this record's membership in the supplied taxon or taxon-set expression.\n" +
+          instructions: expect.stringContaining(
             'Record label: "Voucher \\"A\\"\\nline"\nScientific name: "Quercus robur"\nTaxonomy: "local"\nTaxon ID: "17"\nTaxonomy release: "2026"',
+          ),
           criteria: {
             member: "Everything represented by the record belongs.",
             notMember: "Everything represented by the record is outside.",

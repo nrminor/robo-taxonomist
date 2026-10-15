@@ -3,6 +3,7 @@ import {
   Data,
   Effect,
   Equivalence,
+  Iterable,
   Match,
   Number,
   Option,
@@ -24,6 +25,7 @@ import {
   collectTaxonNames,
   taxonSetSchema,
 } from "./schemas.ts";
+import * as TaxonSetGraph from "./TaxonSetGraph.ts";
 
 /**
  * Compares original label text, not species or taxonomic identity.
@@ -395,7 +397,7 @@ export type TaxonIdentityResult = typeof identityResultSchema.Type;
 type JudgmentOptions = { readonly policy?: JudgmentPolicy };
 const defaultJudgmentPolicy = JudgmentPolicy.make({ minimumSupport: 0.5, minimumMargin: 0 });
 
-const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy): boolean => {
+const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy) => {
   if (answer.label === "undetermined") return false;
   const support = Record.get(answer.probabilities, answer.label).pipe(Option.getOrThrow);
   const strongestAlternative = Record.reduce(
@@ -440,7 +442,7 @@ const makeIdentityQuestion = (input: typeof scalarInputSchema.Encoded) =>
 type IdentityAnswer = Decision.Answer<
   ReturnType<typeof makeIdentityQuestion>["decisions"]["identity"]
 >;
-const interpretIdentity = (answer: IdentityAnswer, policy: JudgmentPolicy): TaxonIdentityResult => {
+const interpretIdentity = (answer: IdentityAnswer, policy: JudgmentPolicy) => {
   if (!accepts(answer, policy)) return identityResultSchema.cases.Undetermined.make({});
   return Match.value(answer.label).pipe(
     Match.when("same", () => identityResultSchema.cases.SameTaxon.make({})),
@@ -528,10 +530,7 @@ const makeContainmentQuestion = (input: typeof scalarInputSchema.Encoded) =>
 type ContainmentAnswer = Decision.Answer<
   ReturnType<typeof makeContainmentQuestion>["decisions"]["containment"]
 >;
-const interpretContainment = (
-  answer: ContainmentAnswer,
-  policy: JudgmentPolicy,
-): TaxonContainmentResult => {
+const interpretContainment = (answer: ContainmentAnswer, policy: JudgmentPolicy) => {
   if (!accepts(answer, policy)) return containmentResultSchema.cases.Undetermined.make({});
   return Match.value(answer.label).pipe(
     Match.when("contained", () => containmentResultSchema.cases.Contained.make({})),
@@ -609,25 +608,40 @@ type MembershipJudgment = (
 
 const targetSchema = Schema.Union([TaxonName, taxonSetSchema]);
 const batchRecordsSchema = Schema.NonEmptyArray(recordOperandSchema);
-const membershipBatchInputSchema = Schema.Struct({
-  records: batchRecordsSchema,
-  target: targetSchema,
-});
 const targetNamesSchema = Schema.Array(TaxonName);
 
-const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
-  records: typeof batchRecordsSchema.Type,
-  target: typeof targetSchema.Type,
-) {
-  const encoded = yield* Schema.encodeEffect(membershipBatchInputSchema)({ records, target }).pipe(
-    Effect.mapError((error) =>
+const prepareMembershipTarget = Effect.fnUntraced(function* (target: typeof targetSchema.Type) {
+  const invalid = (description: string) =>
+    AiError.make({
+      module: "Taxonomy",
+      method: "makeMembershipBatchQuestion",
+      reason: new AiError.InvalidUserInputError({ description }),
+    });
+  const expression = Predicate.isString(target)
+    ? taxonSetSchema.cases.Taxon.make({
+        name: yield* Schema.decodeUnknownEffect(TaxonName)(target).pipe(
+          Effect.mapError((error) => invalid(error.message)),
+        ),
+      })
+    : target;
+  const compiled = yield* TaxonSetGraph.compile(
+    Effect.fnUntraced(function* (compiler) {
+      const target = yield* compiler.add(expression);
+      return { target };
+    }),
+  ).pipe(
+    Effect.mapError((reason) =>
       AiError.make({
         module: "Taxonomy",
         method: "makeMembershipBatchQuestion",
-        reason: new AiError.InvalidUserInputError({ description: error.message }),
+        reason,
       }),
     ),
   );
+  const input = yield* Schema.encodeEffect(TaxonSetGraph.membershipTargetSchema)({
+    nodes: compiled.nodes,
+    ...compiled.roots,
+  }).pipe(Effect.mapError((error) => invalid(error.message)));
   const targetNames = targetNamesSchema.make(
     Predicate.isString(target) ? [target] : collectTaxonNames(target),
   );
@@ -647,36 +661,52 @@ const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
         ] as const,
     ),
   );
-  const criteria = pipe(membershipChoices, Struct.assign(targetNameChoices));
   return {
-    input: encoded.target,
+    input,
     targetNames,
-    definition: Decision.make({
-      input: Schema.toEncoded(targetSchema),
-      decisions: Record.fromEntries(
-        Array.map(
-          encoded.records,
-          (record, index) =>
-            [
-              `record${index}`,
-              Decision.classify({
-                instructions:
-                  "Classify this record's membership in the supplied taxon or taxon-set expression.\n" +
-                  describeRecord(record),
-                criteria,
-              }),
-            ] as const,
-        ),
-      ),
-    }),
+    criteria: pipe(membershipChoices, Struct.assign(targetNameChoices)),
   };
+});
+
+const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
+  records: typeof batchRecordsSchema.Type,
+  prepared: Effect.Success<ReturnType<typeof prepareMembershipTarget>>,
+) {
+  const encoded = yield* Schema.encodeEffect(batchRecordsSchema)(records).pipe(
+    Effect.mapError((error) =>
+      AiError.make({
+        module: "Taxonomy",
+        method: "makeMembershipBatchQuestion",
+        reason: new AiError.InvalidUserInputError({ description: error.message }),
+      }),
+    ),
+  );
+  return Decision.make({
+    input: Schema.toEncoded(TaxonSetGraph.membershipTargetSchema),
+    decisions: Record.fromEntries(
+      Array.map(
+        encoded,
+        (record, index) =>
+          [
+            `record${index}`,
+            Decision.classify({
+              instructions:
+                "Classify this record's membership in the supplied taxon or taxon-set expression.\n" +
+                `${TaxonSetGraph.instructions} Root is target.\n` +
+                describeRecord(record),
+              criteria: prepared.criteria,
+            }),
+          ] as const,
+      ),
+    ),
+  });
 });
 
 const interpretMembership = (
   answer: Decision.ClassifyAnswer<string>,
   targetNames: typeof targetNamesSchema.Type,
   policy: JudgmentPolicy,
-): TaxonMembershipResult => {
+) => {
   if (!accepts(answer, policy)) return membershipResultSchema.cases.Undetermined.make({});
   return Match.value(answer.label).pipe(
     Match.when("member", () => membershipResultSchema.cases.Member.make({})),
@@ -698,16 +728,16 @@ const interpretMembership = (
 
 const decideMembershipBatch = Effect.fnUntraced(function* (
   records: typeof batchRecordsSchema.Type,
-  target: typeof targetSchema.Type,
+  prepared: Effect.Success<ReturnType<typeof prepareMembershipTarget>>,
   options: JudgmentOptions = {},
 ) {
-  const request = yield* makeMembershipBatchQuestion(records, target);
-  const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
+  const definition = yield* makeMembershipBatchQuestion(records, prepared);
+  const { answers } = yield* DecisionModel.decide(definition, { input: prepared.input });
   const policy = options.policy ?? defaultJudgmentPolicy;
   return Array.map(records, (_record, index) =>
     interpretMembership(
       Record.get(answers, `record${index}`).pipe(Option.getOrThrow),
-      request.targetNames,
+      prepared.targetNames,
       policy,
     ),
   );
@@ -727,7 +757,8 @@ export const recordBelongsTo: MembershipJudgment = Effect.fn("Taxonomy.recordBel
   options: JudgmentOptions = {},
 ) {
   if (taxonSetSchema.guards.Empty(target)) return membershipResultSchema.cases.NotMember.make({});
-  const results = yield* decideMembershipBatch([record], target, options);
+  const prepared = yield* prepareMembershipTarget(target);
+  const results = yield* decideMembershipBatch([record], prepared, options);
   return Array.head(results).pipe(Option.getOrThrow);
 });
 
@@ -788,12 +819,15 @@ export const partitionRecordsByMembership: PartitionRecords = Effect.fn(
 
   if (taxonSetSchema.guards.Empty(target)) {
     for (const record of records) NotMember.push(record);
-  } else {
+  } else if (Array.isReadonlyArrayNonEmpty(records)) {
     const execution = options.execution ?? defaultCollectionExecution;
-    const batches = Array.chunksOf(records, execution.batchSize);
+    const batches = Array.fromIterable(
+      Iterable.filter(Iterable.chunksOf(records, execution.batchSize), Array.isArrayNonEmpty),
+    );
+    const prepared = yield* prepareMembershipTarget(target);
     const resultsByBatch = yield* Effect.forEach(
       batches,
-      (batch) => decideMembershipBatch(batch, target, options),
+      (batch) => decideMembershipBatch(batch, prepared, options),
       { concurrency: execution.concurrency },
     );
     for (const [batchIndex, batch] of batches.entries()) {
@@ -935,14 +969,19 @@ const quantifyRecords = Effect.fnUntraced(function* (
   if (taxonSetSchema.guards.Empty(target)) return emptyTargetResult(quantifier);
 
   const execution = options.execution ?? defaultCollectionExecution;
-  const batches = Array.chunksOf(records, execution.batchSize);
-  const windows = Array.chunksOf(batches, execution.concurrency);
+  const input = Array.copy(records);
+  const prepared = yield* prepareMembershipTarget(target);
+  const batches = Iterable.filter(
+    Iterable.chunksOf(input, execution.batchSize),
+    Array.isArrayNonEmpty,
+  );
+  const windows = Iterable.chunksOf(batches, execution.concurrency);
   let encounteredUncertainty = false;
 
   for (const window of windows) {
     const resultsByBatch = yield* Effect.forEach(
       window,
-      (batch) => decideMembershipBatch(batch, target, options),
+      (batch) => decideMembershipBatch(batch, prepared, options),
       { concurrency: execution.concurrency },
     );
     for (const results of resultsByBatch) {

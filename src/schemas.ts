@@ -221,10 +221,18 @@ class Difference extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSe
   declare readonly right: Expression;
 }
 
+/**
+ * Recursive symbolic-expression codec; preserves operand order without set simplification.
+ */
 export const taxonSetSchema = Schema.Union([Empty, Taxon, Union, Intersection, Difference]).pipe(
   Schema.toTaggedUnion("_tag"),
 );
 
+/**
+ * Collects exact names once in depth-first, left-to-right first-occurrence order,
+ * including both sides of differences. Skips shared nodes by identity; callers
+ * compile the expression first, so this traversal does not validate it.
+ */
 export const collectTaxonNames = (set: Expression): readonly TaxonName[] => {
   const stack: Expression[] = [set];
   const visited = new Set<Expression>();

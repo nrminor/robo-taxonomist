@@ -156,7 +156,7 @@ Grouping processes targets sequentially, so the cap does not multiply by target 
 
 Quantifiers wait for each window of up to `concurrency` batches to succeed, then scan answers in input order. The first decisive membership answer or accepted name diagnosis wins; uncertainty is remembered if no later answer settles the question. No later window starts after settlement. Already-requested records may extend beyond that answer, and cancellation cannot recall sent requests. Any current-window failure fails the operation before its answers are scanned, even beside a decisive answer. Partitions and groups need every judgment and return no successful partial output. Defects and caller interruption retain normal Effect behavior.
 
-### Inspecting expressions
+## Inspecting expressions
 
 Set tags and fields are available for application-owned traversal. Fields and operand arrays are readonly in TypeScript; this is not a runtime deep-freeze promise. Each constructor makes a fresh parent and union/intersection operand array, sharing existing children without changing them. Runtime schemas, classes, and wire codecs are not package exports.
 

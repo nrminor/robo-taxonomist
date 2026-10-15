@@ -76,6 +76,123 @@ const relationLayer = (answer: DecisionModel.ProviderClassifyAnswer) =>
   );
 
 it.effect(
+  "shares original nodes across roots without merging equal distinct nodes or name locations",
+  () => {
+    const a = TaxonSet.of(TaxonName.make("A"));
+    const left = TaxonSet.union(a, a);
+    const right = TaxonSet.intersection(
+      TaxonSet.of(TaxonName.make("B")),
+      TaxonSet.difference(left, TaxonSet.of(TaxonName.make("A"))),
+    );
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state, decisions }) => {
+          expect(state).toEqual({
+            nodes: [
+              { _tag: "Taxon", name: "A" },
+              { _tag: "Union", operands: [0, 0] },
+              { _tag: "Taxon", name: "B" },
+              { _tag: "Taxon", name: "A" },
+              { _tag: "Difference", left: 1, right: 3 },
+              { _tag: "Intersection", operands: [2, 4] },
+            ],
+            left: 1,
+            right: 5,
+          });
+          const question = decisions.relation;
+          if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          expect(question.instructions).toContain("References index nodes");
+          expect(question.instructions).toContain("Roots are left and right");
+          expect(Object.keys(question.criteria)).toEqual([
+            "yes",
+            "no",
+            "undetermined",
+            "multipleLeft0",
+            "multipleRight0",
+            "multipleRight1",
+          ]);
+          expect(question.criteria.multipleRight0).toContain('"B"');
+          expect(question.criteria.multipleRight1).toContain('"A"');
+          return Effect.succeed({
+            answers: {
+              relation: {
+                _tag: "Classify",
+                label: "multipleRight1",
+                probabilities: Record.map(question.criteria, (_value, key) =>
+                  key === "multipleRight1" ? 1 : 0,
+                ),
+              },
+            },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          });
+        },
+      }),
+    );
+    return Effect.gen(function* () {
+      expect(yield* TaxonSet.overlaps(left, right)).toEqual({
+        _tag: "MultipleTaxaInSetName",
+        relation: "overlap",
+        side: "right",
+        taxonName: "A",
+      });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect.each([
+  [
+    "cycle",
+    () => {
+      const branch = TaxonSet.union(TaxonSet.empty(), TaxonSet.empty());
+      Object.assign(branch, { operands: [branch] });
+      return branch;
+    },
+  ],
+  [
+    "blank nested name",
+    () => {
+      const leaf = TaxonSet.of(TaxonName.make("A"));
+      const branch = TaxonSet.union(leaf, leaf);
+      Object.assign(leaf, { name: " " });
+      return branch;
+    },
+  ],
+  [
+    "empty operands",
+    () => {
+      const branch = TaxonSet.union(TaxonSet.empty(), TaxonSet.empty());
+      Object.assign(branch, { operands: [] });
+      return branch;
+    },
+  ],
+  [
+    "primitive child",
+    () => {
+      const branch = TaxonSet.difference(TaxonSet.empty(), TaxonSet.empty());
+      Object.assign(branch, { right: 17 });
+      return branch;
+    },
+  ],
+] as const)("rejects a nominal expression with %s before transport", ([_case, make]) => {
+  const expression = make();
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () => Effect.die("No request expected"),
+    }),
+  );
+  return Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      TaxonSet.overlaps(expression, TaxonSet.of(TaxonName.make("B"))),
+    );
+    expect(error.module).toBe("TaxonSet");
+    expect(error.method).toBe("makeRelationQuestion");
+    expect(error.reason._tag).toBe("InvalidUserInputError");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
   "gates Effect-rescaled set answers without another normalization or confidence gate",
   () => {
     const layer = Layer.effect(
@@ -319,8 +436,9 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
     });
     expect(seen).toHaveLength(6);
     expect(seen[4]).toEqual({
-      left: { _tag: "Union", operands: [{ _tag: "Empty" }, { _tag: "Empty" }] },
-      right: { _tag: "Union", operands: [{ _tag: "Empty" }, { _tag: "Empty" }] },
+      nodes: [{ _tag: "Empty" }, { _tag: "Union", operands: [0, 0] }],
+      left: 1,
+      right: 1,
     });
   }).pipe(Effect.provide(layer));
 });
@@ -572,7 +690,7 @@ it.effect("maps a single overlap observation to disjoint without another classif
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions: "Do the two complete sets share any organisms?",
+          instructions: expect.stringContaining("Do the two complete sets share any organisms?"),
         });
         return Effect.succeed({
           answers: {
@@ -609,7 +727,7 @@ it.effect("asks overlap directly with one complete-expression classification", (
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions: "Do the two complete sets share any organisms?",
+          instructions: expect.stringContaining("Do the two complete sets share any organisms?"),
           criteria: {
             yes: "At least one organism belongs to both sets.",
             no: "No organism belongs to both sets.",
@@ -650,7 +768,9 @@ it.effect("asks organism-set equivalence directly even for the same expression",
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions: "Do the two complete sets contain exactly the same organisms?",
+          instructions: expect.stringContaining(
+            "Do the two complete sets contain exactly the same organisms?",
+          ),
           criteria: { yes: "The two sets contain exactly the same organisms." },
         });
         return Effect.succeed({
@@ -687,8 +807,9 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions:
+          instructions: expect.stringContaining(
             "Is the complete left organism set a proper subset of the complete right organism set?",
+          ),
           criteria: {
             yes: "Every organism in the left set belongs to the right set, and at least one organism in the right set is outside the left set.",
           },
@@ -726,20 +847,21 @@ it.effect(
         decide: ({ state, decisions }) => {
           calls++;
           expect(state).toEqual({
-            left: {
-              _tag: "Union",
-              operands: [
-                { _tag: "Taxon", name: "A" },
-                { _tag: "Taxon", name: "B" },
-              ],
-            },
-            right: { _tag: "Taxon", name: "C" },
+            nodes: [
+              { _tag: "Taxon", name: "A" },
+              { _tag: "Taxon", name: "B" },
+              { _tag: "Union", operands: [0, 1] },
+              { _tag: "Taxon", name: "C" },
+            ],
+            left: 2,
+            right: 3,
           });
           expect(Object.keys(decisions)).toEqual(["relation"]);
           expect(decisions.relation).toEqual({
             _tag: "Classify",
-            instructions:
+            instructions: expect.stringContaining(
               "Is the complete left organism set a subset of the complete right organism set?",
+            ),
             criteria: {
               yes: "Every organism in the left set also belongs to the right set; equality counts.",
               no: "At least one organism in the left set does not belong to the right set.",
