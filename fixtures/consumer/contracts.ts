@@ -1,5 +1,5 @@
 // Compile only, against package exports after build; never executed by Vitest.
-import { Effect } from "effect";
+import { Effect, type Array, type Types } from "effect";
 import type { AiError, DecisionModel } from "effect/ai";
 import {
   RecordLabel,
@@ -15,14 +15,10 @@ import {
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type Equal<A, B> =
-  IsAny<A> extends true
-    ? false
-    : IsAny<B> extends true
-      ? false
-      : (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
+  IsAny<A> extends true ? false : IsAny<B> extends true ? false : Types.Equals<A, B>;
 type Assert<T extends true> = T;
+type UnionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Union">["operands"];
+type IntersectionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Intersection">["operands"];
 type Judgment<T, A> =
   Equal<Effect.Success<T>, A> extends true
     ? Equal<Effect.Error<T>, AiError.AiError> extends true
@@ -37,6 +33,10 @@ if (oaks._tag === "Union") {
   // @ts-expect-error Inspectable expression tags remain readonly after narrowing.
   oaks._tag = "Union";
   // @ts-expect-error Nonempty expression operands remain readonly after narrowing.
+  oaks.operands.push(oaks);
+}
+if (oaks._tag === "Intersection") {
+  // @ts-expect-error Intersection operands remain readonly after narrowing too.
   oaks.operands.push(oaks);
 }
 const specimen: { readonly label: RecordLabel; readonly voucher: "A17" } = {
@@ -62,6 +62,10 @@ const groupedMembers = grouped.pipe(
 );
 
 export type Contracts = [
+  Assert<Equal<UnionOperands, Array.NonEmptyReadonlyArray<TaxonSet.TaxonSet>>>,
+  Assert<Equal<IntersectionOperands, Array.NonEmptyReadonlyArray<TaxonSet.TaxonSet>>>,
+  Assert<Equal<IsAny<UnionOperands[number]>, false>>,
+  Assert<Equal<IsAny<IntersectionOperands[number]>, false>>,
   Assert<Judgment<typeof relation, TaxonSetRelationResult>>,
   Assert<Judgment<typeof membership, TaxonMembershipResult>>,
   Assert<Judgment<typeof partition, RecordMembershipPartition<typeof specimen>>>,

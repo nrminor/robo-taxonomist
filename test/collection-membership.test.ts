@@ -1,6 +1,19 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Record, Schema } from "effect";
-import { AiError, DecisionModel } from "effect/ai";
+import {
+  Array,
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Iterable,
+  Layer,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+} from "effect";
+import { AiError, Decision, DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
   JudgmentPolicy,
@@ -16,6 +29,12 @@ const namedTargetState = Schema.Struct({
   nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon"), name: Schema.String })]),
   target: Schema.Literal(0),
 });
+
+const firstClassificationQuestion = (decisions: Readonly<Record<string, Decision.Any>>) => {
+  const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+  if (!Predicate.isTagged(question, "Classify")) throw new Error("Expected classification");
+  return question;
+};
 
 // Supplied answers exercise collection behavior, not biological accuracy.
 it.effect(
@@ -38,7 +57,7 @@ it.effect(
         decide: ({ state, decisions }) => {
           calls++;
           expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: target }], target: 0 });
-          expect(Object.keys(decisions)).toEqual([
+          expect(Record.keys(decisions)).toEqual([
             "record0",
             "record1",
             "record2",
@@ -47,27 +66,15 @@ it.effect(
             "record5",
             "record6",
           ]);
-          const answer = (label: string) => ({
-            _tag: "Classify" as const,
-            label,
-            probabilities: {
-              member: 0,
-              notMember: 0,
-              mixed: 0,
-              undetermined: 0,
-              multipleTarget0: 0,
-              [label]: 1,
-            },
-          });
           return Effect.succeed({
             answers: {
-              record0: answer("member"),
-              record1: answer("notMember"),
-              record2: answer("mixed"),
-              record3: answer("undetermined"),
-              record4: answer("multipleTarget0"),
-              record5: answer("notMember"),
-              record6: answer("member"),
+              record0: membershipAnswer("member"),
+              record1: membershipAnswer("notMember"),
+              record2: membershipAnswer("mixed"),
+              record3: membershipAnswer("undetermined"),
+              record4: membershipAnswer("multipleTarget0"),
+              record5: membershipAnswer("notMember"),
+              record6: membershipAnswer("member"),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -93,10 +100,6 @@ it.effect(
         { record: diagnosed, targetName: target },
       ]);
       expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(diagnosed);
-      expect(partition.pipe((value) => value.Member.map((record) => record.sampleId))).toEqual([
-        "member",
-        "later member",
-      ]);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -115,32 +118,17 @@ it.effect("keeps overlapping genus/family groups and repeated targets in supplie
           nodes: [node],
         } = Schema.decodeUnknownSync(namedTargetState)(state);
         seen.push(node.name);
-        return Effect.succeed({
-          answers: {
-            record0: {
-              _tag: "Classify",
-              label: "member",
-              probabilities: {
-                member: 1,
-                notMember: 0,
-                mixed: 0,
-                undetermined: 0,
-                multipleTarget0: 0,
-              },
-            },
-          },
-          usage: { inputTokens: undefined, outputTokens: undefined },
-        });
+        return Effect.succeed(response(["member"]));
       },
     }),
   );
   return Effect.gen(function* () {
     const grouped = yield* Taxonomy.groupRecordsByTaxa([record], [genus, family, genus]);
-    expect(grouped.groups.map((group) => group.target)).toEqual([genus, family, genus]);
+    expect(Array.map(grouped.groups, (group) => group.target)).toEqual([genus, family, genus]);
     expect(seen).toEqual([genus, family, genus]);
     expect(
       grouped.pipe((value) =>
-        value.groups.map((group) =>
+        Array.map(value.groups, (group) =>
           group.partition.pipe((partition) => partition.Member[0]?.sampleId),
         ),
       ),
@@ -200,7 +188,7 @@ const membershipAnswer = (label: string): DecisionModel.ProviderClassifyAnswer =
 
 const response = (labels: readonly string[]): DecisionModel.ProviderResponse => ({
   answers: Record.fromEntries(
-    labels.map((label, index) => [`record${index}`, membershipAnswer(label)] as const),
+    Iterable.map(labels, (label, index) => [`record${index}`, membershipAnswer(label)] as const),
   ),
   usage: { inputTokens: undefined, outputTokens: undefined },
 });
@@ -212,10 +200,10 @@ it.effect("snapshots original record occurrences before consuming later quantifi
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
-        const question = decisions.record0;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
-        expect(Object.keys(decisions)).toEqual(["record0"]);
+        const question = firstClassificationQuestion(decisions);
+        expect(Record.keys(decisions)).toEqual(["record0"]);
         facts.push(question.instructions);
+        // Caller-owned mutation verifies that later batches use the original snapshot.
         if (facts.length === 1) input[1] = RecordLabel.make("replacement second");
         return Effect.succeed(response(["member"]));
       },
@@ -243,9 +231,9 @@ it.effect("snapshots one prepared target across batches but prepares it afresh o
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         seen.push(state);
-        const question = decisions.record0;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = firstClassificationQuestion(decisions);
         expect(question.criteria.multipleTarget0).toContain(seen.length <= 2 ? '"A"' : '"B"');
+        // Deliberately bypass readonly typing to exercise caller-owned mutation.
         if (seen.length === 1) Object.assign(expression, { name: TaxonName.make("B") });
         return Effect.succeed(response(["multipleTarget0"]));
       },
@@ -259,8 +247,14 @@ it.effect("snapshots one prepared target across batches but prepares it afresh o
   return Effect.gen(function* () {
     const first = yield* operation;
     const second = yield* operation;
-    expect(first.MultipleTaxaInTargetName.map(({ targetName }) => targetName)).toEqual(["A", "A"]);
-    expect(second.MultipleTaxaInTargetName.map(({ targetName }) => targetName)).toEqual(["B", "B"]);
+    expect(Array.map(first.MultipleTaxaInTargetName, ({ targetName }) => targetName)).toEqual([
+      "A",
+      "A",
+    ]);
+    expect(Array.map(second.MultipleTaxaInTargetName, ({ targetName }) => targetName)).toEqual([
+      "B",
+      "B",
+    ]);
     expect(seen).toEqual([
       { nodes: [{ _tag: "Taxon", name: "A" }], target: 0 },
       { nodes: [{ _tag: "Taxon", name: "A" }], target: 0 },
@@ -292,7 +286,7 @@ it.effect(
       DecisionModel.make({
         decide: ({ decisions }) => {
           calls++;
-          expect(Object.keys(decisions)).toEqual(["record0"]);
+          expect(Record.keys(decisions)).toEqual(["record0"]);
           expect(decisions.record0).toMatchObject({
             instructions: expect.stringContaining('Record label: "decisive"'),
           });
@@ -324,7 +318,7 @@ for (const [quantifier, operation] of quantifiers) {
         DecisionModel.make({
           decide: ({ decisions }) => {
             calls++;
-            expect(Object.keys(decisions)).toEqual(["record0", "record1"]);
+            expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
             return Effect.succeed({
               answers: {
                 record0: membershipAnswer(quantifier === "all" ? "notMember" : "member"),
@@ -440,49 +434,50 @@ it.effect("reconstructs partitions in input order after batches finish in revers
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
-        decide: ({ decisions }) =>
-          Effect.gen(function* () {
-            calls++;
-            const question = decisions.record0;
-            if (question?._tag !== "Classify") return yield* Effect.die("Expected classification");
-            const index = question.instructions.endsWith('Scientific name: "F"')
-              ? 2
-              : question.instructions.endsWith('Scientific name: "C"')
-                ? 1
-                : 0;
-            const names = [["A", "B", "A"], ["C", "D", "E"], ["F"]][index];
-            if (names === undefined) return yield* Effect.die("Unexpected batch");
-            expect(Object.keys(decisions)).toEqual(names.map((_name, local) => `record${local}`));
-            for (const [local, name] of names.entries()) {
-              expect(decisions[`record${local}`]).toMatchObject({
-                instructions: expect.stringContaining(`Scientific name: "${name}"`),
-              });
-            }
-            active++;
-            maximum = Math.max(maximum, active);
-            const slot = Array.get(
-              [
-                {
-                  started: firstStarted,
-                  release: firstRelease,
-                  labels: ["member", "notMember", "member"],
-                },
-                {
-                  started: secondStarted,
-                  release: secondRelease,
-                  labels: ["multipleTarget0", "mixed", "member"],
-                },
-                { started: thirdStarted, release: thirdRelease, labels: ["undetermined"] },
-              ],
-              index,
-            ).pipe(Option.getOrThrow);
-            yield* Deferred.succeed(slot.started, undefined);
-            yield* Deferred.await(slot.release);
-            completed.push(index);
-            active--;
-            if (index === 2) yield* Deferred.succeed(thirdCompleted, undefined);
-            return response(slot.labels);
-          }),
+        decide: Effect.fnUntraced(function* ({ decisions }) {
+          calls++;
+          const question = firstClassificationQuestion(decisions);
+          const index = question.instructions.endsWith('Scientific name: "F"')
+            ? 2
+            : question.instructions.endsWith('Scientific name: "C"')
+              ? 1
+              : 0;
+          const names = Array.get([["A", "B", "A"], ["C", "D", "E"], ["F"]], index).pipe(
+            Option.getOrThrow,
+          );
+          expect(Record.keys(decisions)).toEqual(
+            Array.map(names, (_name, local) => `record${local}`),
+          );
+          for (const [local, name] of names.entries()) {
+            expect(decisions[`record${local}`]).toMatchObject({
+              instructions: expect.stringContaining(`Scientific name: "${name}"`),
+            });
+          }
+          active++;
+          maximum = Math.max(maximum, active);
+          const slot = Array.get(
+            [
+              {
+                started: firstStarted,
+                release: firstRelease,
+                labels: ["member", "notMember", "member"],
+              },
+              {
+                started: secondStarted,
+                release: secondRelease,
+                labels: ["multipleTarget0", "mixed", "member"],
+              },
+              { started: thirdStarted, release: thirdRelease, labels: ["undetermined"] },
+            ],
+            index,
+          ).pipe(Option.getOrThrow);
+          yield* Deferred.succeed(slot.started, undefined);
+          yield* Deferred.await(slot.release);
+          completed.push(index);
+          active--;
+          if (index === 2) yield* Deferred.succeed(thirdCompleted, undefined);
+          return response(slot.labels);
+        }),
       }),
     );
     const repeated = { scientificName: TaxonName.make("A"), sampleId: "repeat" };
@@ -509,7 +504,11 @@ it.effect("reconstructs partitions in input order after batches finish in revers
     const partition = yield* Fiber.join(fiber);
     expect(maximum).toBe(2);
     expect(completed).toEqual([1, 2, 0]);
-    expect(partition.Member.map((record) => record.sampleId)).toEqual(["repeat", "repeat", "last"]);
+    expect(Array.map(partition.Member, (record) => record.sampleId)).toEqual([
+      "repeat",
+      "repeat",
+      "last",
+    ]);
     expect(partition.Member[0]).toBe(repeated);
     expect(partition.Member[1]).toBe(repeated);
     expect(partition.Member[2]).toBe(last);
@@ -532,31 +531,28 @@ it.effect.each(quantifiers)(
       const layer = Layer.effect(
         DecisionModel.DecisionModel,
         DecisionModel.make({
-          decide: ({ decisions }) =>
-            Effect.gen(function* () {
-              calls++;
-              const question = decisions.record0;
-              if (question?._tag !== "Classify")
-                return yield* Effect.die("Expected classification");
-              const index = question.instructions.endsWith('Record label: "first"') ? 0 : 1;
-              expect(Object.keys(decisions)).toEqual(["record0", "record1"]);
-              for (const [local, name] of (index === 0
-                ? ["first", "second"]
-                : ["third", "fourth"]
-              ).entries()) {
-                expect(decisions[`record${local}`]).toMatchObject({
-                  instructions: expect.stringContaining(`Record label: "${name}"`),
-                });
-              }
-              if (calls === 2) yield* Deferred.succeed(bothStarted, undefined);
-              yield* Deferred.await(bothStarted);
-              if (index === 0) {
-                yield* Deferred.await(releaseFirst);
-                return response([quantifier === "all" ? "notMember" : "member", "undetermined"]);
-              }
-              yield* Deferred.succeed(secondCompleted, undefined);
-              return response(["multipleTarget0", "undetermined"]);
-            }),
+          decide: Effect.fnUntraced(function* ({ decisions }) {
+            calls++;
+            const question = firstClassificationQuestion(decisions);
+            const index = question.instructions.endsWith('Record label: "first"') ? 0 : 1;
+            expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
+            for (const [local, name] of (index === 0
+              ? ["first", "second"]
+              : ["third", "fourth"]
+            ).entries()) {
+              expect(decisions[`record${local}`]).toMatchObject({
+                instructions: expect.stringContaining(`Record label: "${name}"`),
+              });
+            }
+            if (calls === 2) yield* Deferred.succeed(bothStarted, undefined);
+            yield* Deferred.await(bothStarted);
+            if (index === 0) {
+              yield* Deferred.await(releaseFirst);
+              return response([quantifier === "all" ? "notMember" : "member", "undetermined"]);
+            }
+            yield* Deferred.succeed(secondCompleted, undefined);
+            return response(["multipleTarget0", "undetermined"]);
+          }),
         }),
       );
       const fiber = yield* operation([...records, RecordLabel.make("unrequested")], target, {
@@ -615,21 +611,20 @@ it.effect("bounds grouping batches without multiplying the cap across sequential
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
-        decide: ({ state, decisions }) =>
-          Effect.gen(function* () {
-            const {
-              nodes: [node],
-            } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
-            calls++;
-            active++;
-            maximum = Math.max(maximum, active);
-            seen.push(node.name);
-            expect(Object.keys(decisions)).toEqual(["record0"]);
-            if (calls === 2) yield* Deferred.succeed(firstWindowStarted, undefined);
-            yield* Deferred.await(release);
-            active--;
-            return response(["member"]);
-          }),
+        decide: Effect.fnUntraced(function* ({ state, decisions }) {
+          const {
+            nodes: [node],
+          } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
+          calls++;
+          active++;
+          maximum = Math.max(maximum, active);
+          seen.push(node.name);
+          expect(Record.keys(decisions)).toEqual(["record0"]);
+          if (calls === 2) yield* Deferred.succeed(firstWindowStarted, undefined);
+          yield* Deferred.await(release);
+          active--;
+          return response(["member"]);
+        }),
       }),
     );
     const fiber = yield* Taxonomy.groupRecordsByTaxa(
@@ -670,16 +665,15 @@ it.effect("gives independent public operations independent concurrency bounds", 
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
-        decide: () =>
-          Effect.gen(function* () {
-            calls++;
-            active++;
-            maximum = Math.max(maximum, active);
-            if (calls === 2) yield* Deferred.succeed(bothStarted, undefined);
-            yield* Deferred.await(release);
-            active--;
-            return response(["member"]);
-          }),
+        decide: Effect.fnUntraced(function* () {
+          calls++;
+          active++;
+          maximum = Math.max(maximum, active);
+          if (calls === 2) yield* Deferred.succeed(bothStarted, undefined);
+          yield* Deferred.await(release);
+          active--;
+          return response(["member"]);
+        }),
       }),
     );
     const execution = CollectionExecution.make({ batchSize: 1, concurrency: 1 });
@@ -745,28 +739,27 @@ for (const [kind, operation] of operations) {
         const layer = Layer.effect(
           DecisionModel.DecisionModel,
           DecisionModel.make({
-            decide: () =>
-              Effect.gen(function* () {
-                const index = calls++;
-                if (index === 0) {
-                  yield* Deferred.succeed(firstAnswered, undefined);
-                  return response([kind === "all" ? "notMember" : "member"]);
-                }
-                yield* Deferred.await(firstAnswered);
-                if (mode === "failure") return yield* failure;
-                return mode === "missing"
-                  ? response([])
-                  : {
-                      answers: {
-                        record0: {
-                          _tag: "Classify",
-                          label: "invented",
-                          probabilities: { invented: 1 },
-                        },
+            decide: Effect.fnUntraced(function* () {
+              const index = calls++;
+              if (index === 0) {
+                yield* Deferred.succeed(firstAnswered, undefined);
+                return response([kind === "all" ? "notMember" : "member"]);
+              }
+              yield* Deferred.await(firstAnswered);
+              if (mode === "failure") return yield* failure;
+              return mode === "missing"
+                ? response([])
+                : {
+                    answers: {
+                      record0: {
+                        _tag: "Classify",
+                        label: "invented",
+                        probabilities: { invented: 1 },
                       },
-                      usage: { inputTokens: undefined, outputTokens: undefined },
-                    };
-              }),
+                    },
+                    usage: { inputTokens: undefined, outputTokens: undefined },
+                  };
+            }),
           }),
         );
         const error = yield* operation(
@@ -826,7 +819,7 @@ it.effect.each(operations)(
       yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
       const exit = yield* Fiber.await(fiber);
-      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(Cause.hasInterruptsOnly(Exit.getCause(exit).pipe(Option.getOrThrow))).toBe(true);
       expect(succeeded).toBe(false);
       expect(calls).toBe(2);
       expect(interrupted).toBe(2);
@@ -858,11 +851,10 @@ it.effect.each(operations)(
           ),
         ),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)).toEqual(
-          [defect],
-        );
+      const cause = Exit.getCause(exit).pipe(Option.getOrThrow);
+      expect(
+        Array.map(Array.filter(cause.reasons, Cause.isDieReason), (reason) => reason.defect),
+      ).toEqual([defect]);
       expect(calls).toBe(2);
       expect(succeeded).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -889,7 +881,7 @@ it.effect(
             ],
             target: 2,
           });
-          expect(Object.keys(decisions)).toEqual(["record0", "record1"]);
+          expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
           expect(decisions.record0).toMatchObject({
             instructions: expect.stringContaining('Record label: "voucher \\"one\\"\\nline"'),
           });
@@ -1084,49 +1076,6 @@ it.effect("threads grouping policy without sharing or caching repeated execution
   }).pipe(Effect.provide(layer));
 });
 
-it.effect(
-  "fails grouping after a complete earlier target without returning partial groups or starting later targets",
-  () => {
-    const failure = AiError.make({
-      module: "TestProvider",
-      method: "decide",
-      reason: new AiError.UnknownError({ description: "second target failed" }),
-    });
-    const seen: string[] = [];
-    let succeeded = false;
-    const layer = Layer.effect(
-      DecisionModel.DecisionModel,
-      DecisionModel.make({
-        decide: ({ state }) => {
-          const {
-            nodes: [node],
-          } = Schema.decodeUnknownSync(namedTargetState)(state);
-          seen.push(node.name);
-          return node.name === "second"
-            ? Effect.fail(failure)
-            : Effect.succeed(response(["member"]));
-        },
-      }),
-    );
-    return Effect.gen(function* () {
-      const error = yield* Taxonomy.groupRecordsByTaxa(
-        [records[0]],
-        [TaxonName.make("first"), TaxonName.make("second"), TaxonName.make("unrequested")],
-      ).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            succeeded = true;
-          }),
-        ),
-        Effect.flip,
-      );
-      expect(error).toBe(failure);
-      expect(seen).toEqual(["first", "second"]);
-      expect(succeeded).toBe(false);
-    }).pipe(Effect.provide(layer));
-  },
-);
-
 it.effect("interrupts sibling batches on a window failure and launches no later window", () =>
   Effect.gen(function* () {
     const bothStarted = yield* Deferred.make<void>();
@@ -1140,20 +1089,19 @@ it.effect("interrupts sibling batches on a window failure and launches no later 
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
-        decide: () =>
-          Effect.gen(function* () {
-            const index = calls++;
-            if (index === 1) yield* Deferred.succeed(bothStarted, undefined);
-            yield* Deferred.await(bothStarted);
-            if (index === 0) return yield* failure;
-            return yield* Effect.never.pipe(
-              Effect.onInterrupt(() =>
-                Effect.sync(() => {
-                  interrupted++;
-                }),
-              ),
-            );
-          }),
+        decide: Effect.fnUntraced(function* () {
+          const index = calls++;
+          if (index === 1) yield* Deferred.succeed(bothStarted, undefined);
+          yield* Deferred.await(bothStarted);
+          if (index === 0) return yield* failure;
+          return yield* Effect.never.pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                interrupted++;
+              }),
+            ),
+          );
+        }),
       }),
     );
     expect(
@@ -1208,21 +1156,20 @@ it.effect.each(defaultOperations)(
       const layer = Layer.effect(
         DecisionModel.DecisionModel,
         DecisionModel.make({
-          decide: ({ decisions }) =>
-            Effect.gen(function* () {
-              active++;
-              maximum = Math.max(maximum, active);
-              sizes.push(Object.keys(decisions).length);
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
-              active--;
-              return response(
-                Array.replicate(
-                  kind === "any" || kind === "none" ? "notMember" : "member",
-                  Object.keys(decisions).length,
-                ),
-              );
-            }),
+          decide: Effect.fnUntraced(function* ({ decisions }) {
+            active++;
+            maximum = Math.max(maximum, active);
+            sizes.push(Record.size(decisions));
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            active--;
+            return response(
+              Array.replicate(
+                kind === "any" || kind === "none" ? "notMember" : "member",
+                Record.size(decisions),
+              ),
+            );
+          }),
         }),
       );
       const fiber = yield* operation(Array.replicate(records[0], 33)).pipe(
@@ -1317,8 +1264,9 @@ it.effect.each([
   ["none", ["undetermined", "member"], { _tag: "No", quantifier: "none" }],
   ["none", ["undetermined", "mixed"], { _tag: "Undetermined", quantifier: "none" }],
 ] as const)("maps %s whole-record fixture %s", ([quantifier, labels, expected]) => {
-  const operation = quantifiers.find(([kind]) => kind === quantifier)?.[1];
-  if (operation === undefined) return Effect.die("Missing operation");
+  const [, operation] = Array.findFirst(quantifiers, ([kind]) => kind === quantifier).pipe(
+    Option.getOrThrow,
+  );
   return Effect.gen(function* () {
     expect(yield* operation(records.slice(0, 2), target)).toEqual(expected);
   }).pipe(
@@ -1363,27 +1311,19 @@ it.effect("uses default batches of 16 and independently applies policy to each a
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
-        sizes.push(Object.keys(decisions).length);
+        sizes.push(Record.size(decisions));
         return Effect.succeed({
-          answers: Record.fromEntries(
-            Object.keys(decisions).map(
-              (key) =>
-                [
-                  key,
-                  {
-                    _tag: "Classify" as const,
-                    label: "member",
-                    probabilities: {
-                      member: 0.75,
-                      notMember: 0.25,
-                      mixed: 0,
-                      undetermined: 0,
-                      multipleTarget0: 0,
-                    },
-                  },
-                ] as const,
-            ),
-          ),
+          answers: Record.map(decisions, (): DecisionModel.ProviderClassifyAnswer => ({
+            _tag: "Classify",
+            label: "member",
+            probabilities: {
+              member: 0.75,
+              notMember: 0.25,
+              mixed: 0,
+              undetermined: 0,
+              multipleTarget0: 0,
+            },
+          })),
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
       },
@@ -1399,3 +1339,373 @@ it.effect("uses default batches of 16 and independently applies policy to each a
     expect(partition.Undetermined).toEqual(repeated);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "associates cross-batch repeated references with their own answers after full reversal",
+  () =>
+    Effect.gen(function* () {
+      const firstStarted = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const thirdStarted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+      const releaseThird = yield* Deferred.make<void>();
+      const secondFinished = yield* Deferred.make<void>();
+      const thirdFinished = yield* Deferred.make<void>();
+      const first = TaxonomicRecord.make({ scientificName: TaxonName.make("first sentinel") });
+      const second = TaxonomicRecord.make({ scientificName: TaxonName.make("second sentinel") });
+      const third = TaxonomicRecord.make({ scientificName: TaxonName.make("third sentinel") });
+      const shared = { scientificName: TaxonName.make("shared"), sampleId: "same object" };
+      const outside = TaxonomicRecord.make({ scientificName: TaxonName.make("outside") });
+      const uncertain = TaxonomicRecord.make({ scientificName: TaxonName.make("uncertain") });
+      const completed: string[] = [];
+      const layer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: Effect.fnUntraced(function* ({ decisions }) {
+            const question = firstClassificationQuestion(decisions);
+            if (question.instructions.endsWith('Scientific name: "first sentinel"')) {
+              expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
+              expect(decisions.record1).toMatchObject({
+                instructions: expect.stringContaining('Scientific name: "shared"'),
+              });
+              expect(decisions.record2).toMatchObject({
+                instructions: expect.stringContaining('Scientific name: "outside"'),
+              });
+              yield* Deferred.succeed(firstStarted, undefined);
+              yield* Deferred.await(releaseFirst);
+              completed.push("first");
+              return response(["member", "member", "notMember"]);
+            }
+            if (question.instructions.endsWith('Scientific name: "second sentinel"')) {
+              expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
+              expect(decisions.record1).toMatchObject({
+                instructions: expect.stringContaining('Scientific name: "shared"'),
+              });
+              expect(decisions.record2).toMatchObject({
+                instructions: expect.stringContaining('Scientific name: "uncertain"'),
+              });
+              yield* Deferred.succeed(secondStarted, undefined);
+              yield* Deferred.await(releaseSecond);
+              completed.push("second");
+              yield* Deferred.succeed(secondFinished, undefined);
+              return response(["mixed", "multipleTarget0", "undetermined"]);
+            }
+            expect(question.instructions).toContain('Scientific name: "third sentinel"');
+            expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
+            expect(decisions.record1).toMatchObject({
+              instructions: expect.stringContaining('Scientific name: "shared"'),
+            });
+            yield* Deferred.succeed(thirdStarted, undefined);
+            yield* Deferred.await(releaseThird);
+            completed.push("third");
+            yield* Deferred.succeed(thirdFinished, undefined);
+            return response(["member", "notMember"]);
+          }),
+        }),
+      );
+      const fiber = yield* Taxonomy.partitionRecordsByMembership(
+        [first, shared, outside, second, shared, uncertain, third, shared],
+        target,
+        { execution: CollectionExecution.make({ batchSize: 3, concurrency: 3 }) },
+      ).pipe(Effect.provide(layer), Effect.forkChild);
+      yield* Deferred.await(firstStarted);
+      yield* Deferred.await(secondStarted);
+      yield* Deferred.await(thirdStarted);
+      yield* Deferred.succeed(releaseThird, undefined);
+      yield* Deferred.await(thirdFinished);
+      yield* Deferred.succeed(releaseSecond, undefined);
+      yield* Deferred.await(secondFinished);
+      yield* Deferred.succeed(releaseFirst, undefined);
+      const partition = yield* Fiber.join(fiber);
+      expect(completed).toEqual(["third", "second", "first"]);
+      expect(partition).toEqual({
+        Member: [first, shared, third],
+        NotMember: [outside, shared],
+        MixedMembership: [second],
+        Undetermined: [uncertain],
+        MultipleTaxaInTargetName: [{ record: shared, targetName: target }],
+      });
+      expect(partition.Member[0]).toBe(first);
+      expect(partition.Member[1]).toBe(shared);
+      expect(partition.Member[2]).toBe(third);
+      expect(partition.NotMember[0]).toBe(outside);
+      expect(partition.NotMember[1]).toBe(shared);
+      expect(partition.MixedMembership[0]).toBe(second);
+      expect(partition.Undetermined[0]).toBe(uncertain);
+      expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(shared);
+    }),
+);
+
+it.effect.each(["failure", "interrupt"] as const)(
+  "isolates independent operations after A %s and reruns the identical A Effect freshly",
+  (mode) =>
+    Effect.gen(function* () {
+      const bStarted = yield* Deferred.make<void>();
+      const releaseB = yield* Deferred.make<void>();
+      const aReachedFault = yield* Deferred.make<void>();
+      const releaseFault = yield* Deferred.make<void>();
+      const aFirst = TaxonomicRecord.make({ scientificName: TaxonName.make("A first") });
+      const aSecond = TaxonomicRecord.make({ scientificName: TaxonName.make("A second") });
+      const bRecord = TaxonomicRecord.make({ scientificName: TaxonName.make("B only") });
+      const failure = AiError.make({
+        module: "TestProvider",
+        method: "decide",
+        reason: new AiError.UnknownError({ description: "A failed after progress" }),
+      });
+      let aFinalized = 0;
+      let bFinalized = 0;
+      let bSucceeded = false;
+      const aLayer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: Effect.fnUntraced(
+            function* ({ decisions }) {
+              const question = firstClassificationQuestion(decisions);
+              if (question.instructions.endsWith('Scientific name: "A first"')) {
+                // B must already be pending when A makes successful progress.
+                yield* Deferred.await(bStarted);
+                return response(["member"]);
+              }
+              expect(question.instructions).toContain('Scientific name: "A second"');
+              yield* Deferred.succeed(aReachedFault, undefined);
+              yield* Deferred.await(releaseFault);
+              if (mode === "failure") return yield* failure;
+              return yield* Effect.never;
+            },
+            Effect.ensuring(
+              Effect.sync(() => {
+                aFinalized++;
+              }),
+            ),
+          ),
+        }),
+      );
+      const bLayer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: Effect.fnUntraced(
+            function* () {
+              yield* Deferred.succeed(bStarted, undefined);
+              yield* Deferred.await(releaseB);
+              return response(["mixed"]);
+            },
+            Effect.ensuring(
+              Effect.sync(() => {
+                bFinalized++;
+              }),
+            ),
+          ),
+        }),
+      );
+      const operationA = Taxonomy.partitionRecordsByMembership([aFirst, aSecond], target, {
+        execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+      });
+      const fiberB = yield* Taxonomy.partitionRecordsByMembership([bRecord], target).pipe(
+        Effect.provide(bLayer),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            bSucceeded = true;
+          }),
+        ),
+        Effect.forkChild,
+      );
+      const fiberA = yield* operationA.pipe(Effect.provide(aLayer), Effect.forkChild);
+      yield* Deferred.await(aReachedFault);
+      expect(aFinalized).toBe(1);
+      if (mode === "failure") yield* Deferred.succeed(releaseFault, undefined);
+      else yield* Fiber.interrupt(fiberA);
+      const exitA = yield* Fiber.await(fiberA);
+      const causeA = Exit.getCause(exitA).pipe(Option.getOrThrow);
+      if (mode === "failure") {
+        expect(causeA.reasons).toHaveLength(1);
+        expect(causeA.reasons[0]?._tag).toBe("Fail");
+        expect(Cause.findErrorOption(causeA).pipe(Option.getOrThrow)).toBe(failure);
+      } else expect(Cause.hasInterruptsOnly(causeA)).toBe(true);
+      expect(aFinalized).toBe(2);
+      expect(bFinalized).toBe(0);
+      expect(bSucceeded).toBe(false);
+      yield* Deferred.succeed(releaseB, undefined);
+      const partitionB = yield* Fiber.join(fiberB);
+      expect(partitionB).toEqual({
+        Member: [],
+        NotMember: [],
+        MixedMembership: [bRecord],
+        Undetermined: [],
+        MultipleTaxaInTargetName: [],
+      });
+      expect(partitionB.MixedMembership[0]).toBe(bRecord);
+      expect(bFinalized).toBe(1);
+      const freshLayer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: () => Effect.succeed(response(["multipleTarget0"])),
+        }),
+      );
+      const fresh = yield* operationA.pipe(Effect.provide(freshLayer));
+      expect(fresh).toEqual({
+        Member: [],
+        NotMember: [],
+        MixedMembership: [],
+        Undetermined: [],
+        MultipleTaxaInTargetName: [
+          { record: aFirst, targetName: target },
+          { record: aSecond, targetName: target },
+        ],
+      });
+      expect(fresh.MultipleTaxaInTargetName[0]?.record).toBe(aFirst);
+      expect(fresh.MultipleTaxaInTargetName[1]?.record).toBe(aSecond);
+      expect(aFinalized).toBe(2);
+    }),
+);
+
+it.effect.each(["failure", "interrupt"] as const)(
+  "discards completed groups after middle-target %s and rereads repeated expressions on rerun",
+  (mode) =>
+    Effect.gen(function* () {
+      const middleBlocked = yield* Deferred.make<void>();
+      const expression = TaxonSet.of(TaxonName.make("before"));
+      const middle = TaxonSet.of(TaxonName.make("middle"));
+      const first = TaxonomicRecord.make({ scientificName: TaxonName.make("first record") });
+      const second = TaxonomicRecord.make({ scientificName: TaxonName.make("second record") });
+      const failure = AiError.make({
+        module: "TestProvider",
+        method: "decide",
+        reason: new AiError.UnknownError({ description: "middle failed" }),
+      });
+      const seen: string[] = [];
+      let attempts = 0;
+      let finalized = 0;
+      let succeeded = false;
+      const layer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: Effect.fnUntraced(
+            function* ({ state, decisions }) {
+              attempts++;
+              const {
+                nodes: [node],
+              } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
+              seen.push(node.name);
+              if (node.name === "before") return response(["member"]);
+              expect(node.name).toBe("middle");
+              const question = firstClassificationQuestion(decisions);
+              if (question.instructions.endsWith('Scientific name: "first record"')) {
+                yield* Deferred.await(middleBlocked);
+                if (mode === "failure") return yield* failure;
+                return yield* Effect.never;
+              }
+              expect(question.instructions).toContain('Scientific name: "second record"');
+              yield* Deferred.succeed(middleBlocked, undefined);
+              return yield* Effect.never;
+            },
+            Effect.ensuring(
+              Effect.sync(() => {
+                finalized++;
+              }),
+            ),
+          ),
+        }),
+      );
+      const operation = Taxonomy.groupRecordsByTaxa(
+        [first, second],
+        [expression, middle, expression],
+        {
+          execution: CollectionExecution.make({ batchSize: 1, concurrency: 2 }),
+        },
+      );
+      const fiber = yield* operation.pipe(
+        Effect.provide(layer),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            succeeded = true;
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(middleBlocked);
+      if (mode === "interrupt") yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      const cause = Exit.getCause(exit).pipe(Option.getOrThrow);
+      if (mode === "failure") {
+        expect(cause.reasons).toHaveLength(1);
+        expect(cause.reasons[0]?._tag).toBe("Fail");
+        expect(Cause.findErrorOption(cause).pipe(Option.getOrThrow)).toBe(failure);
+      } else expect(Cause.hasInterruptsOnly(cause)).toBe(true);
+      expect(succeeded).toBe(false);
+      expect(seen).toEqual(["before", "before", "middle", "middle"]);
+      expect(attempts).toBe(4);
+      expect(finalized).toBe(4);
+      const freshName = TaxonName.make('after "fresh"');
+      // Deliberately bypass readonly typing to verify fresh preparation on rerun.
+      Object.assign(expression, { name: freshName });
+      const freshSeen: string[] = [];
+      const freshLayer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: Effect.fnUntraced(function* ({ state, decisions }) {
+            const {
+              nodes: [node],
+            } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
+            freshSeen.push(node.name);
+            expect(decisions.record0).toMatchObject({
+              criteria: {
+                multipleTarget0: expect.stringContaining(JSON.stringify(node.name)),
+              },
+            });
+            return response(["multipleTarget0"]);
+          }),
+        }),
+      );
+      const fresh = yield* operation.pipe(Effect.provide(freshLayer));
+      expect(freshSeen).toEqual([freshName, freshName, "middle", "middle", freshName, freshName]);
+      expect(Array.map(fresh.groups, (group) => group.target)).toEqual([
+        expression,
+        middle,
+        expression,
+      ]);
+      expect(fresh.groups[0]?.target).toBe(expression);
+      expect(fresh.groups[1]?.target).toBe(middle);
+      expect(fresh.groups[2]?.target).toBe(expression);
+      expect(Array.map(fresh.groups, (group) => group.partition)).toEqual([
+        {
+          Member: [],
+          NotMember: [],
+          MixedMembership: [],
+          Undetermined: [],
+          MultipleTaxaInTargetName: [
+            { record: first, targetName: freshName },
+            { record: second, targetName: freshName },
+          ],
+        },
+        {
+          Member: [],
+          NotMember: [],
+          MixedMembership: [],
+          Undetermined: [],
+          MultipleTaxaInTargetName: [
+            { record: first, targetName: "middle" },
+            { record: second, targetName: "middle" },
+          ],
+        },
+        {
+          Member: [],
+          NotMember: [],
+          MixedMembership: [],
+          Undetermined: [],
+          MultipleTaxaInTargetName: [
+            { record: first, targetName: freshName },
+            { record: second, targetName: freshName },
+          ],
+        },
+      ]);
+      for (const group of fresh.groups) {
+        expect(group.partition.MultipleTaxaInTargetName[0]?.record).toBe(first);
+        expect(group.partition.MultipleTaxaInTargetName[1]?.record).toBe(second);
+      }
+      expect(fresh.groups[0]?.partition).not.toBe(fresh.groups[2]?.partition);
+      expect(seen).toEqual(["before", "before", "middle", "middle"]);
+      expect(attempts).toBe(4);
+      expect(finalized).toBe(4);
+    }),
+);

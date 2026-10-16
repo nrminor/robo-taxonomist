@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "check": "pnpm run fmt:check && pnpm run check:fast && pnpm run test && pnpm run knip && pnpm run build && pnpm run check:consumer",
-    "check:consumer": "tsc --project fixtures/consumer/tsconfig.json",
+    "check:consumer": "tsc --project fixtures/consumer/tsconfig.json && node fixtures/consumer/smoke.mjs",
     "check:fast": "pnpm run lint && pnpm run typecheck",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",

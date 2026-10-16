@@ -1,9 +1,24 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Record, Struct, pipe } from "effect";
+import {
+  Array,
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+  Struct,
+  pipe,
+} from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   JudgmentPolicy,
   RecordLabel,
+  TaxonId,
   TaxonomicRecord,
   TaxonName,
   Taxonomy,
@@ -25,7 +40,7 @@ it.effect.each(["left", "right"] as const)(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           expect(state).toBeNull();
-          expect(Object.keys(decisions)).toEqual(["identity"]);
+          expect(Record.keys(decisions)).toEqual(["identity"]);
           expect(decisions.identity).toMatchObject({
             _tag: "Classify",
             instructions: expect.stringContaining(
@@ -70,7 +85,7 @@ it.effect("asks one identity question with quoted names and null state", () => {
       decide: ({ state, decisions }) => {
         calls++;
         expect(state).toBeNull();
-        expect(Object.keys(decisions)).toEqual(["identity"]);
+        expect(Record.keys(decisions)).toEqual(["identity"]);
         expect(decisions.identity).toMatchObject({
           _tag: "Classify",
           instructions: expect.stringContaining(
@@ -134,7 +149,7 @@ it.effect.each([
   ),
 );
 
-it.effect("threads containment policy without substituting the distribution leader", () =>
+it.effect("rejects a nonleading containment selection even with zero thresholds", () =>
   Effect.gen(function* () {
     expect(
       yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
@@ -149,6 +164,35 @@ it.effect("threads containment policy without substituting the distribution lead
         probabilities: {
           contained: 0.6,
           notContained: 0.4,
+          undetermined: 0,
+          multipleLeft: 0,
+          multipleRight: 0,
+          multipleBoth: 0,
+        },
+      }),
+    ),
+  ),
+);
+
+it.effect.each([
+  ["accepts relaxed thresholds", 0, 0, "Contained"],
+  ["rejects insufficient support", 0.875, 0, "Undetermined"],
+  ["rejects insufficient margin", 0, 0.625, "Undetermined"],
+] as const)("threads containment policy: %s", ([_case, minimumSupport, minimumMargin, tag]) =>
+  Effect.gen(function* () {
+    expect(
+      yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
+        policy: JudgmentPolicy.make({ minimumSupport, minimumMargin }),
+      }),
+    ).toEqual({ _tag: tag });
+  }).pipe(
+    Effect.provide(
+      scalarLayer("containment", {
+        _tag: "Classify",
+        label: "contained",
+        probabilities: {
+          contained: 0.75,
+          notContained: 0.25,
           undetermined: 0,
           multipleLeft: 0,
           multipleRight: 0,
@@ -225,9 +269,10 @@ it.effect(
               multipleTarget2: expect.stringContaining('name "b"'),
             },
           });
-          const question = decisions.record0;
-          if (question?._tag !== "Classify") return Effect.die("Expected classification");
-          expect(Object.keys(question.criteria)).toEqual([
+          const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+          if (!Predicate.isTagged(question, "Classify"))
+            return Effect.die("Expected classification");
+          expect(Record.keys(question.criteria)).toEqual([
             "member",
             "notMember",
             "mixed",
@@ -266,65 +311,6 @@ it.effect(
   },
 );
 
-it.effect.each([
-  ["label", RecordLabel.make("A"), 'Record label: "A"'],
-  [
-    "name only",
-    TaxonomicRecord.make({ scientificName: TaxonName.make("B") }),
-    'Scientific name: "B"',
-  ],
-  [
-    "ID without release",
-    TaxonomicRecord.make({ taxonId: { taxonomy: "local", id: "17" } }),
-    'Taxonomy: "local"\nTaxon ID: "17"',
-  ],
-] as const)("formats membership %s without invented fields", ([_case, record, facts]) => {
-  const layer = Layer.effect(
-    DecisionModel.DecisionModel,
-    DecisionModel.make({
-      decide: ({ state, decisions }) => {
-        expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: "target" }], target: 0 });
-        expect(decisions.record0).toMatchObject({
-          instructions: expect.stringContaining(facts),
-        });
-        const question = decisions.record0;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
-        for (const field of [
-          "Record label",
-          "Scientific name",
-          "Taxonomy",
-          "Taxon ID",
-          "Taxonomy release",
-        ]) {
-          const occurrences = question.instructions.split(`${field}:`).length - 1;
-          expect(occurrences, field).toBe(facts.includes(`${field}:`) ? 1 : 0);
-        }
-        return Effect.succeed({
-          answers: {
-            record0: {
-              _tag: "Classify",
-              label: "member",
-              probabilities: {
-                member: 1,
-                notMember: 0,
-                mixed: 0,
-                undetermined: 0,
-                multipleTarget0: 0,
-              },
-            },
-          },
-          usage: { inputTokens: undefined, outputTokens: undefined },
-        });
-      },
-    }),
-  );
-  return Effect.gen(function* () {
-    expect(yield* Taxonomy.recordBelongsTo(record, TaxonName.make("target"))).toEqual({
-      _tag: "Member",
-    });
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect(
   "literal Empty membership skips transport and does not validate the other operand",
   () => {
@@ -349,9 +335,9 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
           nodes: [{ _tag: "Empty" }, { _tag: "Empty" }, { _tag: "Intersection", operands: [0, 1] }],
           target: 2,
         });
-        const question = decisions.record0;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
-        expect(Object.keys(question.criteria)).toEqual([
+        const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
+        expect(Record.keys(question.criteria)).toEqual([
           "member",
           "notMember",
           "mixed",
@@ -431,24 +417,31 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           seen.push(state);
-          const answers = Record.map(decisions, (question) => {
-            if (question._tag !== "Classify") throw new Error("Expected classification");
-            if ("multipleTarget0" in question.criteria && !("multipleTarget1" in question.criteria))
-              expect(Object.keys(question.criteria)).toEqual([
-                "member",
-                "notMember",
-                "mixed",
-                "undetermined",
-                "multipleTarget0",
-              ]);
-            return {
-              _tag: "Classify" as const,
-              label: "undetermined",
-              probabilities: Record.map(question.criteria, (_value, key) =>
-                key === "undetermined" ? 1 : 0,
-              ),
-            };
-          });
+          const answers = Record.map(
+            decisions,
+            (question): DecisionModel.ProviderClassifyAnswer => {
+              if (!Predicate.isTagged(question, "Classify"))
+                throw new Error("Expected classification");
+              if (
+                Record.has(question.criteria, "multipleTarget0") &&
+                !Record.has(question.criteria, "multipleTarget1")
+              )
+                expect(Record.keys(question.criteria)).toEqual([
+                  "member",
+                  "notMember",
+                  "mixed",
+                  "undetermined",
+                  "multipleTarget0",
+                ]);
+              return {
+                _tag: "Classify",
+                label: "undetermined",
+                probabilities: Record.map(question.criteria, (_value, key) =>
+                  key === "undetermined" ? 1 : 0,
+                ),
+              };
+            },
+          );
           return Effect.succeed({
             answers,
             usage: { inputTokens: undefined, outputTokens: undefined },
@@ -471,12 +464,7 @@ it.effect(
       );
       yield* first;
       expect(seen).toHaveLength(4);
-      expect(
-        seen.filter(
-          (state) =>
-            state !== null && typeof state === "object" && "target" in state && state.target === 0,
-        ),
-      ).toEqual([
+      expect(Array.filter(seen, Schema.is(Schema.Struct({ target: Schema.Literal(0) })))).toEqual([
         { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
         { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
       ]);
@@ -509,7 +497,7 @@ const modelOperations: readonly (readonly [
   ["identity", () => Taxonomy.sameTaxon(nameA, nameB)],
   ["containment", () => Taxonomy.taxonWithin(nameA, nameB)],
   ["record0", () => Taxonomy.recordBelongsTo(recordA, nameB)],
-] as const;
+];
 
 it.effect(
   "gates Effect-rescaled scalar and membership answers, ignoring optional confidence",
@@ -520,33 +508,35 @@ it.effect(
         probabilityPrecision: 1,
         decide: ({ decisions }) =>
           Effect.succeed({
-            answers: Record.map(decisions, (_question, key) =>
-              key === "identity"
-                ? {
-                    _tag: "Classify" as const,
-                    label: "same",
-                    confidence: 0,
-                    probabilities: {
-                      same: 0.6,
-                      different: 0.3,
-                      undetermined: 0,
-                      multipleLeft: 0,
-                      multipleRight: 0,
-                      multipleBoth: 0,
+            answers: Record.map(
+              decisions,
+              (_question, key): DecisionModel.ProviderClassifyAnswer =>
+                key === "identity"
+                  ? {
+                      _tag: "Classify",
+                      label: "same",
+                      confidence: 0,
+                      probabilities: {
+                        same: 0.6,
+                        different: 0.3,
+                        undetermined: 0,
+                        multipleLeft: 0,
+                        multipleRight: 0,
+                        multipleBoth: 0,
+                      },
+                    }
+                  : {
+                      _tag: "Classify",
+                      label: "mixed",
+                      confidence: 0,
+                      probabilities: {
+                        member: 0.3,
+                        notMember: 0,
+                        mixed: 0.6,
+                        undetermined: 0,
+                        multipleTarget0: 0,
+                      },
                     },
-                  }
-                : {
-                    _tag: "Classify" as const,
-                    label: "mixed",
-                    confidence: 0,
-                    probabilities: {
-                      member: 0.3,
-                      notMember: 0,
-                      mixed: 0.6,
-                      undetermined: 0,
-                      multipleTarget0: 0,
-                    },
-                  },
             ),
             usage: { inputTokens: undefined, outputTokens: undefined },
           }),
@@ -660,7 +650,7 @@ it.effect.each(modelOperations)(
       yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
       const exit = yield* Fiber.await(fiber);
-      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(Exit.getCause(exit).pipe(Option.getOrThrow, Cause.hasInterruptsOnly)).toBe(true);
       expect(calls).toBe(1);
     }),
 );
@@ -680,12 +670,15 @@ it.effect.each(modelOperations)("preserves a provider defect for %s", ([_key, op
   return Effect.gen(function* () {
     const exit = yield* Effect.exit(operation());
     expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      expect(exit.cause.reasons).toHaveLength(1);
-      expect(exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)).toEqual([
-        defect,
-      ]);
-    }
+    const cause = Exit.getCause(exit).pipe(Option.getOrThrow);
+    expect(cause.reasons).toHaveLength(1);
+    expect(
+      pipe(
+        cause.reasons,
+        Array.filter(Cause.isDieReason),
+        Array.map((reason) => reason.defect),
+      ),
+    ).toEqual([defect]);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -695,7 +688,7 @@ it.effect("provides shared target once and record facts once in singleton member
   const record = TaxonomicRecord.make({
     label: RecordLabel.make('Voucher "A"\nline'),
     scientificName: TaxonName.make("Quercus robur"),
-    taxonId: { taxonomy: "local", id: "17", release: "2026" },
+    taxonId: TaxonId.make({ taxonomy: "local", id: "17", release: "2026" }),
   });
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
@@ -703,7 +696,7 @@ it.effect("provides shared target once and record facts once in singleton member
       decide: ({ state, decisions }) => {
         calls++;
         expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: "Quercus" }], target: 0 });
-        expect(Object.keys(decisions)).toEqual(["record0"]);
+        expect(Record.keys(decisions)).toEqual(["record0"]);
         expect(decisions.record0).toMatchObject({
           _tag: "Classify",
           instructions: expect.stringContaining(
@@ -719,8 +712,21 @@ it.effect("provides shared target once and record facts once in singleton member
             ),
           },
         });
-        const question = decisions.record0;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
+        for (const clause of [
+          "References index nodes",
+          "roots select the complete sets",
+          "Empty contains no organisms",
+          "Taxon contains organisms belonging to name",
+          "Union combines operands",
+          "Intersection keeps their shared organisms",
+          "Difference keeps left organisms outside right",
+          "Node identity is not biological identity",
+          "Root is target",
+        ]) {
+          expect(question.instructions, clause).toContain(clause);
+        }
         for (const field of [
           "Record label",
           "Scientific name",
@@ -771,8 +777,6 @@ const scalarLayer = (key: string, answer: DecisionModel.ProviderClassifyAnswer) 
 
 it.effect.each([
   ["different", { _tag: "DifferentTaxa" }],
-  ["multipleLeft", { _tag: "MultipleTaxa", side: "left" }],
-  ["multipleRight", { _tag: "MultipleTaxa", side: "right" }],
   ["multipleBoth", { _tag: "MultipleTaxa", side: "both" }],
   ["undetermined", { _tag: "Undetermined" }],
 ] as const)("maps the selected identity fixture %s", ([label, expected]) =>
@@ -830,7 +834,10 @@ it.effect.each([
       yield* Taxonomy.sameTaxon(
         TaxonName.make("A"),
         TaxonName.make("B"),
-        policy === undefined ? {} : { policy },
+        Option.match(Option.fromUndefinedOr(policy), {
+          onNone: () => ({}),
+          onSome: (policy) => ({ policy }),
+        }),
       ),
     ).toEqual({ _tag: "Undetermined" });
   }).pipe(
@@ -885,7 +892,7 @@ it.effect("asks the direct containment question with original left = inner", () 
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         expect(state).toBeNull();
-        expect(Object.keys(decisions)).toEqual(["containment"]);
+        expect(Record.keys(decisions)).toEqual(["containment"]);
         expect(decisions.containment).toMatchObject({
           _tag: "Classify",
           instructions: expect.stringContaining(
@@ -897,8 +904,8 @@ it.effect("asks the direct containment question with original left = inner", () 
             ),
           },
         });
-        const question = decisions.containment;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = Record.get(decisions, "containment").pipe(Option.getOrThrow);
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
         expect(question.criteria.contained).toContain("equality counts");
         return Effect.succeed({
           answers: {

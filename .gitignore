@@ -23,6 +23,7 @@
 !/fixtures/
 !/fixtures/consumer/
 !/fixtures/consumer/contracts.ts
+!/fixtures/consumer/smoke.mjs
 !/fixtures/consumer/tsconfig.json
 !/.github/
 !/.github/workflows/

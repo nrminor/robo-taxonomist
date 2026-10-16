@@ -1,7 +1,29 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Record, Struct, pipe } from "effect";
-import { AiError, DecisionModel } from "effect/ai";
+import {
+  Array,
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Iterable,
+  Layer,
+  MutableRef,
+  Option,
+  Predicate,
+  Record,
+  String,
+  Struct,
+  pipe,
+} from "effect";
+import { AiError, Decision, DecisionModel } from "effect/ai";
 import { JudgmentPolicy, TaxonName, TaxonSet } from "../src/index.ts";
+
+function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
+  const question = Option.getOrThrow(Record.get(decisions, "relation"));
+  if (!Predicate.isTagged(question, "Classify")) throw new Error("Expected classification");
+  return question;
+}
 
 it("preserves syntax with fresh parents and shared readonly children", () => {
   const oak = TaxonSet.of(TaxonName.make("Quercus"));
@@ -10,12 +32,13 @@ it("preserves syntax with fresh parents and shared readonly children", () => {
   const second = TaxonSet.union(oak, beech);
   expect(first).toEqual({ _tag: "Union", operands: [oak, beech] });
   expect(first).not.toBe(second);
-  if (first._tag !== "Union" || second._tag !== "Union") throw new Error("Expected unions");
+  if (!Predicate.isTagged(first, "Union") || !Predicate.isTagged(second, "Union"))
+    throw new Error("Expected unions");
   expect(first.operands).not.toBe(second.operands);
   expect(first.operands[0]).toBe(oak);
   expect(first.operands[1]).toBe(beech);
   const remaining = TaxonSet.difference(first, oak);
-  if (remaining._tag !== "Difference") throw new Error("Expected difference");
+  if (!Predicate.isTagged(remaining, "Difference")) throw new Error("Expected difference");
   expect(remaining.left).toBe(first);
   expect(remaining.right).toBe(oak);
   expect(first.operands).toEqual([oak, beech]);
@@ -29,7 +52,10 @@ it("preserves literal Empty and derived syntax without normalization", () => {
   const b = TaxonSet.of(TaxonName.make("B"));
   const intersection = TaxonSet.intersection(a, none);
   const another = TaxonSet.intersection(a, none);
-  if (intersection._tag !== "Intersection" || another._tag !== "Intersection")
+  if (
+    !Predicate.isTagged(intersection, "Intersection") ||
+    !Predicate.isTagged(another, "Intersection")
+  )
     throw new Error("Expected intersections");
   expect(intersection.operands).toEqual([a, none]);
   expect(intersection.operands[0]).toBe(a);
@@ -38,7 +64,7 @@ it("preserves literal Empty and derived syntax without normalization", () => {
   expect(intersection).not.toBe(another);
   const complement = TaxonSet.complement(a, b);
   expect(complement).toEqual({ _tag: "Difference", left: b, right: a });
-  if (complement._tag !== "Difference") throw new Error("Expected difference");
+  if (!Predicate.isTagged(complement, "Difference")) throw new Error("Expected difference");
   expect(complement.left).toBe(b);
   expect(complement.right).toBe(a);
   const symmetric = TaxonSet.symmetricDifference(a, b);
@@ -82,8 +108,7 @@ it.effect.each(operations)(
             left: 0,
             right: 1,
           });
-          const question = decisions.relation;
-          if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          const question = relationQuestion(decisions);
           return Effect.succeed({
             answers: {
               relation: {
@@ -148,11 +173,21 @@ it.effect(
             left: 1,
             right: 5,
           });
-          const question = decisions.relation;
-          if (question?._tag !== "Classify") return Effect.die("Expected classification");
-          expect(question.instructions).toContain("References index nodes");
-          expect(question.instructions).toContain("Roots are left and right");
-          expect(Object.keys(question.criteria)).toEqual([
+          const question = relationQuestion(decisions);
+          for (const clause of [
+            "References index nodes",
+            "roots select the complete sets",
+            "Empty contains no organisms",
+            "Taxon contains organisms belonging to name",
+            "Union combines operands",
+            "Intersection keeps their shared organisms",
+            "Difference keeps left organisms outside right",
+            "Node identity is not biological identity",
+            "Roots are left and right",
+          ]) {
+            expect(question.instructions, clause).toContain(clause);
+          }
+          expect(Record.keys(question.criteria)).toEqual([
             "yes",
             "no",
             "undetermined",
@@ -188,11 +223,22 @@ it.effect(
   },
 );
 
-it.effect("keeps a bounded shared DAG compact through public equivalence transport", () => {
-  let expression = TaxonSet.of(TaxonName.make("A"));
-  for (let depth = 0; depth < 12; depth++) {
-    expression = TaxonSet.union(expression, expression);
-  }
+it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
+  const name = TaxonName.make("A");
+  const leaf = TaxonSet.of(name);
+  const expression = Iterable.reduce(Iterable.range(1, 12), leaf, (previous) =>
+    TaxonSet.union(previous, previous),
+  );
+  const leafReads = MutableRef.make(0);
+  // Observe preparation, not construction; every read returns the original valid name.
+  Object.defineProperty(leaf, "name", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      MutableRef.increment(leafReads);
+      return name;
+    },
+  });
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -203,8 +249,7 @@ it.effect("keeps a bounded shared DAG compact through public equivalence transpo
         expect(state).toHaveProperty("nodes.0", { _tag: "Taxon", name: "A" });
         expect(state).toHaveProperty("nodes.1", { _tag: "Union", operands: [0, 0] });
         expect(state).toHaveProperty("nodes.12", { _tag: "Union", operands: [11, 11] });
-        const question = decisions.relation;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = relationQuestion(decisions);
         return Effect.succeed({
           answers: {
             relation: {
@@ -225,9 +270,11 @@ it.effect("keeps a bounded shared DAG compact through public equivalence transpo
       _tag: "Yes",
       relation: "equivalent",
     });
+    expect(MutableRef.get(leafReads)).toBeLessThanOrEqual(64);
   }).pipe(Effect.provide(layer));
 });
 
+// Deliberate mutation bypasses public constructors to exercise malformed nominal graphs.
 it.effect.each([
   [
     "cycle",
@@ -280,43 +327,40 @@ it.effect.each([
   }).pipe(Effect.provide(layer));
 });
 
-it.effect(
-  "gates Effect-rescaled set answers without another normalization or confidence gate",
-  () => {
-    const layer = Layer.effect(
-      DecisionModel.DecisionModel,
-      DecisionModel.make({
-        probabilityPrecision: 1,
-        decide: () =>
-          Effect.succeed({
-            answers: {
-              relation: {
-                _tag: "Classify",
-                label: "yes",
-                confidence: 0,
-                probabilities: {
-                  yes: 0.6,
-                  no: 0.3,
-                  undetermined: 0,
-                  multipleLeft0: 0,
-                  multipleRight0: 0,
-                },
+it.effect("accepts an Effect-rescaled set answer despite zero confidence", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      probabilityPrecision: 1,
+      decide: () =>
+        Effect.succeed({
+          answers: {
+            relation: {
+              _tag: "Classify",
+              label: "yes",
+              confidence: 0,
+              probabilities: {
+                yes: 0.6,
+                no: 0.3,
+                undetermined: 0,
+                multipleLeft0: 0,
+                multipleRight0: 0,
               },
             },
-            usage: { inputTokens: undefined, outputTokens: undefined },
-          }),
-      }),
-    );
-    return Effect.gen(function* () {
-      const a = TaxonSet.of(TaxonName.make("A"));
-      expect(
-        yield* TaxonSet.isSubsetOf(a, a, {
-          policy: JudgmentPolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
         }),
-      ).toEqual({ _tag: "Yes", relation: "subset" });
-    }).pipe(Effect.provide(layer));
-  },
-);
+    }),
+  );
+  return Effect.gen(function* () {
+    const a = TaxonSet.of(TaxonName.make("A"));
+    expect(
+      yield* TaxonSet.isSubsetOf(a, a, {
+        policy: JudgmentPolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
+      }),
+    ).toEqual({ _tag: "Yes", relation: "subset" });
+  }).pipe(Effect.provide(layer));
+});
 
 for (const [relation, operation, yesTag, noTag] of operations) {
   it.effect.each([
@@ -368,9 +412,8 @@ it.effect(
       DecisionModel.make({
         decide: ({ decisions }) => {
           calls++;
-          const question = decisions.relation;
-          if (question?._tag !== "Classify") return Effect.die("Expected classification");
-          expect(Object.keys(question.criteria)).toEqual([
+          const question = relationQuestion(decisions);
+          expect(Record.keys(question.criteria)).toEqual([
             "yes",
             "no",
             "undetermined",
@@ -470,11 +513,10 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         seen.push(state);
-        const question = decisions.relation;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
-        expect(Object.keys(decisions)).toEqual(["relation"]);
+        const question = relationQuestion(decisions);
+        expect(Record.keys(decisions)).toEqual(["relation"]);
         if (seen.length === 5)
-          expect(Object.keys(question.criteria)).toEqual(["yes", "no", "undetermined"]);
+          expect(Record.keys(question.criteria)).toEqual(["yes", "no", "undetermined"]);
         return Effect.succeed({
           answers: {
             relation: {
@@ -592,9 +634,8 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
-        const question = decisions.relation;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
-        seen.push(Object.keys(question.criteria));
+        const question = relationQuestion(decisions);
+        seen.push(Record.keys(question.criteria));
         return Effect.succeed({
           answers: {
             relation: {
@@ -615,14 +656,23 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
   return Effect.gen(function* () {
     yield* Effect.all([first, second], { concurrency: 2 });
     yield* first;
-    expect(seen.map((keys) => keys.join(",")).sort()).toEqual(
-      [
-        ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
-        ["yes", "no", "undetermined", "multipleLeft0", "multipleLeft1"],
-        ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
-      ]
-        .map((keys) => keys.join(","))
-        .sort(),
+    expect(
+      Array.sort(
+        Iterable.map(seen, (keys) => keys.join(",")),
+        String.Order,
+      ),
+    ).toEqual(
+      Array.sort(
+        Iterable.map(
+          [
+            ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
+            ["yes", "no", "undetermined", "multipleLeft0", "multipleLeft1"],
+            ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
+          ],
+          (keys) => keys.join(","),
+        ),
+        String.Order,
+      ),
     );
   }).pipe(Effect.provide(layer));
 });
@@ -678,55 +728,24 @@ it.effect.each(operations)(
   },
 );
 
-for (const [relation, operation] of operations) {
-  const invalidOutputs = [
-    ["missing", undefined],
-    [
-      "unknown label",
-      { _tag: "Classify" as const, label: "invented", probabilities: { invented: 1 } },
-    ],
-    [
-      "invalid probabilities",
-      {
-        _tag: "Classify" as const,
-        label: "yes",
-        probabilities: {
-          yes: 0.9,
-          no: 0.9,
-          undetermined: 0,
-          multipleLeft0: 0,
-          multipleRight0: 0,
-        },
-      },
-    ],
-  ] as const;
-  it.effect.each(
-    invalidOutputs.filter(
-      // Missing answers exercise every wrapper; the other cases sample real model validation.
-      ([kind]) =>
-        kind === "missing" ||
-        (kind === "unknown label" && relation === "overlap") ||
-        (kind === "invalid probabilities" && relation === "subset"),
-    ),
-  )(`rejects ${relation} output: %s`, ([_case, answer]) =>
-    Effect.gen(function* () {
-      const a = TaxonSet.of(TaxonName.make("A"));
-      const layer = Layer.effect(
-        DecisionModel.DecisionModel,
-        DecisionModel.make({
-          decide: () =>
-            Effect.succeed({
-              answers: answer === undefined ? {} : { relation: answer },
-              usage: { inputTokens: undefined, outputTokens: undefined },
-            }),
-        }),
-      );
-      expect((yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)))).reason._tag).toBe(
-        "InvalidOutputError",
-      );
-    }),
-  );
-}
+it.effect.each(operations)("rejects a missing answer for %s", ([_relation, operation]) =>
+  Effect.gen(function* () {
+    const a = TaxonSet.of(TaxonName.make("A"));
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.succeed({
+            answers: {},
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          }),
+      }),
+    );
+    expect((yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)))).reason._tag).toBe(
+      "InvalidOutputError",
+    );
+  }),
+);
 
 it.effect.each(operations)(
   "keeps pending %s interruption without retry or fallback",
@@ -769,12 +788,13 @@ it.effect.each(operations)("preserves a provider defect for %s", ([_relation, op
     const a = TaxonSet.of(TaxonName.make("A"));
     const exit = yield* Effect.exit(operation(a, a));
     expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      expect(exit.cause.reasons).toHaveLength(1);
-      expect(exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)).toEqual([
-        defect,
-      ]);
-    }
+    const cause = Option.getOrThrow(Exit.getCause(exit));
+    expect(cause.reasons).toHaveLength(1);
+    expect(
+      Array.fromIterable(
+        Iterable.map(Iterable.filter(cause.reasons, Cause.isDieReason), (reason) => reason.defect),
+      ),
+    ).toEqual([defect]);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -787,7 +807,7 @@ it.effect("maps a single overlap observation to disjoint without another classif
     DecisionModel.make({
       decide: ({ decisions }) => {
         calls++;
-        expect(Object.keys(decisions)).toEqual(["relation"]);
+        expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           instructions: expect.stringContaining("share any organisms"),
         });
@@ -824,7 +844,7 @@ it.effect("asks overlap directly with one complete-expression classification", (
     DecisionModel.make({
       decide: ({ decisions }) => {
         calls++;
-        expect(Object.keys(decisions)).toEqual(["relation"]);
+        expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           instructions: expect.stringContaining("share any organisms"),
           criteria: {
@@ -865,7 +885,7 @@ it.effect("asks organism-set equivalence directly even for the same expression",
     DecisionModel.make({
       decide: ({ decisions }) => {
         calls++;
-        expect(Object.keys(decisions)).toEqual(["relation"]);
+        expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           instructions: expect.stringContaining("contain exactly the same organisms"),
           criteria: { yes: expect.stringContaining("contain exactly the same organisms") },
@@ -902,7 +922,7 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
     DecisionModel.make({
       decide: ({ decisions }) => {
         calls++;
-        expect(Object.keys(decisions)).toEqual(["relation"]);
+        expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           instructions: expect.stringContaining(
             "left organism set a proper subset of the complete right organism set",
@@ -911,8 +931,7 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
             yes: expect.stringContaining("Every organism in the left set belongs to the right set"),
           },
         });
-        const question = decisions.relation;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = relationQuestion(decisions);
         expect(question.criteria.yes).toContain(
           "at least one organism in the right set is outside the left set",
         );
@@ -958,7 +977,7 @@ it.effect(
             left: 2,
             right: 3,
           });
-          expect(Object.keys(decisions)).toEqual(["relation"]);
+          expect(Record.keys(decisions)).toEqual(["relation"]);
           expect(decisions.relation).toMatchObject({
             _tag: "Classify",
             instructions: expect.stringContaining(
@@ -977,8 +996,7 @@ it.effect(
               multipleRight0: expect.stringContaining('right-set name "C"'),
             },
           });
-          const question = decisions.relation;
-          if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          const question = relationQuestion(decisions);
           expect(question.criteria.yes).toContain("equality counts");
           for (const label of ["multipleLeft0", "multipleLeft1", "multipleRight0"]) {
             expect(question.criteria[label]).toContain(

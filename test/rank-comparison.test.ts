@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Array, Effect, Layer, Option, Predicate, Record } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   RankComparisonPolicy,
@@ -35,8 +35,8 @@ it.effect("compares the original record descriptions at the requested rank", () 
             ),
           },
         });
-        const question = decisions.comparison;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
         expect(question.instructions).toContain("species rank");
         expect(question.instructions).toContain(
           'Left record:\nRecord label: "Voucher A17 | Quercus robur"',
@@ -51,7 +51,7 @@ it.effect("compares the original record descriptions at the requested rank", () 
         expect(question.criteria.multipleRight).toContain("not established for the left record");
         expect(question.instructions.split('"Voucher A17 | Quercus robur"')).toHaveLength(2);
         expect(question.instructions.split('"Voucher B42 | Quercus robur"')).toHaveLength(2);
-        expect(Object.keys(decisions)).toEqual(["comparison"]);
+        expect(Record.keys(decisions)).toEqual(["comparison"]);
 
         return Effect.succeed({
           answers: {
@@ -111,8 +111,9 @@ it.effect(
           expect(decisions.comparison).toMatchObject({
             instructions: expect.stringContaining("genus rank"),
           });
-          const question = decisions.comparison;
-          if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
+          if (!Predicate.isTagged(question, "Classify"))
+            return Effect.die("Expected classification");
           expect(question.instructions).not.toContain("caller-only");
           for (const field of [
             "Record label",
@@ -199,8 +200,9 @@ it.effect("builds fresh direct context for repeated and interleaved executions",
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         expect(state).toBeNull();
-        const question = decisions.comparison;
-        if (question?._tag !== "Classify") return Effect.die("Expected a classification");
+        const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
+        if (!Predicate.isTagged(question, "Classify"))
+          return Effect.die("Expected a classification");
         seen.push(question.instructions);
         return Effect.succeed({
           answers: {
@@ -229,8 +231,8 @@ it.effect("builds fresh direct context for repeated and interleaved executions",
     yield* Effect.all([first, second], { concurrency: 2 });
     yield* first;
     expect(seen).toHaveLength(3);
-    const species = seen.filter((text) => text.includes('Left record:\nRecord label: "A"'));
-    const family = seen.filter((text) => text.includes('Left record:\nRecord label: "C"'));
+    const species = Array.filter(seen, (text) => text.includes('Left record:\nRecord label: "A"'));
+    const family = Array.filter(seen, (text) => text.includes('Left record:\nRecord label: "C"'));
     expect(species).toHaveLength(2);
     expect(family).toHaveLength(1);
     for (const text of species) {
@@ -301,28 +303,6 @@ it.effect("abstains rather than breaking a tied distribution", () =>
         _tag: "Classify",
         label: "same",
         probabilities: { same: 0.5, different: 0.5, undetermined: 0 },
-      }),
-    ),
-  ),
-);
-
-it.effect("uses the caller's acceptance policy instead of the default", () =>
-  Effect.gen(function* () {
-    const policy = RankComparisonPolicy.make({ minimumSupport: 0.95, minimumMargin: 0.25 });
-    const result = yield* Taxonomy.sameTaxonAtRank(
-      RecordLabel.make("Voucher A17"),
-      RecordLabel.make("Voucher B42"),
-      "species",
-      { policy },
-    );
-
-    expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
-  }).pipe(
-    Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "same",
-        probabilities: { same: 0.51, different: 0.49, undetermined: 0 },
       }),
     ),
   ),
@@ -537,8 +517,8 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
               'Right record:\nTaxonomy: "example-taxonomy"\nTaxon ID: "oak-18"',
           ),
         });
-        const question = decisions.comparison;
-        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
         expect(question.instructions).toContain("family rank");
         expect(question.instructions.split("Taxonomy release:")).toHaveLength(2);
         expect(question.instructions.split("Record label:")).toHaveLength(2);

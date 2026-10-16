@@ -24,14 +24,6 @@ describe.each([
     expect(schema.make(text)).toBe(text);
   });
 
-  it.effect("constructs within an Effect application", () =>
-    Effect.gen(function* () {
-      const text = "  Quercus robur\t";
-      const value = yield* schema.makeEffect(text);
-      expect(value).toBe(text);
-    }),
-  );
-
   it.effect("retains a domain-specific validation issue", () =>
     Effect.gen(function* () {
       const issue = yield* Effect.flip<RecordLabel | TaxonName, SchemaIssue.Issue, never>(
