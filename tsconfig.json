@@ -86,7 +86,10 @@
               "test/rank-comparison.test.ts",
               "test/taxon-judgments.test.ts",
               "test/collection-membership.test.ts",
-              "test/taxon-set.test.ts"
+              "test/taxon-set.test.ts",
+              "test/taxon-set.property.test.ts",
+              "test/taxon-judgments.property.test.ts",
+              "test/collection-membership.property.test.ts"
             ],
             "options": {
               "diagnosticSeverity": {
