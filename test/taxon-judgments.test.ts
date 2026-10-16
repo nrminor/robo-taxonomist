@@ -476,7 +476,10 @@ it.effect(
           (state) =>
             state !== null && typeof state === "object" && "target" in state && state.target === 0,
         ),
-      ).toHaveLength(2);
+      ).toEqual([
+        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
+        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
+      ]);
       expect(seen).toEqual(
         expect.arrayContaining([
           { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
@@ -489,7 +492,6 @@ it.effect(
             target: 2,
           },
           null,
-          { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
         ]),
       );
     }).pipe(Effect.provide(layer));

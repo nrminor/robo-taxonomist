@@ -405,8 +405,6 @@ function publicRoots(construction: Construction) {
       case "SymmetricDifference": {
         const value = TaxonSet.symmetricDifference(left, right);
         if (value._tag !== "Union") throw new Error("Expected symmetric difference union");
-        at(value.operands, 0);
-        at(value.operands, 1);
         handles.push(value);
         break;
       }
@@ -419,7 +417,7 @@ function originalNameLabels(criteria: { readonly [label: string]: string }) {
   const labels = { left: new Map<string, string>(), right: new Map<string, string>() };
   const names = { left: new Set<string>(), right: new Set<string>() };
   const counts = { left: 0, right: 0 };
-  // Match literal name facts, not prompt prose or collector traversal order.
+  // Match criterion text without depending on numeric label indices or traversal order.
   for (const side of ["left", "right"] satisfies ReadonlyArray<"left" | "right">) {
     const prefix = side === "left" ? "multipleLeft" : "multipleRight";
     for (const [label, criterion] of Object.entries(criteria)) {
