@@ -1,4 +1,4 @@
-import { Effect, Exit, Schema } from "effect";
+import { Array, Effect, Exit, Option, Schema } from "effect";
 import { AiError } from "effect/ai";
 import { TaxonName, taxonSetSchema } from "./schemas.ts";
 
@@ -22,6 +22,40 @@ const nodeSchema = Schema.TaggedUnion({
   Difference: { left: nodeRef, right: nodeRef },
 });
 type Node = typeof nodeSchema.Type;
+
+/**
+ * Collects exact names from a validated table in one root's expression order.
+ * Each call visits shared nodes once and keeps its own name order, independent
+ * of other roots and the table's row order.
+ */
+export const collectTaxonNames = (nodes: readonly Node[], root: number): readonly TaxonName[] => {
+  const stack = [root];
+  const visited = new Set<number>();
+  const names = new Set<TaxonName>();
+  while (stack.length > 0) {
+    const ref = Option.fromUndefinedOr(stack.pop()).pipe(Option.getOrThrow);
+    if (visited.has(ref)) continue;
+    visited.add(ref);
+    const node = Array.get(nodes, ref).pipe(Option.getOrThrow);
+    switch (node._tag) {
+      case "Empty":
+        break;
+      case "Taxon":
+        names.add(node.name);
+        break;
+      case "Union":
+      case "Intersection":
+        for (let index = node.operands.length - 1; index >= 0; index--) {
+          stack.push(Array.get(node.operands, index).pipe(Option.getOrThrow));
+        }
+        break;
+      case "Difference":
+        stack.push(node.right, node.left);
+        break;
+    }
+  }
+  return [...names];
+};
 
 export const membershipTargetSchema = Schema.Struct({
   nodes: Schema.Array(nodeSchema),

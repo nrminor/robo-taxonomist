@@ -1,4 +1,4 @@
-import { Array, Option, Schema } from "effect";
+import { Schema } from "effect";
 
 /**
  * A record description that keeps your original text.
@@ -227,44 +227,3 @@ class Difference extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSe
 export const taxonSetSchema = Schema.Union([Empty, Taxon, Union, Intersection, Difference]).pipe(
   Schema.toTaggedUnion("_tag"),
 );
-
-/**
- * Collects exact names once in depth-first, left-to-right first-occurrence order,
- * including both sides of differences. Skips shared nodes by identity; callers
- * compile the expression first, so this traversal does not validate it.
- */
-export const collectTaxonNames = (set: Expression): readonly TaxonName[] => {
-  const stack: Expression[] = [set];
-  const visited = new Set<Expression>();
-  const seenNames = new Set<TaxonName>();
-  const names: TaxonName[] = [];
-  while (stack.length > 0) {
-    const node = Option.fromUndefinedOr(stack.pop()).pipe(Option.getOrThrow);
-    if (visited.has(node)) continue;
-    visited.add(node);
-    taxonSetSchema.match(node, {
-      Empty: () => {},
-      Taxon: ({ name }) => {
-        if (!seenNames.has(name)) {
-          seenNames.add(name);
-          names.push(name);
-        }
-      },
-      Union: ({ operands }) => {
-        for (let index = operands.length - 1; index >= 0; index--) {
-          stack.push(Array.get(operands, index).pipe(Option.getOrThrow));
-        }
-      },
-      Intersection: ({ operands }) => {
-        for (let index = operands.length - 1; index >= 0; index--) {
-          stack.push(Array.get(operands, index).pipe(Option.getOrThrow));
-        }
-      },
-      Difference: ({ left, right }) => {
-        stack.push(right);
-        stack.push(left);
-      },
-    });
-  }
-  return names;
-};

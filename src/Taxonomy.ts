@@ -22,7 +22,6 @@ import {
   RecordLabel,
   TaxonomicRecord,
   TaxonName,
-  collectTaxonNames,
   taxonSetSchema,
 } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
@@ -638,13 +637,13 @@ const prepareMembershipTarget = Effect.fnUntraced(function* (target: typeof targ
       }),
     ),
   );
+  const targetNames = targetNamesSchema.make(
+    TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.target),
+  );
   const input = yield* Schema.encodeEffect(TaxonSetGraph.membershipTargetSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
   }).pipe(Effect.mapError((error) => invalid(error.message)));
-  const targetNames = targetNamesSchema.make(
-    Predicate.isString(target) ? [target] : collectTaxonNames(target),
-  );
   const membershipChoices = {
     member: "Everything represented by the record belongs.",
     notMember: "Everything represented by the record is outside.",

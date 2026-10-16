@@ -1,6 +1,6 @@
 import { Array, Effect, Match, Number, Option, Record, Schema, Struct, pipe } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
-import { JudgmentPolicy, TaxonName, collectTaxonNames, taxonSetSchema } from "./schemas.ts";
+import { JudgmentPolicy, TaxonName, taxonSetSchema } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
 
 /**
@@ -160,6 +160,10 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       }),
     ),
   );
+  const names = relationNamesSchema.make({
+    leftNames: TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.left),
+    rightNames: TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.right),
+  });
   const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
@@ -172,10 +176,6 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       }),
     ),
   );
-  const names = relationNamesSchema.make({
-    leftNames: collectTaxonNames(input.left),
-    rightNames: collectTaxonNames(input.right),
-  });
   const question = relationQuestions[relation];
   const relationshipChoices = {
     yes: question.yes,
