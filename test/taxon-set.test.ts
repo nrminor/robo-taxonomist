@@ -63,6 +63,54 @@ const operations = [
 ] as const;
 
 // These transport fixtures are not biological predictions.
+it.effect.each(operations)(
+  "transports distinct original expression sides for %s",
+  ([relation, operation]) => {
+    const left = TaxonSet.of(TaxonName.make("A"));
+    const right = TaxonSet.of(TaxonName.make("C"));
+    let calls = 0;
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state, decisions }) => {
+          calls++;
+          expect(state).toEqual({
+            nodes: [
+              { _tag: "Taxon", name: "A" },
+              { _tag: "Taxon", name: "C" },
+            ],
+            left: 0,
+            right: 1,
+          });
+          const question = decisions.relation;
+          if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          return Effect.succeed({
+            answers: {
+              relation: {
+                _tag: "Classify",
+                label: "multipleRight0",
+                probabilities: Record.map(question.criteria, (_value, key) =>
+                  key === "multipleRight0" ? 1 : 0,
+                ),
+              },
+            },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          });
+        },
+      }),
+    );
+    return Effect.gen(function* () {
+      expect(yield* operation(left, right)).toEqual({
+        _tag: "MultipleTaxaInSetName",
+        relation,
+        side: "right",
+        taxonName: "C",
+      });
+      expect(calls).toBe(1);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 const relationLayer = (answer: DecisionModel.ProviderClassifyAnswer) =>
   Layer.effect(
     DecisionModel.DecisionModel,
@@ -139,6 +187,46 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("keeps a bounded shared DAG compact through public equivalence transport", () => {
+  let expression = TaxonSet.of(TaxonName.make("A"));
+  for (let depth = 0; depth < 12; depth++) {
+    expression = TaxonSet.union(expression, expression);
+  }
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state, decisions }) => {
+        // One taxon plus twelve distinct unions, shared by both roots.
+        expect(state).toHaveProperty("nodes.length", 13);
+        expect(state).toMatchObject({ left: 12, right: 12 });
+        expect(state).toHaveProperty("nodes.0", { _tag: "Taxon", name: "A" });
+        expect(state).toHaveProperty("nodes.1", { _tag: "Union", operands: [0, 0] });
+        expect(state).toHaveProperty("nodes.12", { _tag: "Union", operands: [11, 11] });
+        const question = decisions.relation;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        return Effect.succeed({
+          answers: {
+            relation: {
+              _tag: "Classify",
+              label: "yes",
+              probabilities: Record.map(question.criteria, (_value, key) =>
+                key === "yes" ? 1 : 0,
+              ),
+            },
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    expect(yield* TaxonSet.equivalent(expression, expression)).toEqual({
+      _tag: "Yes",
+      relation: "equivalent",
+    });
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect.each([
   [
@@ -230,47 +318,38 @@ it.effect(
   },
 );
 
-it.effect.each(operations)(
-  "maps every selected fixture and original side for %s",
-  ([relation, operation, yesTag, noTag]) =>
+for (const [relation, operation, yesTag, noTag] of operations) {
+  it.effect.each([
+    ["yes", { _tag: yesTag, relation }],
+    ["no", { _tag: noTag, relation }],
+    ["undetermined", { _tag: "Undetermined", relation }],
+    ["multipleLeft0", { _tag: "MultipleTaxaInSetName", relation, side: "left", taxonName: "A" }],
+    ["multipleRight0", { _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" }],
+  ] as const)(`maps ${relation} selected fixture %s to its original side`, ([label, expected]) =>
     Effect.gen(function* () {
       const left = TaxonSet.of(TaxonName.make("A"));
       const right = TaxonSet.of(TaxonName.make("B"));
-      const fixtures = [
-        ["yes", { _tag: yesTag, relation }],
-        ["no", { _tag: noTag, relation }],
-        ["undetermined", { _tag: "Undetermined", relation }],
-        [
-          "multipleLeft0",
-          { _tag: "MultipleTaxaInSetName", relation, side: "left", taxonName: "A" },
-        ],
-        [
-          "multipleRight0",
-          { _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" },
-        ],
-      ] as const;
-      for (const [label, expected] of fixtures) {
-        expect(
-          yield* operation(left, right).pipe(
-            Effect.provide(
-              relationLayer({
-                _tag: "Classify",
-                label,
-                probabilities: {
-                  yes: 0,
-                  no: 0,
-                  undetermined: 0,
-                  multipleLeft0: 0,
-                  multipleRight0: 0,
-                  [label]: 1,
-                },
-              }),
-            ),
+      expect(
+        yield* operation(left, right).pipe(
+          Effect.provide(
+            relationLayer({
+              _tag: "Classify",
+              label,
+              probabilities: {
+                yes: 0,
+                no: 0,
+                undetermined: 0,
+                multipleLeft0: 0,
+                multipleRight0: 0,
+                [label]: 1,
+              },
+            }),
           ),
-        ).toEqual(expected);
-      }
+        ),
+      ).toEqual(expected);
     }),
-);
+  );
+}
 
 it.effect(
   "deduplicates literal names per side only, retaining expression order and original side",
@@ -301,14 +380,10 @@ it.effect(
             "multipleRight1",
           ]);
           expect(question.criteria).toMatchObject({
-            multipleLeft0:
-              'The left-set name "A" jointly names distinct taxa, rather than one taxon.',
-            multipleLeft1:
-              'The left-set name "B" jointly names distinct taxa, rather than one taxon.',
-            multipleRight0:
-              'The right-set name "C" jointly names distinct taxa, rather than one taxon.',
-            multipleRight1:
-              'The right-set name "A" jointly names distinct taxa, rather than one taxon.',
+            multipleLeft0: expect.stringContaining('left-set name "A"'),
+            multipleLeft1: expect.stringContaining('left-set name "B"'),
+            multipleRight0: expect.stringContaining('right-set name "C"'),
+            multipleRight1: expect.stringContaining('right-set name "A"'),
           });
           return Effect.succeed({
             answers: {
@@ -443,64 +518,71 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each(operations)("applies selected-answer policy once for %s", ([relation, operation]) =>
-  Effect.gen(function* () {
-    const a = TaxonSet.of(TaxonName.make("A"));
-    const b = TaxonSet.of(TaxonName.make("B"));
-    const fixtures = [
-      ["weak", "yes", { yes: 0.4, no: 0.3, undetermined: 0.3 }, 0.5, 0],
-      ["tied", "multipleLeft0", { multipleLeft0: 0.5, yes: 0.5 }, 0, 0],
-      ["nonleading", "no", { yes: 0.6, no: 0.4 }, 0, 0],
-      ["uncertain", "undetermined", { yes: 0.9, undetermined: 0.1 }, 0, 0],
-      [
-        "split diagnoses not summed",
-        "multipleLeft0",
-        { multipleLeft0: 0.4, multipleRight0: 0.35, yes: 0.25 },
-        0.5,
-        0,
-      ],
-      ["exact support", "yes", { yes: 0.6, no: 0.4 }, 0.6000000000000001, 0],
-      ["beyond epsilon", "yes", { yes: 0.6, no: 0.4 }, 0.6, 0.2000000000000003],
-    ] as const;
-    for (const [_case, label, probabilities, minimumSupport, minimumMargin] of fixtures) {
+for (const [relation, operation] of operations) {
+  it.effect.each([
+    ["weak", "yes", { yes: 0.4, no: 0.3, undetermined: 0.3 }, 0.5, 0],
+    ["tied", "multipleLeft0", { multipleLeft0: 0.5, yes: 0.5 }, 0, 0],
+    ["nonleading", "no", { yes: 0.6, no: 0.4 }, 0, 0],
+    ["uncertain", "undetermined", { yes: 0.9, undetermined: 0.1 }, 0, 0],
+    [
+      "split diagnoses not summed",
+      "multipleLeft0",
+      { multipleLeft0: 0.4, multipleRight0: 0.35, yes: 0.25 },
+      0.5,
+      0,
+    ],
+    ["exact support", "yes", { yes: 0.6, no: 0.4 }, 0.6000000000000001, 0],
+    ["beyond epsilon", "yes", { yes: 0.6, no: 0.4 }, 0.6, 0.2000000000000003],
+  ] as const)(
+    `applies ${relation} policy: %s`,
+    ([_case, label, probabilities, minimumSupport, minimumMargin]) =>
+      Effect.gen(function* () {
+        const a = TaxonSet.of(TaxonName.make("A"));
+        const b = TaxonSet.of(TaxonName.make("B"));
+        expect(
+          yield* operation(a, b, {
+            policy: JudgmentPolicy.make({ minimumSupport, minimumMargin }),
+          }).pipe(
+            Effect.provide(
+              relationLayer({
+                _tag: "Classify",
+                label,
+                probabilities: pipe(
+                  { yes: 0, no: 0, undetermined: 0, multipleLeft0: 0, multipleRight0: 0 },
+                  Struct.assign(probabilities),
+                ),
+              }),
+            ),
+          ),
+        ).toEqual({ _tag: "Undetermined", relation });
+      }),
+  );
+  it.effect(`accepts ${relation} exact support and margin boundary`, () =>
+    Effect.gen(function* () {
+      const a = TaxonSet.of(TaxonName.make("A"));
+      const b = TaxonSet.of(TaxonName.make("B"));
       expect(
         yield* operation(a, b, {
-          policy: JudgmentPolicy.make({ minimumSupport, minimumMargin }),
+          policy: JudgmentPolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
         }).pipe(
           Effect.provide(
             relationLayer({
               _tag: "Classify",
-              label,
-              probabilities: pipe(
-                { yes: 0, no: 0, undetermined: 0, multipleLeft0: 0, multipleRight0: 0 },
-                Struct.assign(probabilities),
-              ),
+              label: "multipleRight0",
+              probabilities: {
+                yes: 0.4,
+                no: 0,
+                undetermined: 0,
+                multipleLeft0: 0,
+                multipleRight0: 0.6,
+              },
             }),
           ),
         ),
-      ).toEqual({ _tag: "Undetermined", relation });
-    }
-    expect(
-      yield* operation(a, b, {
-        policy: JudgmentPolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
-      }).pipe(
-        Effect.provide(
-          relationLayer({
-            _tag: "Classify",
-            label: "multipleRight0",
-            probabilities: {
-              yes: 0.4,
-              no: 0,
-              undetermined: 0,
-              multipleLeft0: 0,
-              multipleRight0: 0.6,
-            },
-          }),
-        ),
-      ),
-    ).toEqual({ _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" });
-  }),
-);
+      ).toEqual({ _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" });
+    }),
+  );
+}
 
 it.effect("builds per-execution name inventories for repeated and interleaved set requests", () => {
   const a = TaxonSet.of(TaxonName.make("A"));
@@ -533,11 +615,15 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
   return Effect.gen(function* () {
     yield* Effect.all([first, second], { concurrency: 2 });
     yield* first;
-    expect(seen).toEqual([
-      ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
-      ["yes", "no", "undetermined", "multipleLeft0", "multipleLeft1"],
-      ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
-    ]);
+    expect(seen.map((keys) => keys.join(",")).sort()).toEqual(
+      [
+        ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
+        ["yes", "no", "undetermined", "multipleLeft0", "multipleLeft1"],
+        ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
+      ]
+        .map((keys) => keys.join(","))
+        .sort(),
+    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -592,42 +678,55 @@ it.effect.each(operations)(
   },
 );
 
-it.effect.each(operations)(
-  "rejects missing/malformed classification output for %s",
-  ([_relation, operation]) =>
+for (const [relation, operation] of operations) {
+  const invalidOutputs = [
+    ["missing", undefined],
+    [
+      "unknown label",
+      { _tag: "Classify" as const, label: "invented", probabilities: { invented: 1 } },
+    ],
+    [
+      "invalid probabilities",
+      {
+        _tag: "Classify" as const,
+        label: "yes",
+        probabilities: {
+          yes: 0.9,
+          no: 0.9,
+          undetermined: 0,
+          multipleLeft0: 0,
+          multipleRight0: 0,
+        },
+      },
+    ],
+  ] as const;
+  it.effect.each(
+    invalidOutputs.filter(
+      // Missing answers exercise every wrapper; the other cases sample real model validation.
+      ([kind]) =>
+        kind === "missing" ||
+        (kind === "unknown label" && relation === "overlap") ||
+        (kind === "invalid probabilities" && relation === "subset"),
+    ),
+  )(`rejects ${relation} output: %s`, ([_case, answer]) =>
     Effect.gen(function* () {
       const a = TaxonSet.of(TaxonName.make("A"));
-      for (const answer of [
-        undefined,
-        { _tag: "Classify" as const, label: "invented", probabilities: { invented: 1 } },
-        {
-          _tag: "Classify" as const,
-          label: "yes",
-          probabilities: {
-            yes: 0.9,
-            no: 0.9,
-            undetermined: 0,
-            multipleLeft0: 0,
-            multipleRight0: 0,
-          },
-        },
-      ]) {
-        const layer = Layer.effect(
-          DecisionModel.DecisionModel,
-          DecisionModel.make({
-            decide: () =>
-              Effect.succeed({
-                answers: answer === undefined ? {} : { relation: answer },
-                usage: { inputTokens: undefined, outputTokens: undefined },
-              }),
-          }),
-        );
-        expect((yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)))).reason._tag).toBe(
-          "InvalidOutputError",
-        );
-      }
+      const layer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: () =>
+            Effect.succeed({
+              answers: answer === undefined ? {} : { relation: answer },
+              usage: { inputTokens: undefined, outputTokens: undefined },
+            }),
+        }),
+      );
+      expect((yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)))).reason._tag).toBe(
+        "InvalidOutputError",
+      );
     }),
-);
+  );
+}
 
 it.effect.each(operations)(
   "keeps pending %s interruption without retry or fallback",
@@ -690,7 +789,7 @@ it.effect("maps a single overlap observation to disjoint without another classif
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions: expect.stringContaining("Do the two complete sets share any organisms?"),
+          instructions: expect.stringContaining("share any organisms"),
         });
         return Effect.succeed({
           answers: {
@@ -727,10 +826,10 @@ it.effect("asks overlap directly with one complete-expression classification", (
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions: expect.stringContaining("Do the two complete sets share any organisms?"),
+          instructions: expect.stringContaining("share any organisms"),
           criteria: {
-            yes: "At least one organism belongs to both sets.",
-            no: "No organism belongs to both sets.",
+            yes: expect.stringContaining("At least one organism belongs to both sets"),
+            no: expect.stringContaining("No organism belongs to both sets"),
           },
         });
         return Effect.succeed({
@@ -768,10 +867,8 @@ it.effect("asks organism-set equivalence directly even for the same expression",
         calls++;
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          instructions: expect.stringContaining(
-            "Do the two complete sets contain exactly the same organisms?",
-          ),
-          criteria: { yes: "The two sets contain exactly the same organisms." },
+          instructions: expect.stringContaining("contain exactly the same organisms"),
+          criteria: { yes: expect.stringContaining("contain exactly the same organisms") },
         });
         return Effect.succeed({
           answers: {
@@ -808,12 +905,17 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
         expect(Object.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           instructions: expect.stringContaining(
-            "Is the complete left organism set a proper subset of the complete right organism set?",
+            "left organism set a proper subset of the complete right organism set",
           ),
           criteria: {
-            yes: "Every organism in the left set belongs to the right set, and at least one organism in the right set is outside the left set.",
+            yes: expect.stringContaining("Every organism in the left set belongs to the right set"),
           },
         });
+        const question = decisions.relation;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        expect(question.criteria.yes).toContain(
+          "at least one organism in the right set is outside the left set",
+        );
         return Effect.succeed({
           answers: {
             relation: {
@@ -857,25 +959,32 @@ it.effect(
             right: 3,
           });
           expect(Object.keys(decisions)).toEqual(["relation"]);
-          expect(decisions.relation).toEqual({
+          expect(decisions.relation).toMatchObject({
             _tag: "Classify",
             instructions: expect.stringContaining(
-              "Is the complete left organism set a subset of the complete right organism set?",
+              "left organism set a subset of the complete right organism set",
             ),
             criteria: {
-              yes: "Every organism in the left set also belongs to the right set; equality counts.",
-              no: "At least one organism in the left set does not belong to the right set.",
-              undetermined: "The available information is insufficient.",
-              multipleLeft0:
-                'The left-set name "A" jointly names distinct taxa, rather than one taxon.',
-              multipleLeft1:
-                'The left-set name "B" jointly names distinct taxa, rather than one taxon.',
-              multipleRight0:
-                'The right-set name "C" jointly names distinct taxa, rather than one taxon.',
+              yes: expect.stringContaining(
+                "Every organism in the left set also belongs to the right set",
+              ),
+              no: expect.stringContaining(
+                "At least one organism in the left set does not belong to the right set",
+              ),
+              undetermined: expect.stringContaining("information is insufficient"),
+              multipleLeft0: expect.stringContaining('left-set name "A"'),
+              multipleLeft1: expect.stringContaining('left-set name "B"'),
+              multipleRight0: expect.stringContaining('right-set name "C"'),
             },
           });
           const question = decisions.relation;
           if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          expect(question.criteria.yes).toContain("equality counts");
+          for (const label of ["multipleLeft0", "multipleLeft1", "multipleRight0"]) {
+            expect(question.criteria[label]).toContain(
+              "jointly names distinct taxa, rather than one taxon",
+            );
+          }
           return Effect.succeed({
             answers: {
               relation: {

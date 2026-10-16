@@ -20,22 +20,37 @@ it.effect("compares the original record descriptions at the requested rank", () 
         expect(state).toBeNull();
         expect(decisions.comparison).toMatchObject({
           _tag: "Classify",
-          instructions:
-            "Do these records represent the same taxon at species rank?\n" +
-            'Left record:\nRecord label: "Voucher A17 | Quercus robur"\n' +
-            'Right record:\nRecord label: "Voucher B42 | Quercus robur"',
           criteria: {
-            same: "Each record represents one taxon at the requested rank, and these taxa are the same, including resolved synonyms.",
-            different:
-              "Each record represents one taxon at the requested rank, and these taxa differ.",
-            undetermined: "The available information is insufficient.",
-            multipleLeft:
-              "The left record jointly represents distinct taxa at the requested rank; this is not established for the right record.",
-            multipleRight:
-              "The right record jointly represents distinct taxa at the requested rank; this is not established for the left record.",
-            multipleBoth: "Each record jointly represents distinct taxa at the requested rank.",
+            same: expect.stringContaining("taxa are the same, including resolved synonyms"),
+            different: expect.stringContaining("these taxa differ"),
+            undetermined: expect.stringContaining("information is insufficient"),
+            multipleLeft: expect.stringContaining(
+              "left record jointly represents distinct taxa at the requested rank",
+            ),
+            multipleRight: expect.stringContaining(
+              "right record jointly represents distinct taxa at the requested rank",
+            ),
+            multipleBoth: expect.stringContaining(
+              "Each record jointly represents distinct taxa at the requested rank",
+            ),
           },
         });
+        const question = decisions.comparison;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        expect(question.instructions).toContain("species rank");
+        expect(question.instructions).toContain(
+          'Left record:\nRecord label: "Voucher A17 | Quercus robur"',
+        );
+        expect(question.instructions).toContain(
+          'Right record:\nRecord label: "Voucher B42 | Quercus robur"',
+        );
+        for (const label of ["same", "different"]) {
+          expect(question.criteria[label]).toContain("one taxon at the requested rank");
+        }
+        expect(question.criteria.multipleLeft).toContain("not established for the right record");
+        expect(question.criteria.multipleRight).toContain("not established for the left record");
+        expect(question.instructions.split('"Voucher A17 | Quercus robur"')).toHaveLength(2);
+        expect(question.instructions.split('"Voucher B42 | Quercus robur"')).toHaveLength(2);
         expect(Object.keys(decisions)).toEqual(["comparison"]);
 
         return Effect.succeed({
@@ -86,13 +101,30 @@ it.effect(
         decide: ({ state, decisions }) => {
           expect(state).toBeNull();
           expect(decisions.comparison).toMatchObject({
-            instructions:
-              "Do these records represent the same taxon at genus rank?\n" +
+            instructions: expect.stringContaining(
               'Left record:\nRecord label: "Voucher \\"A17\\"\\nFagus sylvatica"\n' +
-              'Scientific name: "Quercus robur"\nTaxonomy: "local\\\\taxonomy"\n' +
-              'Taxon ID: "id\\"17"\nTaxonomy release: "2026\\n01"\n' +
-              'Right record:\nScientific name: "Quercus petraea"',
+                'Scientific name: "Quercus robur"\nTaxonomy: "local\\\\taxonomy"\n' +
+                'Taxon ID: "id\\"17"\nTaxonomy release: "2026\\n01"\n' +
+                'Right record:\nScientific name: "Quercus petraea"',
+            ),
           });
+          expect(decisions.comparison).toMatchObject({
+            instructions: expect.stringContaining("genus rank"),
+          });
+          const question = decisions.comparison;
+          if (question?._tag !== "Classify") return Effect.die("Expected classification");
+          expect(question.instructions).not.toContain("caller-only");
+          for (const field of [
+            "Record label",
+            "Scientific name",
+            "Taxonomy",
+            "Taxon ID",
+            "Taxonomy release",
+          ]) {
+            expect(question.instructions.split(`${field}:`), field).toHaveLength(
+              field === "Scientific name" ? 3 : 2,
+            );
+          }
           return Effect.succeed({
             answers: {
               comparison: {
@@ -196,11 +228,19 @@ it.effect("builds fresh direct context for repeated and interleaved executions",
   return Effect.gen(function* () {
     yield* Effect.all([first, second], { concurrency: 2 });
     yield* first;
-    expect(seen).toEqual([
-      'Do these records represent the same taxon at species rank?\nLeft record:\nRecord label: "A"\nRight record:\nRecord label: "B"',
-      'Do these records represent the same taxon at family rank?\nLeft record:\nRecord label: "C"\nRight record:\nRecord label: "D"',
-      'Do these records represent the same taxon at species rank?\nLeft record:\nRecord label: "A"\nRight record:\nRecord label: "B"',
-    ]);
+    expect(seen).toHaveLength(3);
+    const species = seen.filter((text) => text.includes('Left record:\nRecord label: "A"'));
+    const family = seen.filter((text) => text.includes('Left record:\nRecord label: "C"'));
+    expect(species).toHaveLength(2);
+    expect(family).toHaveLength(1);
+    for (const text of species) {
+      expect(text).toContain("species rank");
+      expect(text).toContain('Right record:\nRecord label: "B"');
+    }
+    for (const text of family) {
+      expect(text).toContain("family rank");
+      expect(text).toContain('Right record:\nRecord label: "D"');
+    }
   }).pipe(Effect.provide(modelLayer));
 });
 
@@ -317,11 +357,23 @@ it.effect.each([
   { rank: "order", compare: Taxonomy.sameOrder },
   { rank: "family", compare: Taxonomy.sameFamily },
   { rank: "genus", compare: Taxonomy.sameGenus },
-])("compares at the $rank convenience's requested rank", ({ rank, compare }) =>
+])("forwards policy at the $rank convenience's requested rank", ({ rank, compare }) =>
   Effect.gen(function* () {
-    const result = yield* compare(RecordLabel.make("Voucher A17"), RecordLabel.make("Voucher B42"));
+    expect(
+      yield* compare(RecordLabel.make("Voucher A17"), RecordLabel.make("Voucher B42")),
+    ).toEqual({
+      _tag: "DifferentTaxaAtRank",
+      rank,
+    });
+    const result = yield* compare(
+      RecordLabel.make("Voucher A17"),
+      RecordLabel.make("Voucher B42"),
+      {
+        policy: RankComparisonPolicy.make({ minimumSupport: 0.99, minimumMargin: 0 }),
+      },
+    );
 
-    expect(result).toEqual({ _tag: "DifferentTaxaAtRank", rank });
+    expect(result).toEqual({ _tag: "Undetermined", rank });
   }).pipe(
     Effect.provide(
       classificationLayer({
@@ -478,13 +530,19 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
       decide: ({ state, decisions }) => {
         expect(state).toBeNull();
         expect(decisions.comparison).toMatchObject({
-          instructions:
-            "Do these records represent the same taxon at family rank?\n" +
+          instructions: expect.stringContaining(
             'Left record:\nRecord label: "Voucher A17"\n' +
-            'Scientific name: "Quercus robur"\nTaxonomy: "example-taxonomy"\n' +
-            'Taxon ID: "oak-17"\nTaxonomy release: "2026-01"\n' +
-            'Right record:\nTaxonomy: "example-taxonomy"\nTaxon ID: "oak-18"',
+              'Scientific name: "Quercus robur"\nTaxonomy: "example-taxonomy"\n' +
+              'Taxon ID: "oak-17"\nTaxonomy release: "2026-01"\n' +
+              'Right record:\nTaxonomy: "example-taxonomy"\nTaxon ID: "oak-18"',
+          ),
         });
+        const question = decisions.comparison;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        expect(question.instructions).toContain("family rank");
+        expect(question.instructions.split("Taxonomy release:")).toHaveLength(2);
+        expect(question.instructions.split("Record label:")).toHaveLength(2);
+        expect(question.instructions.split("Scientific name:")).toHaveLength(2);
 
         return Effect.succeed({
           answers: {

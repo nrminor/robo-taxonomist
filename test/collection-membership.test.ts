@@ -22,6 +22,7 @@ it.effect(
   "partitions original occurrences into five ordered buckets and retains caller fields",
   () => {
     const member = { scientificName: TaxonName.make("A"), sampleId: "member" };
+    const laterMember = { scientificName: TaxonName.make("D"), sampleId: "later member" };
     const outside = { scientificName: TaxonName.make("B"), sampleId: "outside" };
     const mixed = { scientificName: TaxonName.make("A and B"), sampleId: "mixed" };
     const unresolved = {
@@ -44,6 +45,7 @@ it.effect(
             "record3",
             "record4",
             "record5",
+            "record6",
           ]);
           const answer = (label: string) => ({
             _tag: "Classify" as const,
@@ -64,7 +66,8 @@ it.effect(
               record2: answer("mixed"),
               record3: answer("undetermined"),
               record4: answer("multipleTarget0"),
-              record5: answer("member"),
+              record5: answer("notMember"),
+              record6: answer("member"),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -73,14 +76,18 @@ it.effect(
     );
     return Effect.gen(function* () {
       const partition = yield* Taxonomy.partitionRecordsByMembership(
-        [member, outside, mixed, unresolved, diagnosed, member],
+        [member, outside, mixed, unresolved, diagnosed, member, laterMember],
         target,
       );
-      expect(partition.Member).toEqual([member, member]);
+      expect(partition.Member).toEqual([member, laterMember]);
       expect(partition.Member[0]).toBe(member);
-      expect(partition.Member[1]).toBe(member);
+      expect(partition.Member[1]).toBe(laterMember);
+      expect(partition.NotMember).toEqual([outside, member]);
       expect(partition.NotMember[0]).toBe(outside);
+      expect(partition.NotMember[1]).toBe(member);
+      expect(partition.MixedMembership).toEqual([mixed]);
       expect(partition.MixedMembership[0]).toBe(mixed);
+      expect(partition.Undetermined).toEqual([unresolved]);
       expect(partition.Undetermined[0]).toBe(unresolved);
       expect(partition.MultipleTaxaInTargetName).toEqual([
         { record: diagnosed, targetName: target },
@@ -88,7 +95,7 @@ it.effect(
       expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(diagnosed);
       expect(partition.pipe((value) => value.Member.map((record) => record.sampleId))).toEqual([
         "member",
-        "member",
+        "later member",
       ]);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
@@ -198,6 +205,36 @@ const response = (labels: readonly string[]): DecisionModel.ProviderResponse => 
   usage: { inputTokens: undefined, outputTokens: undefined },
 });
 
+it.effect("snapshots original record occurrences before consuming later quantifier batches", () => {
+  const input = [RecordLabel.make("first"), RecordLabel.make("original second")];
+  const facts: string[] = [];
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ decisions }) => {
+        const question = decisions.record0;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        expect(Object.keys(decisions)).toEqual(["record0"]);
+        facts.push(question.instructions);
+        if (facts.length === 1) input[1] = RecordLabel.make("replacement second");
+        return Effect.succeed(response(["member"]));
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    expect(
+      yield* Taxonomy.allRecordsBelongTo(input, TaxonName.make("target"), {
+        execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+      }),
+    ).toEqual({ _tag: "Yes", quantifier: "all" });
+    expect(facts).toEqual([
+      expect.stringContaining('Record label: "first"'),
+      expect.stringContaining('Record label: "original second"'),
+    ]);
+    expect(input[1]).toBe("replacement second");
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("snapshots one prepared target across batches but prepares it afresh on rerun", () => {
   const expression = TaxonSet.of(TaxonName.make("A"));
   const seen: unknown[] = [];
@@ -245,6 +282,79 @@ const quantifiers = [
   ["any", Taxonomy.anyRecordBelongsTo],
   ["none", Taxonomy.noRecordBelongsTo],
 ] as const;
+
+it.effect(
+  "does not validate records in an unattempted later window after a decisive answer",
+  () => {
+    let calls = 0;
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ decisions }) => {
+          calls++;
+          expect(Object.keys(decisions)).toEqual(["record0"]);
+          expect(decisions.record0).toMatchObject({
+            instructions: expect.stringContaining('Record label: "decisive"'),
+          });
+          return Effect.succeed(response(["member"]));
+        },
+      }),
+    );
+    return Effect.gen(function* () {
+      expect(
+        yield* Taxonomy.anyRecordBelongsTo(
+          // @ts-expect-error Untyped input in a later, unattempted window has no record facts.
+          [RecordLabel.make("decisive"), {}],
+          target,
+          { execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }) },
+        ),
+      ).toEqual({ _tag: "Yes", quantifier: "any" });
+      expect(calls).toBe(1);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+for (const [quantifier, operation] of quantifiers) {
+  it.effect.each(["missing", "invalid"] as const)(
+    `validates all of one ${quantifier} response before a decisive record: %s`,
+    (mode) => {
+      let calls = 0;
+      const layer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: ({ decisions }) => {
+            calls++;
+            expect(Object.keys(decisions)).toEqual(["record0", "record1"]);
+            return Effect.succeed({
+              answers: {
+                record0: membershipAnswer(quantifier === "all" ? "notMember" : "member"),
+                ...(mode === "missing"
+                  ? {}
+                  : {
+                      record1: {
+                        _tag: "Classify" as const,
+                        label: "invented",
+                        probabilities: { invented: 1 },
+                      },
+                    }),
+              },
+              usage: { inputTokens: undefined, outputTokens: undefined },
+            });
+          },
+        }),
+      );
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          operation(records, target, {
+            execution: CollectionExecution.make({ batchSize: 2, concurrency: 1 }),
+          }),
+        );
+        expect(error.reason._tag).toBe("InvalidOutputError");
+        expect(calls).toBe(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+}
 
 it.effect.each(quantifiers)(
   "uses no calls for %s empty inputs and literal Empty targets",
@@ -593,18 +703,14 @@ const operations = [
   [
     "partition",
     (execution: CollectionExecution) =>
-      Taxonomy.partitionRecordsByMembership(records.slice(0, 2), target, { execution }).pipe(
-        Effect.asVoid,
-      ),
+      Taxonomy.partitionRecordsByMembership(records, target, { execution }).pipe(Effect.asVoid),
   ],
   [
     "group",
     (execution: CollectionExecution) =>
-      Taxonomy.groupRecordsByTaxa(
-        records.slice(0, 2),
-        [target, TaxonName.make("unrequested target")],
-        { execution },
-      ).pipe(Effect.asVoid),
+      Taxonomy.groupRecordsByTaxa(records, [target, TaxonName.make("unrequested target")], {
+        execution,
+      }).pipe(Effect.asVoid),
   ],
   [
     "all",
@@ -623,16 +729,16 @@ const operations = [
   ],
 ] as const;
 
-it.effect.each(operations)(
-  "fails %s on any invalid/failed current batch, even beside a decisive answer",
-  ([kind, operation]) =>
-    Effect.gen(function* () {
-      const failure = AiError.make({
-        module: "TestProvider",
-        method: "decide",
-        reason: new AiError.UnknownError({ description: "unavailable" }),
-      });
-      for (const mode of ["missing", "invalid", "failure"] as const) {
+for (const [kind, operation] of operations) {
+  it.effect.each(["missing", "invalid", "failure"] as const)(
+    `fails ${kind} current batch beside a decisive answer: %s`,
+    (mode) =>
+      Effect.gen(function* () {
+        const failure = AiError.make({
+          module: "TestProvider",
+          method: "decide",
+          reason: new AiError.UnknownError({ description: "unavailable" }),
+        });
         const firstAnswered = yield* Deferred.make<void>();
         let calls = 0;
         let succeeded = false;
@@ -678,9 +784,9 @@ it.effect.each(operations)(
         if (mode === "failure") expect(error).toBe(failure);
         expect(succeeded).toBe(false);
         expect(calls).toBe(2);
-      }
-    }),
-);
+      }),
+  );
+}
 
 it.effect.each(operations)(
   "interrupts %s in-flight work without success, retry, or later windows/targets",
@@ -695,7 +801,7 @@ it.effect.each(operations)(
         DecisionModel.make({
           decide: () => {
             calls++;
-            return Deferred.succeed(started, undefined).pipe(
+            return (calls === 2 ? Deferred.succeed(started, undefined) : Effect.void).pipe(
               Effect.andThen(Effect.never),
               Effect.onInterrupt(() =>
                 Effect.sync(() => {
@@ -707,7 +813,7 @@ it.effect.each(operations)(
         }),
       );
       const fiber = yield* operation(
-        CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+        CollectionExecution.make({ batchSize: 1, concurrency: 2 }),
       ).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
@@ -722,8 +828,8 @@ it.effect.each(operations)(
       const exit = yield* Fiber.await(fiber);
       expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
       expect(succeeded).toBe(false);
-      expect(calls).toBe(1);
-      expect(interrupted).toBe(1);
+      expect(calls).toBe(2);
+      expect(interrupted).toBe(2);
     }),
 );
 
@@ -1225,31 +1331,31 @@ it.effect.each([
   );
 });
 
-it.effect.each(quantifiers)(
-  "scans %s diagnoses in record order, without global diagnosis precedence",
-  ([quantifier, operation]) =>
+for (const [quantifier, operation] of quantifiers) {
+  const decisive = quantifier === "all" ? "mixed" : "member";
+  it.effect.each([
+    [
+      "decisive before diagnosis",
+      ["undetermined", decisive, "multipleTarget0"],
+      { _tag: quantifier === "any" ? "Yes" : "No", quantifier },
+    ],
+    [
+      "diagnosis before decisive",
+      ["undetermined", "multipleTarget0", decisive],
+      { _tag: "MultipleTaxaInTargetName", quantifier, targetName: target },
+    ],
+  ] as const)(`scans ${quantifier} in record order: %s`, ([_case, labels, expected]) =>
     Effect.gen(function* () {
-      const decisive = quantifier === "all" ? "mixed" : "member";
-      for (const [labels, expected] of [
-        [
-          ["undetermined", decisive, "multipleTarget0"],
-          { _tag: quantifier === "any" ? "Yes" : "No", quantifier },
-        ],
-        [
-          ["undetermined", "multipleTarget0", decisive],
-          { _tag: "MultipleTaxaInTargetName", quantifier, targetName: target },
-        ],
-      ] as const) {
-        const layer = Layer.effect(
-          DecisionModel.DecisionModel,
-          DecisionModel.make({ decide: () => Effect.succeed(response(labels)) }),
-        );
-        expect(yield* operation(records.slice(0, 3), target).pipe(Effect.provide(layer))).toEqual(
-          expected,
-        );
-      }
+      const layer = Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({ decide: () => Effect.succeed(response(labels)) }),
+      );
+      expect(yield* operation(records.slice(0, 3), target).pipe(Effect.provide(layer))).toEqual(
+        expected,
+      );
     }),
-);
+  );
+}
 
 it.effect("uses default batches of 16 and independently applies policy to each answer", () => {
   const sizes: number[] = [];

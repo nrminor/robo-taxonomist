@@ -20,6 +20,10 @@
 !/test/
 !/test/**/
 !/test/**/*.ts
+!/fixtures/
+!/fixtures/consumer/
+!/fixtures/consumer/contracts.ts
+!/fixtures/consumer/tsconfig.json
 !/.github/
 !/.github/workflows/
 !/.github/workflows/*.yml

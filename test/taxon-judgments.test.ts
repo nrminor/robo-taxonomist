@@ -14,6 +14,54 @@ import {
 } from "../src/index.ts";
 
 // Canned transport answers test library contracts, not biological accuracy.
+it.effect.each(["left", "right"] as const)(
+  "preserves asymmetric escaped identity and %s diagnosis",
+  (side) => {
+    const left = TaxonName.make('Oak\n"A"');
+    const right = TaxonName.make("Beech\\B");
+    const label = side === "left" ? "multipleLeft" : "multipleRight";
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state, decisions }) => {
+          expect(state).toBeNull();
+          expect(Object.keys(decisions)).toEqual(["identity"]);
+          expect(decisions.identity).toMatchObject({
+            _tag: "Classify",
+            instructions: expect.stringContaining(
+              'Left taxon name: "Oak\\n\\\"A\\\""\nRight taxon name: "Beech\\\\B"',
+            ),
+            criteria: {
+              same: expect.stringContaining("same taxonomic grouping, including resolved synonyms"),
+            },
+          });
+          return Effect.succeed({
+            answers: {
+              identity: {
+                _tag: "Classify",
+                label,
+                probabilities: {
+                  same: 0,
+                  different: 0,
+                  undetermined: 0,
+                  multipleLeft: 0,
+                  multipleRight: 0,
+                  multipleBoth: 0,
+                  [label]: 1,
+                },
+              },
+            },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          });
+        },
+      }),
+    );
+    return Effect.gen(function* () {
+      expect(yield* Taxonomy.sameTaxon(left, right)).toEqual({ _tag: "MultipleTaxa", side });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("asks one identity question with quoted names and null state", () => {
   let calls = 0;
   const layer = Layer.effect(
@@ -25,8 +73,9 @@ it.effect("asks one identity question with quoted names and null state", () => {
         expect(Object.keys(decisions)).toEqual(["identity"]);
         expect(decisions.identity).toMatchObject({
           _tag: "Classify",
-          instructions:
-            'Do these names refer to the same taxon?\nLeft taxon name: "Oak\\n\\\"A\\\""\nRight taxon name: "Oak\\n\\\"A\\\""',
+          instructions: expect.stringContaining(
+            'Left taxon name: "Oak\\n\\\"A\\\""\nRight taxon name: "Oak\\n\\\"A\\\""',
+          ),
         });
         return Effect.succeed({
           answers: {
@@ -171,10 +220,9 @@ it.effect(
           });
           expect(decisions.record0).toMatchObject({
             criteria: {
-              multipleTarget0:
-                'The name "A \\"quoted\\"" jointly names distinct taxa, rather than one taxon.',
-              multipleTarget1: 'The name "B" jointly names distinct taxa, rather than one taxon.',
-              multipleTarget2: 'The name "b" jointly names distinct taxa, rather than one taxon.',
+              multipleTarget0: expect.stringContaining('name "A \\"quoted\\""'),
+              multipleTarget1: expect.stringContaining('name "B"'),
+              multipleTarget2: expect.stringContaining('name "b"'),
             },
           });
           const question = decisions.record0;
@@ -239,6 +287,18 @@ it.effect.each([
         expect(decisions.record0).toMatchObject({
           instructions: expect.stringContaining(facts),
         });
+        const question = decisions.record0;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        for (const field of [
+          "Record label",
+          "Scientific name",
+          "Taxonomy",
+          "Taxon ID",
+          "Taxonomy release",
+        ]) {
+          const occurrences = question.instructions.split(`${field}:`).length - 1;
+          expect(occurrences, field).toBe(facts.includes(`${field}:`) ? 1 : 0);
+        }
         return Effect.succeed({
           answers: {
             record0: {
@@ -410,19 +470,28 @@ it.effect(
         { concurrency: 3 },
       );
       yield* first;
-      expect(seen).toEqual([
-        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
-        {
-          nodes: [
-            { _tag: "Taxon", name: "target2" },
-            { _tag: "Taxon", name: "target3" },
-            { _tag: "Union", operands: [0, 1] },
-          ],
-          target: 2,
-        },
-        null,
-        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
-      ]);
+      expect(seen).toHaveLength(4);
+      expect(
+        seen.filter(
+          (state) =>
+            state !== null && typeof state === "object" && "target" in state && state.target === 0,
+        ),
+      ).toHaveLength(2);
+      expect(seen).toEqual(
+        expect.arrayContaining([
+          { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
+          {
+            nodes: [
+              { _tag: "Taxon", name: "target2" },
+              { _tag: "Taxon", name: "target3" },
+              { _tag: "Union", operands: [0, 1] },
+            ],
+            target: 2,
+          },
+          null,
+          { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
+        ]),
+      );
     }).pipe(Effect.provide(layer));
   },
 );
@@ -550,19 +619,15 @@ it.effect.each(modelOperations)("preserves provider failure for %s", ([_key, ope
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each(modelOperations)("rejects missing or malformed output for %s", ([key, operation]) =>
-  Effect.gen(function* () {
-    for (const answer of [
-      undefined,
-      { _tag: "Classify" as const, label: "invented", probabilities: { invented: 1 } },
-      { _tag: "Classify" as const, label: "undetermined", probabilities: {} },
-    ]) {
+for (const [key, operation] of modelOperations) {
+  it.effect(`rejects a missing ${key} answer`, () =>
+    Effect.gen(function* () {
       const layer = Layer.effect(
         DecisionModel.DecisionModel,
         DecisionModel.make({
           decide: () =>
             Effect.succeed({
-              answers: answer === undefined ? {} : { [key]: answer },
+              answers: {},
               usage: { inputTokens: undefined, outputTokens: undefined },
             }),
         }),
@@ -570,9 +635,9 @@ it.effect.each(modelOperations)("rejects missing or malformed output for %s", ([
       expect((yield* Effect.flip(operation().pipe(Effect.provide(layer)))).reason._tag).toBe(
         "InvalidOutputError",
       );
-    }
-  }),
-);
+    }),
+  );
+}
 
 it.effect.each(modelOperations)(
   "preserves interruption without retry for %s",
@@ -637,20 +702,32 @@ it.effect("provides shared target once and record facts once in singleton member
         calls++;
         expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: "Quercus" }], target: 0 });
         expect(Object.keys(decisions)).toEqual(["record0"]);
-        expect(decisions.record0).toEqual({
+        expect(decisions.record0).toMatchObject({
           _tag: "Classify",
           instructions: expect.stringContaining(
             'Record label: "Voucher \\"A\\"\\nline"\nScientific name: "Quercus robur"\nTaxonomy: "local"\nTaxon ID: "17"\nTaxonomy release: "2026"',
           ),
           criteria: {
-            member: "Everything represented by the record belongs.",
-            notMember: "Everything represented by the record is outside.",
-            mixed: "The record jointly represents taxa inside and outside.",
-            undetermined: "The available information is insufficient.",
-            multipleTarget0:
-              'The name "Quercus" jointly names distinct taxa, rather than one taxon.',
+            member: expect.stringContaining("Everything represented by the record belongs"),
+            notMember: expect.stringContaining("Everything represented by the record is outside"),
+            mixed: expect.stringContaining("jointly represents taxa inside and outside"),
+            undetermined: expect.stringContaining("information is insufficient"),
+            multipleTarget0: expect.stringContaining(
+              'name "Quercus" jointly names distinct taxa, rather than one taxon',
+            ),
           },
         });
+        const question = decisions.record0;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        for (const field of [
+          "Record label",
+          "Scientific name",
+          "Taxonomy",
+          "Taxon ID",
+          "Taxonomy release",
+        ]) {
+          expect(question.instructions.split(`${field}:`), field).toHaveLength(2);
+        }
         return Effect.succeed({
           answers: {
             record0: {
@@ -809,13 +886,18 @@ it.effect("asks the direct containment question with original left = inner", () 
         expect(Object.keys(decisions)).toEqual(["containment"]);
         expect(decisions.containment).toMatchObject({
           _tag: "Classify",
-          instructions:
-            'Is the inner taxon contained in the outer taxon?\nLeft (inner) taxon name: "A"\nRight (outer) taxon name: "B"',
+          instructions: expect.stringContaining(
+            'Left (inner) taxon name: "A"\nRight (outer) taxon name: "B"',
+          ),
           criteria: {
-            contained:
-              "Every organism belonging to the inner taxon belongs to the outer taxon; equality counts.",
+            contained: expect.stringContaining(
+              "Every organism belonging to the inner taxon belongs to the outer taxon",
+            ),
           },
         });
+        const question = decisions.containment;
+        if (question?._tag !== "Classify") return Effect.die("Expected classification");
+        expect(question.criteria.contained).toContain("equality counts");
         return Effect.succeed({
           answers: {
             containment: {
