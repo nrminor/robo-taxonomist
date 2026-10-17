@@ -1,3 +1,8 @@
+/**
+ * Construct validated inputs with the exported schemas.
+ * Use .make for synchronous construction; validation failures throw.
+ * Use .makeEffect to handle validation failures through Effect.
+ */
 export {
   CollectionExecution,
   JudgmentPolicy,
@@ -8,7 +13,11 @@ export {
   TaxonName,
 } from "./schemas.ts";
 /**
- * Literal equality, rank/taxon comparisons, and singleton or batched whole-record membership.
+ * Compare record labels, ask about taxa and ranks, and test records against targets.
+ * Model-backed questions return Effects that require a DecisionModel service
+ * and report input or provider failures through AiError.
+ * By default, an answer must receive at least half the reported probability
+ * and exceed every competing answer. Other answers become Undetermined.
  *
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
@@ -29,7 +38,10 @@ export type {
 } from "./Taxonomy.ts";
 
 /**
- * Pure symbolic constructors and whole-expression relation questions.
+ * Build set expressions from supplied taxon names and ask how their organisms relate.
+ * Constructors return expressions synchronously and can throw if validation fails.
+ * Relation questions return Effects and use the model, error, and acceptance rules
+ * described for Taxonomy questions.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const oaks = TaxonSet.of(TaxonName.make("Quercus"));

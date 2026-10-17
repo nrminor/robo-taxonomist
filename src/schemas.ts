@@ -1,8 +1,7 @@
 import { Schema } from "effect";
 
 /**
- * A record description that keeps your original text.
- * Rejects blank text; does not parse or validate taxonomy.
+ * Describe a record with nonblank text, preserved exactly as supplied.
  *
  * @example
  * import { RecordLabel } from "robo-taxonomist";
@@ -13,7 +12,8 @@ export const RecordLabel = Schema.String.check(
 ).pipe(Schema.brand("RecordLabel"));
 
 /**
- * The type of a constructed record label, distinct from a whole-taxon name.
+ * RecordLabel.make returns this type after validating the supplied text.
+ * Record-based questions accept it as a record description.
  *
  * @example
  * import { Taxonomy, type RecordLabel } from "robo-taxonomist";
@@ -23,8 +23,8 @@ export const RecordLabel = Schema.String.check(
 export type RecordLabel = typeof RecordLabel.Type;
 
 /**
- * A name describing a whole taxon, kept exactly as supplied.
- * Rejects blank text; does not resolve or certify the name.
+ * Supply a whole-taxon name as nonblank text, preserved exactly as supplied.
+ * To combine several taxa, construct each with TaxonSet.of and combine the expressions with TaxonSet.union.
  *
  * @example
  * import { TaxonName } from "robo-taxonomist";
@@ -35,7 +35,8 @@ export const TaxonName = Schema.String.check(
 ).pipe(Schema.brand("TaxonName"));
 
 /**
- * The type of a constructed whole-taxon name.
+ * TaxonName.make returns this type after validating the supplied name text.
+ * Taxon questions accept it directly, and records accept it in scientificName.
  *
  * @example
  * import { TaxonomicRecord, type TaxonName } from "robo-taxonomist";
@@ -47,8 +48,8 @@ export type TaxonName = typeof TaxonName.Type;
 const NonblankText = Schema.String.check(Schema.isPattern(/\S/u, { expected: "nonblank text" }));
 
 /**
- * An identifier scoped to a taxonomy, not an accession or a lookup result.
- * A missing release is unspecified; it does not mean the latest release.
+ * Supply a taxonomy-scoped identifier with nonblank fields.
+ * Omit release to leave the taxonomy release unspecified.
  *
  * @example
  * import { TaxonId } from "robo-taxonomist";
@@ -61,7 +62,8 @@ export const TaxonId = Schema.Struct({
 });
 
 /**
- * The type of a supplied taxonomy-scoped identifier.
+ * TaxonId.make returns this type with the supplied taxonomy, identifier, and optional release.
+ * TaxonomicRecord accepts it in the taxonId field.
  *
  * @example
  * import { TaxonomicRecord, type TaxonId } from "robo-taxonomist";
@@ -76,8 +78,8 @@ const recordFields = {
 };
 
 /**
- * A record with at least one label, scientific name, or taxon identifier.
- * Keeps supplied fields together without inventing missing descriptions.
+ * Describe one or more subjects with at least one label, scientific name, or taxon identifier.
+ * Keep the supplied fields together as record metadata.
  *
  * @example
  * import { TaxonomicRecord, TaxonName } from "robo-taxonomist";
@@ -92,7 +94,8 @@ export const TaxonomicRecord = Schema.Union([
 ]);
 
 /**
- * The type of a constructed record carrying supplied taxonomic metadata.
+ * TaxonomicRecord.make returns this type with the supplied identifying fields.
+ * Record-based questions accept it to describe one or more subjects.
  *
  * @example
  * import { Taxonomy, type TaxonomicRecord } from "robo-taxonomist";
@@ -104,12 +107,10 @@ export type TaxonomicRecord = typeof TaxonomicRecord.Type;
 const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 
 /**
- * Controls how much support and separation a selected answer needs.
- * Support is its probability; separation is its lead over the strongest alternative.
- * Both thresholds are finite numbers from 0 to 1, not calibrated accuracy.
- * Margin boundaries allow machine-precision rounding.
- * Applies to rank judgments and multiple-taxa diagnoses alike.
- * Ties and nonleading selections remain undetermined even with zero thresholds.
+ * Configure acceptance for rank judgments and multiple-taxa diagnoses.
+ * Support is the selected answer's probability. Margin is its lead over the strongest alternative.
+ * The selected answer must uniquely lead and meet the support and margin thresholds.
+ * Each threshold ranges from 0 to 1, and the margin check allows machine-precision rounding.
  *
  * @example
  * import { RankComparisonPolicy } from "robo-taxonomist";
@@ -124,7 +125,8 @@ export const RankComparisonPolicy = Schema.Struct({
 }).pipe(Schema.brand("RankComparisonPolicy"));
 
 /**
- * The type of a validated rank-comparison acceptance policy.
+ * RankComparisonPolicy.make returns this type after validating the thresholds.
+ * Rank-comparison functions accept it in their policy option.
  *
  * @example
  * import { Taxonomy, type RankComparisonPolicy, type RecordLabel } from "robo-taxonomist";
@@ -134,8 +136,10 @@ export const RankComparisonPolicy = Schema.Struct({
 export type RankComparisonPolicy = typeof RankComparisonPolicy.Type;
 
 /**
- * Acceptance thresholds for taxon, membership, and set judgments; not calibrated accuracy.
- * Requires a uniquely leading selection; margin boundaries allow machine precision.
+ * Configure acceptance for taxon, membership, and set judgments.
+ * Support is the selected answer's probability. Margin is its lead over the strongest alternative.
+ * The selected answer must uniquely lead and meet the support and margin thresholds.
+ * Each threshold ranges from 0 to 1, and the margin check allows machine-precision rounding.
  * @example
  * import { JudgmentPolicy } from "robo-taxonomist";
  * export const cautious = JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
@@ -146,7 +150,8 @@ export const JudgmentPolicy = Schema.Struct({
 }).pipe(Schema.brand("JudgmentPolicy"));
 
 /**
- * A validated non-rank acceptance policy.
+ * JudgmentPolicy.make returns this type after validating the thresholds.
+ * Taxon, membership, and set functions accept it in their policy option.
  * @example
  * import { TaxonName, Taxonomy, type JudgmentPolicy } from "robo-taxonomist";
  * export const compare = (left: TaxonName, right: TaxonName, policy: JudgmentPolicy) =>
@@ -157,7 +162,8 @@ export type JudgmentPolicy = typeof JudgmentPolicy.Type;
 const positiveInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 
 /**
- * Bounds records per request and active batch calls within one collection operation.
+ * Configure records per request and active batch calls within one collection operation.
+ * Supply positive integers for both bounds.
  * @example
  * import { CollectionExecution } from "robo-taxonomist";
  * export const execution = CollectionExecution.make({ batchSize: 32, concurrency: 2 });
@@ -168,7 +174,8 @@ export const CollectionExecution = Schema.Struct({
 }).pipe(Schema.brand("CollectionExecution"));
 
 /**
- * Validated positive-integer collection execution bounds.
+ * CollectionExecution.make returns this type with records-per-request and active-batch limits.
+ * Collection functions accept it in their execution option.
  * @example
  * import { Taxonomy, type CollectionExecution, type RecordLabel, type TaxonName } from "robo-taxonomist";
  * export const partition = (records: readonly RecordLabel[], target: TaxonName, execution: CollectionExecution) =>
@@ -222,7 +229,7 @@ class Difference extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSe
 }
 
 /**
- * Recursive symbolic-expression codec; preserves operand order without set simplification.
+ * Encode and decode recursive set expressions, preserving their original structure and operand order.
  */
 export const taxonSetSchema = Schema.Union([Empty, Taxon, Union, Intersection, Difference]).pipe(
   Schema.toTaggedUnion("_tag"),

@@ -4,15 +4,26 @@ import { JudgmentPolicy, TaxonName, taxonSetSchema } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
 
 /**
- * An inspectable readonly expression, not an enumeration of organisms.
+ * TaxonSet constructors return this type to describe a set of organisms.
+ * Each value records how the set was built from names and set operations.
+ * You can use Match.tagsExhaustive to examine each expression.
  * @example
+ * import { Match } from "effect";
  * import { TaxonSet } from "robo-taxonomist";
- * export const tag = (set: TaxonSet.TaxonSet) => set._tag;
+ * export const describe = (set: TaxonSet.TaxonSet) => Match.value(set).pipe(
+ *   Match.tagsExhaustive({
+ *     Empty: () => "The set is empty.",
+ *     Taxon: ({ name }) => `The expression names ${name}.`,
+ *     Union: ({ operands }) => `The union combines ${operands.length} expressions.`,
+ *     Intersection: ({ operands }) => `The intersection combines ${operands.length} expressions.`,
+ *     Difference: () => "The expression subtracts the right set from the left.",
+ *   }),
+ * );
  */
 export type TaxonSet = typeof taxonSetSchema.Type;
 
 /**
- * Constructs a fresh literal empty set.
+ * Build a fresh literal empty set.
  * @example
  * import { TaxonSet } from "robo-taxonomist";
  * export const none = TaxonSet.empty();
@@ -20,7 +31,8 @@ export type TaxonSet = typeof taxonSetSchema.Type;
 export const empty = (): TaxonSet => taxonSetSchema.cases.Empty.make({});
 
 /**
- * Constructs the organisms belonging to a whole taxon, without lookup.
+ * Build an expression for organisms belonging to the supplied taxon name.
+ * To combine several taxa, build each expression separately and use TaxonSet.union.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const oaks = TaxonSet.of(TaxonName.make("Quercus"));
@@ -28,7 +40,7 @@ export const empty = (): TaxonSet => taxonSetSchema.cases.Empty.make({});
 export const of = (name: TaxonName): TaxonSet => taxonSetSchema.cases.Taxon.make({ name });
 
 /**
- * Combines two expressions without flattening or replacing children.
+ * Build a fresh union parent, retaining the original children in supplied order.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const trees = TaxonSet.union(TaxonSet.of(TaxonName.make("Quercus")), TaxonSet.empty());
@@ -37,7 +49,7 @@ export const union = (left: TaxonSet, right: TaxonSet): TaxonSet =>
   taxonSetSchema.cases.Union.make({ operands: [left, right] });
 
 /**
- * Constructs their intersection, preserving both supplied expressions.
+ * Build a fresh intersection parent, retaining the original children in supplied order.
  * @example
  * import { TaxonSet } from "robo-taxonomist";
  * export const shared = TaxonSet.intersection(TaxonSet.empty(), TaxonSet.empty());
@@ -46,7 +58,7 @@ export const intersection = (left: TaxonSet, right: TaxonSet): TaxonSet =>
   taxonSetSchema.cases.Intersection.make({ operands: [left, right] });
 
 /**
- * Constructs left minus right; does not simplify even identical children.
+ * Build a fresh left-minus-right parent, retaining both original children.
  * @example
  * import { TaxonSet } from "robo-taxonomist";
  * export const remaining = TaxonSet.difference(TaxonSet.empty(), TaxonSet.empty());
@@ -55,7 +67,7 @@ export const difference = (left: TaxonSet, right: TaxonSet): TaxonSet =>
   taxonSetSchema.cases.Difference.make({ left, right });
 
 /**
- * Combines the two directed differences without normalization.
+ * Build a union of the two directed differences, retaining the original children in each.
  * @example
  * import { TaxonSet } from "robo-taxonomist";
  * export const exclusive = TaxonSet.symmetricDifference(TaxonSet.empty(), TaxonSet.empty());
@@ -64,7 +76,7 @@ export const symmetricDifference = (left: TaxonSet, right: TaxonSet): TaxonSet =
   union(difference(left, right), difference(right, left));
 
 /**
- * Constructs universe minus set, requiring your explicit universe.
+ * Build universe minus set using the explicitly supplied universe.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const others = TaxonSet.complement(TaxonSet.empty(), TaxonSet.of(TaxonName.make("Fagaceae")));
@@ -91,7 +103,11 @@ const setRelationResultSchema = Schema.TaggedUnion({
 });
 
 /**
- * An answer retaining the asked relation, or one original name/side needing review.
+ * TaxonSet relation functions return this type to report their answer.
+ * The relation field records which question they answered.
+ * You can use Match.tagsExhaustive to handle the answer or locate a name requiring review.
+ * For MultipleTaxaInSetName, replace the identified name on the indicated side
+ * with a TaxonSet.union of separately constructed TaxonSet.of expressions, then retry.
  * @example
  * import { Match } from "effect";
  * import type { TaxonSetRelationResult } from "robo-taxonomist";
@@ -99,23 +115,22 @@ const setRelationResultSchema = Schema.TaggedUnion({
  *   Match.tagsExhaustive({
  *     Yes: ({ relation }) => `Yes: ${relation}`, No: ({ relation }) => `No: ${relation}`,
  *     Undetermined: ({ relation }) => `Uncertain: ${relation}`,
- *     MultipleTaxaInSetName: ({ side, taxonName }) => `Review ${taxonName} in the ${side} set`,
+ *     MultipleTaxaInSetName: ({ side, taxonName }) =>
+ *       `The name ${taxonName} in the ${side} set describes several taxa. ` +
+ *       "Replace it with separate TaxonSet.of expressions combined with TaxonSet.union, then retry.",
  *   }),
  * );
  */
 export type TaxonSetRelationResult = typeof setRelationResultSchema.Type;
 
 type JudgmentOptions = { readonly policy?: JudgmentPolicy };
-type SetJudgment = (
+// Fn aliases keep public calling contracts separate from traced implementations.
+type SetRelationFn = (
   left: TaxonSet,
   right: TaxonSet,
   options?: JudgmentOptions,
 ) => Effect.Effect<TaxonSetRelationResult, AiError.AiError, DecisionModel.DecisionModel>;
 const defaultJudgmentPolicy = JudgmentPolicy.make({ minimumSupport: 0.5, minimumMargin: 0 });
-const relationNamesSchema = Schema.Struct({
-  leftNames: Schema.Array(TaxonName),
-  rightNames: Schema.Array(TaxonName),
-});
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const relationQuestions = {
   subset: {
@@ -145,13 +160,7 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
   relation: keyof typeof relationQuestions,
   input: { readonly left: TaxonSet; readonly right: TaxonSet },
 ) {
-  const compiled = yield* TaxonSetGraph.compile(
-    Effect.fnUntraced(function* (compiler) {
-      const left = yield* compiler.add(input.left);
-      const right = yield* compiler.add(input.right);
-      return { left, right };
-    }),
-  ).pipe(
+  const compiled = yield* TaxonSetGraph.compile(input).pipe(
     Effect.mapError((reason) =>
       AiError.make({
         module: "TaxonSet",
@@ -160,10 +169,10 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       }),
     ),
   );
-  const names = relationNamesSchema.make({
+  const names = {
     leftNames: TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.left),
     rightNames: TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.right),
-  });
+  };
   const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
@@ -188,7 +197,7 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       (name, index) =>
         [
           `multipleLeft${index}`,
-          `The left-set name ${quoteText(name)} jointly names distinct taxa, rather than one taxon.`,
+          `The left-set name ${quoteText(name)} jointly names distinct taxa, rather than one taxon. The caller needs to supply these taxa separately in an explicit union.`,
         ] as const,
     ),
   );
@@ -198,7 +207,7 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       (name, index) =>
         [
           `multipleRight${index}`,
-          `The right-set name ${quoteText(name)} jointly names distinct taxa, rather than one taxon.`,
+          `The right-set name ${quoteText(name)} jointly names distinct taxa, rather than one taxon. The caller needs to supply these taxa separately in an explicit union.`,
         ] as const,
     ),
   );
@@ -242,7 +251,7 @@ const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy
 const interpretRelation = (
   requestedRelation: typeof setRelationSchema.Type,
   answer: Decision.ClassifyAnswer<string>,
-  input: typeof relationNamesSchema.Type,
+  input: Effect.Success<ReturnType<typeof makeRelationQuestion>>["names"],
   policy: JudgmentPolicy,
 ) => {
   if (!accepts(answer, policy))
@@ -285,13 +294,13 @@ const interpretRelation = (
 };
 
 /**
- * Asks whether every left-set organism belongs to right; equality counts.
- * Literal Empty on the left answers Yes without inspecting the other operand.
+ * Check whether every left-set organism belongs to the right set; equality counts.
+ * Return Yes immediately for a literal Empty on the left.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const subset = TaxonSet.isSubsetOf(TaxonSet.of(TaxonName.make("Quercus")), TaxonSet.of(TaxonName.make("Fagaceae")));
  */
-export const isSubsetOf: SetJudgment = Effect.fn("TaxonSet.isSubsetOf")(function* (
+export const isSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isSubsetOf")(function* (
   left: TaxonSet,
   right: TaxonSet,
   options: JudgmentOptions = {},
@@ -309,13 +318,13 @@ export const isSubsetOf: SetJudgment = Effect.fn("TaxonSet.isSubsetOf")(function
 });
 
 /**
- * Asks for inclusion and unequal organism sets in one judgment.
- * Literal Empty on the right answers No; Empty on the left alone still needs a judgment.
+ * Check inclusion and unequal organism sets in one judgment.
+ * Return No for a literal Empty on the right; judge other cases, including Empty on the left.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const proper = TaxonSet.isProperSubsetOf(TaxonSet.empty(), TaxonSet.of(TaxonName.make("Quercus")));
  */
-export const isProperSubsetOf: SetJudgment = Effect.fn("TaxonSet.isProperSubsetOf")(function* (
+export const isProperSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isProperSubsetOf")(function* (
   left: TaxonSet,
   right: TaxonSet,
   options: JudgmentOptions = {},
@@ -333,13 +342,13 @@ export const isProperSubsetOf: SetJudgment = Effect.fn("TaxonSet.isProperSubsetO
 });
 
 /**
- * Asks for equal organism sets, not identity of taxonomic groupings.
- * Only two literal Empty operands shortcut to Yes.
+ * Check whether the two sets contain exactly the same organisms.
+ * Return Yes immediately for two literal Empty operands; judge all other cases.
  * @example
  * import { TaxonSet } from "robo-taxonomist";
  * export const equal = TaxonSet.equivalent(TaxonSet.empty(), TaxonSet.empty());
  */
-export const equivalent: SetJudgment = Effect.fn("TaxonSet.equivalent")(function* (
+export const equivalent: SetRelationFn = Effect.fn("TaxonSet.equivalent")(function* (
   left: TaxonSet,
   right: TaxonSet,
   options: JudgmentOptions = {},
@@ -357,13 +366,13 @@ export const equivalent: SetJudgment = Effect.fn("TaxonSet.equivalent")(function
 });
 
 /**
- * Asks whether the complete sets share an organism; either literal Empty answers No.
- * Separate calls do not share observations or guarantee consistency.
+ * Check whether the complete sets share an organism; either literal Empty answers No.
+ * Judge each call independently, so answers across calls may differ.
  * @example
  * import { TaxonName, TaxonSet } from "robo-taxonomist";
  * export const shared = TaxonSet.overlaps(TaxonSet.of(TaxonName.make("Quercus")), TaxonSet.of(TaxonName.make("Fagus")));
  */
-export const overlaps: SetJudgment = Effect.fn("TaxonSet.overlaps")(function* (
+export const overlaps: SetRelationFn = Effect.fn("TaxonSet.overlaps")(function* (
   left: TaxonSet,
   right: TaxonSet,
   options: JudgmentOptions = {},
@@ -380,8 +389,19 @@ export const overlaps: SetJudgment = Effect.fn("TaxonSet.overlaps")(function* (
   );
 });
 
-const disjointFromOverlap = (overlap: TaxonSetRelationResult): TaxonSetRelationResult =>
-  setRelationResultSchema.match(overlap, {
+/**
+ * Map one overlap judgment to disjointness, retaining uncertainty and original-name diagnoses.
+ * Return Yes immediately when either operand is a literal Empty.
+ * @example
+ * import { TaxonName, TaxonSet } from "robo-taxonomist";
+ * export const separate = TaxonSet.disjoint(TaxonSet.of(TaxonName.make("Quercus")), TaxonSet.of(TaxonName.make("Fagus")));
+ */
+export const disjoint: SetRelationFn = Effect.fn("TaxonSet.disjoint")(function* (
+  left: TaxonSet,
+  right: TaxonSet,
+  options: JudgmentOptions = {},
+) {
+  return setRelationResultSchema.match(yield* overlaps(left, right, options), {
     Yes: (): TaxonSetRelationResult =>
       setRelationResultSchema.cases.No.make({ relation: "disjoint" }),
     No: (): TaxonSetRelationResult =>
@@ -395,18 +415,4 @@ const disjointFromOverlap = (overlap: TaxonSetRelationResult): TaxonSetRelationR
         taxonName,
       }),
   });
-
-/**
- * Maps one overlap judgment to disjointness, retaining uncertainty and original-name diagnoses.
- * Either literal Empty answers Yes without a model call.
- * @example
- * import { TaxonName, TaxonSet } from "robo-taxonomist";
- * export const separate = TaxonSet.disjoint(TaxonSet.of(TaxonName.make("Quercus")), TaxonSet.of(TaxonName.make("Fagus")));
- */
-export const disjoint: SetJudgment = Effect.fn("TaxonSet.disjoint")(function* (
-  left: TaxonSet,
-  right: TaxonSet,
-  options: JudgmentOptions = {},
-) {
-  return disjointFromOverlap(yield* overlaps(left, right, options));
 });
