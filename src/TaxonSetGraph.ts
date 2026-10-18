@@ -68,11 +68,7 @@ export const instructions =
   "References index nodes; roots select the complete sets. Empty contains no organisms; " +
   "Taxon contains organisms belonging to name; Union combines operands; Intersection keeps their shared organisms; " +
   "Difference keeps left organisms outside right. Node identity is not biological identity. " +
-  "Each Taxon-node name must identify one taxon; synonyms and acronyms for that taxon are valid. " +
-  "If a Taxon-node name clearly describes several distinct taxa together, select its multiple-name criterion before judging the relationship or membership. " +
-  "Preserve supplied names instead of splitting them or silently interpreting them as unions. " +
-  "Intentional combinations use explicit set operators. " +
-  "Use undetermined when you cannot answer the relationship or membership question and cannot identify a Taxon-node name that clearly refers to several distinct taxa.";
+  "Interpret clear combinations in names together. Flag a combined name only when it prevents answering.";
 
 // Keep the recursive input named in emitted declarations.
 type CompileFn = <K extends string>(

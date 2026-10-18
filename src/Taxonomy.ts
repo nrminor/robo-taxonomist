@@ -5,7 +5,6 @@ import {
   Equivalence,
   Iterable,
   Match,
-  Number,
   Option,
   Predicate,
   Record,
@@ -14,17 +13,24 @@ import {
   pipe,
 } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
+import {
+  accepts,
+  defaultPolicy,
+  select,
+  sumProbabilities,
+  type AcceptancePolicy,
+  type Scored,
+} from "./AcceptancePolicy.ts";
 import type { TaxonSet } from "./TaxonSet.ts";
 import {
   CollectionExecution,
-  JudgmentPolicy,
-  RankComparisonPolicy,
   RecordLabel,
   TaxonomicRecord,
   TaxonName,
   taxonSetSchema,
 } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
+import * as TaxonRelations from "./TaxonRelations.ts";
 
 /**
  * Check whether two record labels contain exactly the same text. This is a simple
@@ -61,8 +67,14 @@ const taxonomicRankSchema = Schema.Literals([
  */
 export type TaxonomicRank = typeof taxonomicRankSchema.Type;
 
-const rankComparisonResultSchema = Schema.TaggedUnion({
+const rankComparisonJudgmentSchema = Schema.TaggedUnion({
   SameTaxonAtRank: { rank: taxonomicRankSchema },
+  SameMultipleTaxaAtRank: { rank: taxonomicRankSchema },
+  SameTaxaAtRank: { rank: taxonomicRankSchema },
+  LeftTaxaWithinRightAtRank: { rank: taxonomicRankSchema },
+  RightTaxaWithinLeftAtRank: { rank: taxonomicRankSchema },
+  PartlySharedTaxaAtRank: { rank: taxonomicRankSchema },
+  NoSharedTaxaAtRank: { rank: taxonomicRankSchema },
   DifferentTaxaAtRank: { rank: taxonomicRankSchema },
   Undetermined: { rank: taxonomicRankSchema },
   MultipleTaxaAtRank: {
@@ -73,37 +85,37 @@ const rankComparisonResultSchema = Schema.TaggedUnion({
 
 /**
  * Taxonomy.sameTaxonAtRank and its rank helpers return this type.
- * The result reports whether two records describe the same taxon or different
- * taxa at the requested rank, whether either record describes multiple taxa,
- * or whether the comparison remains unresolved.
- * You can use Match.tagsExhaustive to handle each possible result.
- * In a MultipleTaxaAtRank result, side identifies which records, left or right,
- * describe multiple taxa.
- * Compare records that each describe one taxon at the requested rank.
- * To compare intentional combinations, construct each taxon with TaxonSet.of,
- * combine the expressions with TaxonSet.union, and use a set-relation operation.
+ * Match its cases to see how the taxa in the records compare at the requested rank.
+ * SameTaxaAtRank reports the same taxa when their number is uncertain.
+ * DifferentTaxaAtRank reports different sets of taxa when a more specific comparison is uncertain.
+ * MultipleTaxaAtRank identifies a record whose combined assignment needs clarification.
  *
  * @example
  * import { Match } from "effect";
- * import type { RankComparisonResult } from "robo-taxonomist";
- * export const describe = (result: RankComparisonResult) => Match.value(result).pipe(
+ * import type { RankComparisonJudgment } from "robo-taxonomist";
+ * export const describe = (result: RankComparisonJudgment) => Match.value(result).pipe(
  *   Match.tagsExhaustive({
- *     SameTaxonAtRank: ({ rank }) => `Same taxon at ${rank} rank`,
- *     DifferentTaxaAtRank: ({ rank }) => `Different taxa at ${rank} rank`,
- *     Undetermined: ({ rank }) => `Undetermined at ${rank} rank`,
+ *     SameTaxonAtRank: ({ rank }) => `Both records describe the same taxon at ${rank} rank.`,
+ *     SameMultipleTaxaAtRank: ({ rank }) => `Both records describe the same two or more taxa at ${rank} rank.`,
+ *     SameTaxaAtRank: ({ rank }) => `The taxa match at ${rank} rank. Their number is uncertain.`,
+ *     LeftTaxaWithinRightAtRank: () => "Right includes all left-hand taxa and additional taxa.",
+ *     RightTaxaWithinLeftAtRank: () => "Left includes all right-hand taxa and additional taxa.",
+ *     PartlySharedTaxaAtRank: () => "Some taxa match; each record also describes others.",
+ *     NoSharedTaxaAtRank: () => "No taxa match at this rank.",
+ *     DifferentTaxaAtRank: () => "The records describe different taxa. How they differ is uncertain.",
+ *     Undetermined: ({ rank }) => `The comparison at ${rank} rank is Undetermined.`,
  *     MultipleTaxaAtRank: ({ rank, side }) =>
- *       `Several taxa occur at ${rank} rank (${side}). ` +
- *       "Compare records with one taxon at this rank each, or build explicit taxon sets.",
+ *       `Clarify the combined assignment at ${rank} rank (${side}).`,
  *   }),
  * );
  */
-export type RankComparisonResult = typeof rankComparisonResultSchema.Type;
+export type RankComparisonJudgment = typeof rankComparisonJudgmentSchema.Type;
 
 const recordInputSchema = Schema.Union([RecordLabel, TaxonomicRecord]);
 type RecordInput = typeof recordInputSchema.Type;
 
-type RankComparisonOptions = {
-  readonly policy?: RankComparisonPolicy;
+type JudgmentOptions = {
+  readonly policy?: AcceptancePolicy;
 };
 
 // Fn aliases keep public calling contracts separate from traced implementations.
@@ -111,19 +123,14 @@ type CompareRecordsAtRankFn = (
   left: RecordInput,
   right: RecordInput,
   rank: TaxonomicRank,
-  options?: RankComparisonOptions,
-) => Effect.Effect<RankComparisonResult, AiError.AiError, DecisionModel.DecisionModel>;
+  options?: JudgmentOptions,
+) => Effect.Effect<RankComparisonJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 
 type CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options?: RankComparisonOptions,
-) => Effect.Effect<RankComparisonResult, AiError.AiError, DecisionModel.DecisionModel>;
-
-const defaultRankComparisonPolicy = RankComparisonPolicy.make({
-  minimumSupport: 0.5,
-  minimumMargin: 0,
-});
+  options?: JudgmentOptions,
+) => Effect.Effect<RankComparisonJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -165,29 +172,19 @@ const makeRankComparisonQuestion = ({
     decisions: {
       comparison: Decision.classify({
         instructions:
-          `Do these records represent the same taxon at ${rank} rank?\n` +
-          "Determine which taxa each record represents at the requested rank. " +
-          "Several subjects or species can belong to one taxon at that rank. " +
-          "Compare the records when each represents one taxon at that rank. " +
-          "If a record clearly represents several distinct taxa at that rank, identify that record instead. " +
-          "Choose multipleBoth when both records clearly represent several distinct taxa at the requested rank. " +
-          "Otherwise, choose multipleLeft for several distinct taxa in the left record, or multipleRight for several distinct taxa in the right record. " +
-          "Synonyms and acronyms for one taxon still represent one taxon. " +
-          "Use undetermined when you cannot compare the records at the requested rank and cannot identify several distinct taxa in either record.\n" +
+          `Compare the taxa represented by these records at ${rank} rank.\n` +
+          "Interpret clear combinations together. Flag a combined input only when it prevents comparison; choose multipleBoth when both inputs need clarification.\n" +
           `Left record:\n${describeRecord(left)}\n` +
           `Right record:\n${describeRecord(right)}`,
-        criteria: {
-          same: "Each record represents one taxon at the requested rank, and these taxa are the same, including any acronyms and/or synonyms.",
-          different:
-            "Each record represents one taxon at the requested rank, and these taxa differ.",
-          undetermined:
-            "The available information is insufficient to compare the records' taxonomic ranks.",
-          multipleLeft:
-            "The left record represents multiple distinct taxa at the requested rank, preventing a comparison of one taxon per record at that rank.",
-          multipleRight:
-            "The right record represents multiple distinct taxa at the requested rank, preventing a comparison of one taxon per record at that rank.",
-          multipleBoth: "Each record represents multiple distinct taxa at the requested rank.",
-        },
+        criteria: pipe(
+          TaxonRelations.rankCriteria,
+          Struct.assign({
+            multipleLeft: "The left assignment combines taxa and needs clarification at this rank.",
+            multipleRight:
+              "The right assignment combines taxa and needs clarification at this rank.",
+            multipleBoth: "Both assignments combine taxa and need clarification at this rank.",
+          }),
+        ),
       }),
     },
   });
@@ -199,51 +196,101 @@ type RankComparisonAnswer = Decision.Answer<
 const interpretRankComparison = (
   rank: TaxonomicRank,
   answer: RankComparisonAnswer,
-  policy: RankComparisonPolicy,
-): RankComparisonResult => {
-  if (answer.label === "undetermined") {
-    return rankComparisonResultSchema.cases.Undetermined.make({ rank });
-  }
-
-  const support = answer.probabilities[answer.label];
-  const strongestAlternative = Record.reduce(
-    answer.probabilities,
-    0,
-    (strongest, probability, label) =>
-      label === answer.label ? strongest : Number.max(strongest, probability),
+  policy: AcceptancePolicy,
+): RankComparisonJudgment => {
+  const p = answer.probabilities;
+  const support = TaxonRelations.rankSupports(p);
+  const undetermined = rankComparisonJudgmentSchema.cases.Undetermined.make({ rank });
+  const unresolved: Array.NonEmptyReadonlyArray<Scored<RankComparisonJudgment>> = [
+    { answer: undetermined, support: p.undetermined },
+    {
+      answer: rankComparisonJudgmentSchema.cases.MultipleTaxaAtRank.make({ rank, side: "left" }),
+      support: p.multipleLeft,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.MultipleTaxaAtRank.make({ rank, side: "right" }),
+      support: p.multipleRight,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.MultipleTaxaAtRank.make({ rank, side: "both" }),
+      support: p.multipleBoth,
+    },
+  ];
+  const candidates: Array.NonEmptyReadonlyArray<Scored<RankComparisonJudgment>> = [
+    {
+      answer: rankComparisonJudgmentSchema.cases.SameTaxaAtRank.make({ rank }),
+      support: support.same,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.DifferentTaxaAtRank.make({ rank }),
+      support: support.different,
+    },
+  ];
+  const broad = select(Array.appendAll(candidates, unresolved), policy).pipe(
+    Option.getOrElse(() => undetermined),
   );
-  const margin = support - strongestAlternative;
+  if (
+    !rankComparisonJudgmentSchema.guards.SameTaxaAtRank(broad) &&
+    !rankComparisonJudgmentSchema.guards.DifferentTaxaAtRank(broad)
+  )
+    return broad;
 
-  // Unit-interval margins allow one machine epsilon for subtraction rounding.
-  const accepted =
-    margin > 0 &&
-    support >= policy.minimumSupport &&
-    (margin >= policy.minimumMargin || policy.minimumMargin - margin <= globalThis.Number.EPSILON);
-
-  if (!accepted) {
-    return rankComparisonResultSchema.cases.Undetermined.make({ rank });
-  }
-
-  return Match.value(answer.label).pipe(
-    Match.when("same", () => rankComparisonResultSchema.cases.SameTaxonAtRank.make({ rank })),
-    Match.when("different", () =>
-      rankComparisonResultSchema.cases.DifferentTaxaAtRank.make({ rank }),
+  const detailed: Array.NonEmptyReadonlyArray<Scored<RankComparisonJudgment>> = [
+    {
+      answer: rankComparisonJudgmentSchema.cases.SameTaxonAtRank.make({ rank }),
+      support: p.equalSingle,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.SameMultipleTaxaAtRank.make({ rank }),
+      support: p.equalMultiple,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.LeftTaxaWithinRightAtRank.make({ rank }),
+      support: p.properSubset,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.RightTaxaWithinLeftAtRank.make({ rank }),
+      support: p.properSuperset,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.PartlySharedTaxaAtRank.make({ rank }),
+      support: p.partialOverlap,
+    },
+    {
+      answer: rankComparisonJudgmentSchema.cases.NoSharedTaxaAtRank.make({ rank }),
+      support: p.disjoint,
+    },
+  ];
+  const detail = select(Array.appendAll(detailed, unresolved), policy);
+  return Match.value(broad).pipe(
+    Match.tag("SameTaxaAtRank", () =>
+      detail.pipe(
+        Option.filter(
+          (judgment) =>
+            rankComparisonJudgmentSchema.guards.SameTaxonAtRank(judgment) ||
+            rankComparisonJudgmentSchema.guards.SameMultipleTaxaAtRank(judgment),
+        ),
+        Option.getOrElse(() => broad),
+      ),
     ),
-    Match.when("multipleLeft", () =>
-      rankComparisonResultSchema.cases.MultipleTaxaAtRank.make({ rank, side: "left" }),
-    ),
-    Match.when("multipleRight", () =>
-      rankComparisonResultSchema.cases.MultipleTaxaAtRank.make({ rank, side: "right" }),
-    ),
-    Match.when("multipleBoth", () =>
-      rankComparisonResultSchema.cases.MultipleTaxaAtRank.make({ rank, side: "both" }),
+    Match.tag("DifferentTaxaAtRank", () =>
+      detail.pipe(
+        Option.filter(
+          (judgment) =>
+            rankComparisonJudgmentSchema.guards.LeftTaxaWithinRightAtRank(judgment) ||
+            rankComparisonJudgmentSchema.guards.RightTaxaWithinLeftAtRank(judgment) ||
+            rankComparisonJudgmentSchema.guards.PartlySharedTaxaAtRank(judgment) ||
+            rankComparisonJudgmentSchema.guards.NoSharedTaxaAtRank(judgment),
+        ),
+        Option.getOrElse(() => broad),
+      ),
     ),
     Match.exhaustive,
   );
 };
 
 /**
- * Decide whether the subjects described by two records are the same at a requested rank.
+ * Compare the taxa described by two records at the requested rank.
  * A record describing Quercus robur and Quercus petraea can resolve to one genus,
  * Quercus, while describing two species for a species-rank comparison.
  *
@@ -260,7 +307,7 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
     left: RecordInput,
     right: RecordInput,
     rank: TaxonomicRank,
-    options: RankComparisonOptions = {},
+    options: JudgmentOptions = {},
   ) {
     const encoded = yield* Schema.encodeEffect(rankComparisonInputSchema)({
       left,
@@ -278,11 +325,7 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
     const definition = makeRankComparisonQuestion(encoded);
     const { answers } = yield* DecisionModel.decide(definition, { input: null });
 
-    return interpretRankComparison(
-      rank,
-      answers.comparison,
-      options.policy ?? defaultRankComparisonPolicy,
-    );
+    return interpretRankComparison(rank, answers.comparison, options.policy ?? defaultPolicy);
   },
 );
 
@@ -299,7 +342,7 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
 export const sameSpecies: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "species", options);
 
 /**
@@ -314,7 +357,7 @@ export const sameSpecies: CompareRecordsFn = (
 export const sameDomain: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "domain", options);
 
 /**
@@ -329,7 +372,7 @@ export const sameDomain: CompareRecordsFn = (
 export const sameKingdom: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "kingdom", options);
 
 /**
@@ -344,7 +387,7 @@ export const sameKingdom: CompareRecordsFn = (
 export const samePhylum: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "phylum", options);
 
 /**
@@ -359,7 +402,7 @@ export const samePhylum: CompareRecordsFn = (
 export const sameClass: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "class", options);
 
 /**
@@ -374,7 +417,7 @@ export const sameClass: CompareRecordsFn = (
 export const sameOrder: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "order", options);
 
 /**
@@ -389,7 +432,7 @@ export const sameOrder: CompareRecordsFn = (
 export const sameFamily: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "family", options);
 
 /**
@@ -404,10 +447,10 @@ export const sameFamily: CompareRecordsFn = (
 export const sameGenus: CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
-  options: RankComparisonOptions = {},
+  options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "genus", options);
 
-const identityResultSchema = Schema.TaggedUnion({
+const identityJudgmentSchema = Schema.TaggedUnion({
   SameTaxon: {},
   DifferentTaxa: {},
   MultipleTaxa: { side: Schema.Literals(["left", "right", "both"]) },
@@ -417,52 +460,27 @@ const identityResultSchema = Schema.TaggedUnion({
 /**
  * Taxonomy.sameTaxon returns this type to report its answer about two supplied names.
  * You can use Match.tagsExhaustive to handle each result.
- * In a MultipleTaxa result, side identifies the names that jointly refer to multiple taxa.
- * Build each intended taxon with TaxonSet.of and combine the expressions with TaxonSet.union.
- * Use TaxonSet.equivalent to compare the organisms in the resulting sets.
+ * MultipleTaxa identifies which combined name needs clarification.
  * @example
  * import { Match } from "effect";
- * import type { TaxonIdentityResult } from "robo-taxonomist";
- * export const describe = (result: TaxonIdentityResult) => Match.value(result).pipe(
+ * import type { TaxonIdentityJudgment } from "robo-taxonomist";
+ * export const describe = (result: TaxonIdentityJudgment) => Match.value(result).pipe(
  *   Match.tagsExhaustive({
  *     SameTaxon: () => "The names refer to the same taxon.",
  *     DifferentTaxa: () => "The names refer to different taxa.",
  *     MultipleTaxa: ({ side }) =>
- *       `Several taxa were identified (${side}). ` +
- *       "Build separate TaxonSet.of expressions, combine them with TaxonSet.union, " +
- *       "and compare their organism sets with TaxonSet.equivalent.",
+ *       `Clarify the combined name (${side}), or compare explicit sets with TaxonSet.equivalent.`,
  *     Undetermined: () => "The comparison remains unresolved.",
  *   }),
  * );
  */
-export type TaxonIdentityResult = typeof identityResultSchema.Type;
-
-type JudgmentOptions = { readonly policy?: JudgmentPolicy };
+export type TaxonIdentityJudgment = typeof identityJudgmentSchema.Type;
 
 type CompareTaxaFn = (
   left: TaxonName,
   right: TaxonName,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonIdentityResult, AiError.AiError, DecisionModel.DecisionModel>;
-
-const defaultJudgmentPolicy = JudgmentPolicy.make({ minimumSupport: 0.5, minimumMargin: 0 });
-
-const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy) => {
-  if (answer.label === "undetermined") return false;
-  const support = Record.get(answer.probabilities, answer.label).pipe(Option.getOrThrow);
-  const strongestAlternative = Record.reduce(
-    answer.probabilities,
-    0,
-    (strongest, probability, label) =>
-      label === answer.label ? strongest : Number.max(strongest, probability),
-  );
-  const margin = support - strongestAlternative;
-  return (
-    margin > 0 &&
-    support >= policy.minimumSupport &&
-    (margin >= policy.minimumMargin || policy.minimumMargin - margin <= globalThis.Number.EPSILON)
-  );
-};
+) => Effect.Effect<TaxonIdentityJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 
 const scalarInputSchema = Schema.Struct({ left: TaxonName, right: TaxonName });
 const makeIdentityQuestion = (input: typeof scalarInputSchema.Encoded) =>
@@ -472,24 +490,17 @@ const makeIdentityQuestion = (input: typeof scalarInputSchema.Encoded) =>
       identity: Decision.classify({
         instructions:
           "Do these names refer to the same taxon?\n" +
-          "Compare the names when each identifies one taxon. Synonyms and acronyms for one taxon still identify one taxon. " +
-          "If a name clearly describes several distinct taxa together, choose its multiple-taxa label instead of interpreting the name as a set expression. " +
-          "Choose multipleBoth when both names clearly refer to several distinct taxa. " +
-          "Otherwise, choose multipleLeft when the left name clearly refers to several distinct taxa, or multipleRight when the right name clearly refers to several distinct taxa. " +
-          "The caller can construct each intended taxon with TaxonSet.of, combine the expressions with TaxonSet.union, and compare their organism sets with TaxonSet.equivalent. " +
-          "Use undetermined when you cannot tell whether the names refer to the same or different taxa and cannot identify a name that clearly refers to several taxa.\n" +
+          "Include resolved synonyms. Flag a combined name only when it prevents comparison. " +
+          "Choose multipleBoth when both names need clarification.\n" +
           `Left taxon name: ${quoteText(input.left)}\n` +
           `Right taxon name: ${quoteText(input.right)}`,
         criteria: {
           same: "Both names refer to the same taxonomic grouping, including resolved synonyms.",
           different: "The names refer to distinct taxonomic groupings.",
           undetermined: "The available information is insufficient.",
-          multipleLeft:
-            "The left name refers to several distinct taxa together.",
-          multipleRight:
-            "The right name refers to several distinct taxa together.",
-          multipleBoth:
-            "Both the left and right names refer to several distinct taxa together.",
+          multipleLeft: "The left name combines taxa and needs clarification.",
+          multipleRight: "The right name combines taxa and needs clarification.",
+          multipleBoth: "Both names combine taxa and need clarification.",
         },
       }),
     },
@@ -498,21 +509,29 @@ const makeIdentityQuestion = (input: typeof scalarInputSchema.Encoded) =>
 type IdentityAnswer = Decision.Answer<
   ReturnType<typeof makeIdentityQuestion>["decisions"]["identity"]
 >;
-const interpretIdentity = (answer: IdentityAnswer, policy: JudgmentPolicy) => {
-  if (!accepts(answer, policy)) return identityResultSchema.cases.Undetermined.make({});
+const interpretIdentity = (answer: IdentityAnswer, policy: AcceptancePolicy) => {
+  const alternatives = pipe(
+    Record.toEntries(answer.probabilities),
+    Iterable.filter(([label]) => label !== answer.label),
+    Iterable.map(([, support]) => support),
+  );
+  if (
+    answer.label === "undetermined" ||
+    !accepts(answer.probabilities[answer.label], alternatives, policy)
+  )
+    return identityJudgmentSchema.cases.Undetermined.make({});
   return Match.value(answer.label).pipe(
-    Match.when("same", () => identityResultSchema.cases.SameTaxon.make({})),
-    Match.when("different", () => identityResultSchema.cases.DifferentTaxa.make({})),
+    Match.when("same", () => identityJudgmentSchema.cases.SameTaxon.make({})),
+    Match.when("different", () => identityJudgmentSchema.cases.DifferentTaxa.make({})),
     Match.when("multipleLeft", () =>
-      identityResultSchema.cases.MultipleTaxa.make({ side: "left" }),
+      identityJudgmentSchema.cases.MultipleTaxa.make({ side: "left" }),
     ),
     Match.when("multipleRight", () =>
-      identityResultSchema.cases.MultipleTaxa.make({ side: "right" }),
+      identityJudgmentSchema.cases.MultipleTaxa.make({ side: "right" }),
     ),
     Match.when("multipleBoth", () =>
-      identityResultSchema.cases.MultipleTaxa.make({ side: "both" }),
+      identityJudgmentSchema.cases.MultipleTaxa.make({ side: "both" }),
     ),
-    Match.when("undetermined", () => identityResultSchema.cases.Undetermined.make({})),
     Match.exhaustive,
   );
 };
@@ -539,45 +558,44 @@ export const sameTaxon: CompareTaxaFn = Effect.fn("Taxonomy.sameTaxon")(function
     ),
   );
   const { answers } = yield* DecisionModel.decide(makeIdentityQuestion(encoded), { input: null });
-  return interpretIdentity(answers.identity, options.policy ?? defaultJudgmentPolicy);
+  return interpretIdentity(answers.identity, options.policy ?? defaultPolicy);
 });
 
-const containmentResultSchema = Schema.TaggedUnion({
+const containmentJudgmentSchema = Schema.TaggedUnion({
   Contained: {},
+  PartlyContained: {},
+  Disjoint: {},
   NotContained: {},
   MultipleTaxa: { side: Schema.Literals(["left", "right", "both"]) },
   Undetermined: {},
 });
 
 /**
- * Taxonomy.taxonWithin returns this type to report whether the inner taxon belongs wholly to outer.
- * You can use Match.tagsExhaustive to handle each result.
- * In a MultipleTaxa result, side identifies the supplied names requiring review:
- * left identifies inner, right identifies outer, and both identifies both names.
- * Build each intended taxon with TaxonSet.of and combine the expressions with TaxonSet.union.
- * Use TaxonSet.isSubsetOf to compare the resulting inner and outer sets.
+ * Taxonomy.taxonWithin reports full inclusion, partial inclusion, or disjointness.
+ * NotContained reports something outside when overlap remains uncertain.
+ * MultipleTaxa identifies a combined name needing clarification: left is inner and right is outer.
  * @example
  * import { Match } from "effect";
- * import type { TaxonContainmentResult } from "robo-taxonomist";
- * export const describe = (result: TaxonContainmentResult) => Match.value(result).pipe(
+ * import type { TaxonContainmentJudgment } from "robo-taxonomist";
+ * export const describe = (result: TaxonContainmentJudgment) => Match.value(result).pipe(
  *   Match.tagsExhaustive({
  *     Contained: () => "Every inner organism belongs to outer.",
- *     NotContained: () => "At least one inner organism lies outside outer.",
+ *     PartlyContained: () => "Some inner organisms belong; others lie outside.",
+ *     Disjoint: () => "No inner organisms belong to outer.",
+ *     NotContained: () => "Something lies outside; overlap remains uncertain.",
  *     MultipleTaxa: ({ side }) =>
- *       `Several taxa were identified (${side}). ` +
- *       "Build separate TaxonSet.of expressions, combine them with TaxonSet.union, " +
- *       "and compare the inner and outer sets with TaxonSet.isSubsetOf.",
+ *       `Clarify the combined name (${side}), or use TaxonSet.union and TaxonSet.isSubsetOf.`,
  *     Undetermined: () => "The question remains unresolved.",
  *   }),
  * );
  */
-export type TaxonContainmentResult = typeof containmentResultSchema.Type;
+export type TaxonContainmentJudgment = typeof containmentJudgmentSchema.Type;
 
 type TaxonWithinFn = (
   inner: TaxonName,
   outer: TaxonName,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonContainmentResult, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<TaxonContainmentJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 
 const makeContainmentQuestion = (input: typeof scalarInputSchema.Encoded) =>
   Decision.make({
@@ -585,31 +603,18 @@ const makeContainmentQuestion = (input: typeof scalarInputSchema.Encoded) =>
     decisions: {
       containment: Decision.classify({
         instructions:
-          "Is the inner taxon contained in the outer taxon?\n" +
-          "Assess containment when each supplied name identifies one taxon. Equality counts as containment. " +
-          "Synonyms and acronyms for one taxon still identify one taxon. " +
-          "If a name clearly describes several distinct taxa together, choose its multiple-taxa label even if their combined organisms would satisfy containment. " +
-          "The caller can construct each intended taxon with TaxonSet.of, combine the expressions with TaxonSet.union, and use TaxonSet.isSubsetOf to compare the inner and outer sets. " +
-          "Preserve each supplied name instead of splitting it or silently treating it as a union. " +
-          "Choose multipleBoth when both names clearly refer to several distinct taxa. " +
-          "Otherwise, choose multipleLeft when the inner name clearly refers to several distinct taxa, or multipleRight when the outer name clearly refers to several distinct taxa. " +
-          "Use undetermined when you cannot answer whether the inner taxon is contained in the outer taxon and cannot identify a name that clearly refers to several taxa.\n" +
+          "Compare the organisms represented by inner and outer. Interpret clear combinations together. " +
+          "Flag a combined name only when it prevents comparison; choose multipleBoth when both names need clarification.\n" +
           `Left (inner) taxon name: ${quoteText(input.left)}\n` +
           `Right (outer) taxon name: ${quoteText(input.right)}`,
-        criteria: {
-          contained:
-            "Every organism belonging to the inner taxon belongs to the outer taxon and is thus fully contained.",
-          notContained:
-            "At least one organism belonging to the inner taxon is outside the outer taxon.",
-          undetermined:
-            "The available information is insufficient to assess containment of the inner taxon within the outer taxon.",
-          multipleLeft:
-            "The inner name references multiple distinct taxa rather than a single taxon.",
-          multipleRight:
-            "The outer name references multiple distinct taxa rather than just one.",
-          multipleBoth:
-            "Both the left and right inputs reference multiple distinct taxa rather than a single one each.",
-        },
+        criteria: pipe(
+          TaxonRelations.criteria,
+          Struct.assign({
+            multipleLeft: "The inner name combines taxa and needs clarification.",
+            multipleRight: "The outer name combines taxa and needs clarification.",
+            multipleBoth: "Both names combine taxa and need clarification.",
+          }),
+        ),
       }),
     },
   });
@@ -617,28 +622,60 @@ const makeContainmentQuestion = (input: typeof scalarInputSchema.Encoded) =>
 type ContainmentAnswer = Decision.Answer<
   ReturnType<typeof makeContainmentQuestion>["decisions"]["containment"]
 >;
-const interpretContainment = (answer: ContainmentAnswer, policy: JudgmentPolicy) => {
-  if (!accepts(answer, policy)) return containmentResultSchema.cases.Undetermined.make({});
-  return Match.value(answer.label).pipe(
-    Match.when("contained", () => containmentResultSchema.cases.Contained.make({})),
-    Match.when("notContained", () => containmentResultSchema.cases.NotContained.make({})),
-    Match.when("multipleLeft", () =>
-      containmentResultSchema.cases.MultipleTaxa.make({ side: "left" }),
+const interpretContainment = (
+  answer: ContainmentAnswer,
+  policy: AcceptancePolicy,
+): TaxonContainmentJudgment => {
+  const p = answer.probabilities;
+  const support = TaxonRelations.containmentSupports(p);
+  const undetermined = containmentJudgmentSchema.cases.Undetermined.make({});
+  const unresolved: Array.NonEmptyReadonlyArray<Scored<TaxonContainmentJudgment>> = [
+    { answer: undetermined, support: p.undetermined },
+    {
+      answer: containmentJudgmentSchema.cases.MultipleTaxa.make({ side: "left" }),
+      support: p.multipleLeft,
+    },
+    {
+      answer: containmentJudgmentSchema.cases.MultipleTaxa.make({ side: "right" }),
+      support: p.multipleRight,
+    },
+    {
+      answer: containmentJudgmentSchema.cases.MultipleTaxa.make({ side: "both" }),
+      support: p.multipleBoth,
+    },
+  ];
+  const candidates: Array.NonEmptyReadonlyArray<Scored<TaxonContainmentJudgment>> = [
+    { answer: containmentJudgmentSchema.cases.Contained.make({}), support: support.contained },
+    {
+      answer: containmentJudgmentSchema.cases.NotContained.make({}),
+      support: support.notContained,
+    },
+  ];
+  const broad = select(Array.appendAll(candidates, unresolved), policy).pipe(
+    Option.getOrElse(() => undetermined),
+  );
+  if (!containmentJudgmentSchema.guards.NotContained(broad)) return broad;
+
+  const detailed: Array.NonEmptyReadonlyArray<Scored<TaxonContainmentJudgment>> = [
+    { answer: containmentJudgmentSchema.cases.Contained.make({}), support: support.contained },
+    {
+      answer: containmentJudgmentSchema.cases.PartlyContained.make({}),
+      support: support.partlyContained,
+    },
+    { answer: containmentJudgmentSchema.cases.Disjoint.make({}), support: support.disjoint },
+  ];
+  return select(Array.appendAll(detailed, unresolved), policy).pipe(
+    Option.filter(
+      (judgment) =>
+        containmentJudgmentSchema.guards.PartlyContained(judgment) ||
+        containmentJudgmentSchema.guards.Disjoint(judgment),
     ),
-    Match.when("multipleRight", () =>
-      containmentResultSchema.cases.MultipleTaxa.make({ side: "right" }),
-    ),
-    Match.when("multipleBoth", () =>
-      containmentResultSchema.cases.MultipleTaxa.make({ side: "both" }),
-    ),
-    Match.when("undetermined", () => containmentResultSchema.cases.Undetermined.make({})),
-    Match.exhaustive,
+    Option.getOrElse(() => broad),
   );
 };
 
 /**
- * Ask whether every organism in the named inner taxon belongs to the named outer taxon.
- * Contained includes equality. NotContained reports at least one organism outside outer.
+ * Compare everything represented by inner with outer, interpreting clear combinations together.
  *
  * @example
  * import { TaxonName, Taxonomy, TaxonSet } from "robo-taxonomist";
@@ -669,10 +706,10 @@ export const taxonWithin: TaxonWithinFn = Effect.fn("Taxonomy.taxonWithin")(func
   const { answers } = yield* DecisionModel.decide(makeContainmentQuestion(encoded), {
     input: null,
   });
-  return interpretContainment(answers.containment, options.policy ?? defaultJudgmentPolicy);
+  return interpretContainment(answers.containment, options.policy ?? defaultPolicy);
 });
 
-const membershipResultSchema = Schema.TaggedUnion({
+const membershipJudgmentSchema = Schema.TaggedUnion({
   Member: {},
   NotMember: {},
   MixedMembership: {},
@@ -690,8 +727,8 @@ const membershipResultSchema = Schema.TaggedUnion({
  * with a TaxonSet.union of separately constructed TaxonSet.of expressions, then retry.
  * @example
  * import { Match } from "effect";
- * import type { TaxonMembershipResult } from "robo-taxonomist";
- * export const describe = (result: TaxonMembershipResult) => Match.value(result).pipe(
+ * import type { TaxonMembershipJudgment } from "robo-taxonomist";
+ * export const describe = (result: TaxonMembershipJudgment) => Match.value(result).pipe(
  *   Match.tagsExhaustive({
  *     Member: () => "Wholly inside", NotMember: () => "Wholly outside",
  *     MixedMembership: () => "Subjects both inside and outside",
@@ -702,7 +739,7 @@ const membershipResultSchema = Schema.TaggedUnion({
  *   }),
  * );
  */
-export type TaxonMembershipResult = typeof membershipResultSchema.Type;
+export type TaxonMembershipJudgment = typeof membershipJudgmentSchema.Type;
 
 type MembershipTarget = TaxonName | TaxonSet;
 
@@ -710,7 +747,7 @@ type RecordBelongsToFn = (
   record: RecordInput,
   target: MembershipTarget,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonMembershipResult, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<TaxonMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 
 const batchRecordsSchema = Schema.NonEmptyArray(recordInputSchema);
 
@@ -754,7 +791,7 @@ const prepareMembershipTarget = Effect.fnUntraced(function* (target: MembershipT
       (name, index) =>
         [
           `multipleTarget${index}`,
-          `The name ${quoteText(name)} jointly names distinct taxa, rather than one taxon. The caller needs to supply these taxa separately in an explicit union.`,
+          `The target name ${quoteText(name)} combines taxa and needs clarification.`,
         ] as const,
     ),
   );
@@ -788,10 +825,8 @@ const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
             `record${index}`,
             Decision.classify({
               instructions:
-                "Classify this record's membership in the supplied taxon or taxon-set expression.\n" +
+                "Classify all subjects described by this record against the complete target.\n" +
                 `${TaxonSetGraph.instructions} Root is target.\n` +
-                "A record may describe several subjects or taxa. Classify them together against the complete target. " +
-                "Choose mixed only when the record clearly describes at least one subject inside the target and at least one outside.\n" +
                 describeRecord(record),
               criteria: prepared.criteria,
             }),
@@ -801,23 +836,34 @@ const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
   });
 });
 
+type MembershipAnswer = Decision.Answer<
+  Effect.Success<ReturnType<typeof makeMembershipBatchQuestion>>["decisions"][`record${number}`]
+>;
+
 const interpretMembership = (
-  answer: Decision.ClassifyAnswer<string>,
+  answer: MembershipAnswer,
   targetNames: readonly TaxonName[],
-  policy: JudgmentPolicy,
+  policy: AcceptancePolicy,
 ) => {
-  if (!accepts(answer, policy)) return membershipResultSchema.cases.Undetermined.make({});
+  const alternatives = pipe(
+    Record.toEntries(answer.probabilities),
+    Iterable.filter(([label]) => label !== answer.label),
+    Iterable.map(([, support]) => support),
+  );
+  const support = Record.get(answer.probabilities, answer.label).pipe(Option.getOrThrow);
+  if (answer.label === "undetermined" || !accepts(support, alternatives, policy))
+    return membershipJudgmentSchema.cases.Undetermined.make({});
   return Match.value(answer.label).pipe(
-    Match.when("member", () => membershipResultSchema.cases.Member.make({})),
-    Match.when("notMember", () => membershipResultSchema.cases.NotMember.make({})),
-    Match.when("mixed", () => membershipResultSchema.cases.MixedMembership.make({})),
+    Match.when("member", () => membershipJudgmentSchema.cases.Member.make({})),
+    Match.when("notMember", () => membershipJudgmentSchema.cases.NotMember.make({})),
+    Match.when("mixed", () => membershipJudgmentSchema.cases.MixedMembership.make({})),
     Match.orElse(() =>
       Array.findFirst(
         targetNames,
         (_name, index) => answer.label === `multipleTarget${index}`,
       ).pipe(
         Option.map((targetName) =>
-          membershipResultSchema.cases.MultipleTaxaInTargetName.make({ targetName }),
+          membershipJudgmentSchema.cases.MultipleTaxaInTargetName.make({ targetName }),
         ),
         Option.getOrThrow,
       ),
@@ -828,17 +874,11 @@ const interpretMembership = (
 const decideMembershipBatch = Effect.fnUntraced(function* (
   records: typeof batchRecordsSchema.Type,
   prepared: Effect.Success<ReturnType<typeof prepareMembershipTarget>>,
-  options: JudgmentOptions = {},
 ) {
   const definition = yield* makeMembershipBatchQuestion(records, prepared);
   const { answers } = yield* DecisionModel.decide(definition, { input: prepared.input });
-  const policy = options.policy ?? defaultJudgmentPolicy;
   return Array.map(records, (_record, index) =>
-    interpretMembership(
-      Record.get(answers, `record${index}`).pipe(Option.getOrThrow),
-      prepared.targetNames,
-      policy,
-    ),
+    Record.get(answers, `record${index}`).pipe(Option.getOrThrow),
   );
 });
 
@@ -855,16 +895,20 @@ export const recordBelongsTo: RecordBelongsToFn = Effect.fn("Taxonomy.recordBelo
   target: MembershipTarget,
   options: JudgmentOptions = {},
 ) {
-  if (taxonSetSchema.guards.Empty(target)) return membershipResultSchema.cases.NotMember.make({});
+  if (taxonSetSchema.guards.Empty(target)) return membershipJudgmentSchema.cases.NotMember.make({});
   const prepared = yield* prepareMembershipTarget(target);
-  const results = yield* decideMembershipBatch([record], prepared, options);
-  return Array.headNonEmpty(results);
+  const answers = yield* decideMembershipBatch([record], prepared);
+  return interpretMembership(
+    Array.headNonEmpty(answers),
+    prepared.targetNames,
+    options.policy ?? defaultPolicy,
+  );
 });
 
 const defaultCollectionExecution = CollectionExecution.make({ batchSize: 16, concurrency: 1 });
 
 type CollectionOptions = {
-  readonly policy?: JudgmentPolicy;
+  readonly policy?: AcceptancePolicy;
   readonly execution?: CollectionExecution;
 };
 
@@ -884,7 +928,7 @@ class MembershipPartition<A extends RecordInput> extends Data.Class<{
    */
   static fromBatches<A extends RecordInput>(
     batches: readonly (readonly A[])[],
-    judgmentsByBatch: readonly (readonly TaxonMembershipResult[])[],
+    judgmentsByBatch: readonly (readonly TaxonMembershipJudgment[])[],
   ): MembershipPartition<A> {
     const Member: A[] = [];
     const NotMember: A[] = [];
@@ -981,9 +1025,15 @@ export const partitionRecordsByMembership: PartitionRecordsFn = Effect.fn(
     Iterable.filter(Iterable.chunksOf(records, execution.batchSize), Array.isArrayNonEmpty),
   );
   const prepared = yield* prepareMembershipTarget(target);
+  const policy = options.policy ?? defaultPolicy;
   const judgmentsByBatch = yield* Effect.forEach(
     batches,
-    (batch) => decideMembershipBatch(batch, prepared, options),
+    (batch) =>
+      decideMembershipBatch(batch, prepared).pipe(
+        Effect.map((answers) =>
+          Array.map(answers, (answer) => interpretMembership(answer, prepared.targetNames, policy)),
+        ),
+      ),
     { concurrency: execution.concurrency },
   );
   return MembershipPartition.fromBatches(batches, judgmentsByBatch);
@@ -1045,7 +1095,7 @@ export const groupRecordsByTaxa: GroupRecordsFn = Effect.fn("Taxonomy.groupRecor
 const quantifierSchema = Schema.Literals(["all", "any", "none"]);
 type RecordQuantifier = typeof quantifierSchema.Type;
 
-const collectionMembershipResultSchema = Schema.TaggedUnion({
+const collectionMembershipJudgmentSchema = Schema.TaggedUnion({
   Yes: { quantifier: quantifierSchema },
   No: { quantifier: quantifierSchema },
   Undetermined: { quantifier: quantifierSchema },
@@ -1060,8 +1110,8 @@ const collectionMembershipResultSchema = Schema.TaggedUnion({
  * of separately constructed TaxonSet.of expressions, then retry the collection question.
  * @example
  * import { Match } from "effect";
- * import type { CollectionMembershipResult } from "robo-taxonomist";
- * export const describe = (result: CollectionMembershipResult) => Match.value(result).pipe(
+ * import type { CollectionMembershipJudgment } from "robo-taxonomist";
+ * export const describe = (result: CollectionMembershipJudgment) => Match.value(result).pipe(
  *   Match.tagsExhaustive({
  *     Yes: ({ quantifier }) => `The ${quantifier} question returned Yes.`,
  *     No: ({ quantifier }) => `The ${quantifier} question returned No.`,
@@ -1072,14 +1122,14 @@ const collectionMembershipResultSchema = Schema.TaggedUnion({
  *   }),
  * );
  */
-export type CollectionMembershipResult = typeof collectionMembershipResultSchema.Type;
+export type CollectionMembershipJudgment = typeof collectionMembershipJudgmentSchema.Type;
 
 const yes = (quantifier: RecordQuantifier) =>
-  collectionMembershipResultSchema.cases.Yes.make({ quantifier });
+  collectionMembershipJudgmentSchema.cases.Yes.make({ quantifier });
 const no = (quantifier: RecordQuantifier) =>
-  collectionMembershipResultSchema.cases.No.make({ quantifier });
+  collectionMembershipJudgmentSchema.cases.No.make({ quantifier });
 
-const completedScanResult = (quantifier: RecordQuantifier): CollectionMembershipResult =>
+const completedScanJudgment = (quantifier: RecordQuantifier): CollectionMembershipJudgment =>
   Match.value(quantifier).pipe(
     Match.when("all", () => yes(quantifier)),
     Match.when("any", () => no(quantifier)),
@@ -1092,8 +1142,8 @@ const quantifyRecords = Effect.fnUntraced(function* (
   records: readonly RecordInput[],
   target: MembershipTarget,
   options: CollectionOptions = {},
-): Effect.fn.Return<CollectionMembershipResult, AiError.AiError, DecisionModel.DecisionModel> {
-  if (!Array.isReadonlyArrayNonEmpty(records)) return completedScanResult(quantifier);
+): Effect.fn.Return<CollectionMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel> {
+  if (!Array.isReadonlyArrayNonEmpty(records)) return completedScanJudgment(quantifier);
   if (taxonSetSchema.guards.Empty(target))
     return Match.value(quantifier).pipe(
       Match.when("all", () => no(quantifier)),
@@ -1105,6 +1155,7 @@ const quantifyRecords = Effect.fnUntraced(function* (
   const execution = options.execution ?? defaultCollectionExecution;
   const input = Array.copy(records);
   const prepared = yield* prepareMembershipTarget(target);
+  const policy = options.policy ?? defaultPolicy;
   const batches = Iterable.filter(
     Iterable.chunksOf(input, execution.batchSize),
     Array.isArrayNonEmpty,
@@ -1115,56 +1166,76 @@ const quantifyRecords = Effect.fnUntraced(function* (
   for (const window of windows) {
     const resultsByBatch = yield* Effect.forEach(
       window,
-      (batch) => decideMembershipBatch(batch, prepared, options),
+      (batch) => decideMembershipBatch(batch, prepared),
       { concurrency: execution.concurrency },
     );
     for (const results of resultsByBatch) {
-      for (const membership of results) {
-        const decisive: Option.Option<CollectionMembershipResult> = Match.value(membership).pipe(
-          Match.when({ _tag: "Member" }, () =>
+      for (const answer of results) {
+        const p = answer.probabilities;
+        const candidates: Array.NonEmptyReadonlyArray<
+          Scored<boolean | CollectionMembershipJudgment>
+        > = [
+          { answer: true, support: p.member },
+          { answer: false, support: sumProbabilities([p.notMember, p.mixed]) },
+          {
+            answer: collectionMembershipJudgmentSchema.cases.Undetermined.make({ quantifier }),
+            support: p.undetermined,
+          },
+        ];
+        const clarifications = Array.map(
+          prepared.targetNames,
+          (targetName, index): Scored<boolean | CollectionMembershipJudgment> => ({
+            answer: collectionMembershipJudgmentSchema.cases.MultipleTaxaInTargetName.make({
+              quantifier,
+              targetName,
+            }),
+            support: Record.get(p, `multipleTarget${index}`).pipe(Option.getOrThrow),
+          }),
+        );
+        const selected = select(Array.appendAll(candidates, clarifications), policy);
+        if (Option.isNone(selected)) {
+          encounteredUncertainty = true;
+          continue;
+        }
+        const decisive: Option.Option<CollectionMembershipJudgment> = Match.value(
+          selected.value,
+        ).pipe(
+          Match.when(true, () =>
             Match.value(quantifier).pipe(
-              Match.when("all", () => Option.none<CollectionMembershipResult>()),
+              Match.when("all", () => Option.none<CollectionMembershipJudgment>()),
               Match.when("any", () => Option.some(yes(quantifier))),
               Match.when("none", () => Option.some(no(quantifier))),
               Match.exhaustive,
             ),
           ),
-          Match.whenOr({ _tag: "NotMember" }, { _tag: "MixedMembership" }, () =>
+          Match.when(false, () =>
             Match.value(quantifier).pipe(
               Match.when("all", () => Option.some(no(quantifier))),
-              Match.when("any", () => Option.none<CollectionMembershipResult>()),
-              Match.when("none", () => Option.none<CollectionMembershipResult>()),
+              Match.when("any", () => Option.none<CollectionMembershipJudgment>()),
+              Match.when("none", () => Option.none<CollectionMembershipJudgment>()),
               Match.exhaustive,
             ),
           ),
-          Match.when({ _tag: "Undetermined" }, () => {
+          Match.when(collectionMembershipJudgmentSchema.guards.Undetermined, () => {
             encounteredUncertainty = true;
-            return Option.none<CollectionMembershipResult>();
+            return Option.none<CollectionMembershipJudgment>();
           }),
-          Match.when({ _tag: "MultipleTaxaInTargetName" }, ({ targetName }) =>
-            Option.some(
-              collectionMembershipResultSchema.cases.MultipleTaxaInTargetName.make({
-                quantifier,
-                targetName,
-              }),
-            ),
-          ),
-          Match.exhaustive,
+          Match.orElse((judgment) => Option.some(judgment)),
         );
         if (Option.isSome(decisive)) return decisive.value;
       }
     }
   }
   if (encounteredUncertainty)
-    return collectionMembershipResultSchema.cases.Undetermined.make({ quantifier });
-  return completedScanResult(quantifier);
+    return collectionMembershipJudgmentSchema.cases.Undetermined.make({ quantifier });
+  return completedScanJudgment(quantifier);
 });
 
 type QuantifyRecordsFn = (
   records: readonly RecordInput[],
   target: MembershipTarget,
   options?: CollectionOptions,
-) => Effect.Effect<CollectionMembershipResult, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<CollectionMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 
 /**
  * Ask whether every complete record belongs to the target.

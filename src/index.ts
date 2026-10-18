@@ -3,10 +3,9 @@
  * Use .make for synchronous construction; validation failures throw.
  * Use .makeEffect to handle validation failures through Effect.
  */
+export { AcceptancePolicy } from "./AcceptancePolicy.ts";
 export {
   CollectionExecution,
-  JudgmentPolicy,
-  RankComparisonPolicy,
   RecordLabel,
   TaxonId,
   TaxonomicRecord,
@@ -29,12 +28,12 @@ export * as Taxonomy from "./Taxonomy.ts";
 export type {
   RecordMembershipPartition,
   RecordsGroupedByTaxa,
-  CollectionMembershipResult,
-  RankComparisonResult,
+  CollectionMembershipJudgment,
+  RankComparisonJudgment,
   TaxonomicRank,
-  TaxonIdentityResult,
-  TaxonContainmentResult,
-  TaxonMembershipResult,
+  TaxonIdentityJudgment,
+  TaxonContainmentJudgment,
+  TaxonMembershipJudgment,
 } from "./Taxonomy.ts";
 
 /**
@@ -47,4 +46,4 @@ export type {
  * export const oaks = TaxonSet.of(TaxonName.make("Quercus"));
  */
 export * as TaxonSet from "./TaxonSet.ts";
-export type { TaxonSetRelationResult } from "./TaxonSet.ts";
+export type { TaxonSetRelationJudgment } from "./TaxonSet.ts";

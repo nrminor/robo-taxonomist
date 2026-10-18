@@ -2,15 +2,20 @@
 import { Effect, type Array, type Types } from "effect";
 import type { AiError, DecisionModel } from "effect/ai";
 import {
+  AcceptancePolicy,
   RecordLabel,
   TaxonName,
   Taxonomy,
   TaxonSet,
-  type CollectionMembershipResult,
+  type CollectionMembershipJudgment,
   type RecordMembershipPartition,
   type RecordsGroupedByTaxa,
-  type TaxonMembershipResult,
-  type TaxonSetRelationResult,
+  type RankComparisonJudgment,
+  type TaxonomicRank,
+  type TaxonIdentityJudgment,
+  type TaxonContainmentJudgment,
+  type TaxonMembershipJudgment,
+  type TaxonSetRelationJudgment,
 } from "robo-taxonomist";
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
@@ -25,6 +30,26 @@ type Judgment<T, A> =
       ? Equal<Effect.Services<T>, DecisionModel.DecisionModel>
       : false
     : false;
+
+type RankRelationTag =
+  | "SameTaxonAtRank"
+  | "SameMultipleTaxaAtRank"
+  | "SameTaxaAtRank"
+  | "LeftTaxaWithinRightAtRank"
+  | "RightTaxaWithinLeftAtRank"
+  | "PartlySharedTaxaAtRank"
+  | "NoSharedTaxaAtRank"
+  | "DifferentTaxaAtRank"
+  | "Undetermined";
+type ExpectedRankComparison =
+  | {
+      [Tag in RankRelationTag]: { readonly _tag: Tag; readonly rank: TaxonomicRank };
+    }[RankRelationTag]
+  | {
+      readonly _tag: "MultipleTaxaAtRank";
+      readonly rank: TaxonomicRank;
+      readonly side: "left" | "right" | "both";
+    };
 
 const label = RecordLabel.make("Voucher A17 | Quercus robur");
 const name = TaxonName.make("Quercus");
@@ -44,6 +69,10 @@ const specimen: { readonly label: RecordLabel; readonly voucher: "A17" } = {
   voucher: "A17",
 };
 const records: readonly (typeof specimen)[] = [specimen];
+const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
+const rank = Taxonomy.sameSpecies(specimen, specimen, { policy });
+const identity = Taxonomy.sameTaxon(name, name, { policy });
+const containment = Taxonomy.taxonWithin(name, name, { policy });
 
 const relation = TaxonSet.isSubsetOf(oaks, TaxonSet.union(oaks, TaxonSet.empty()));
 const membership = Taxonomy.recordBelongsTo(specimen, oaks);
@@ -62,17 +91,28 @@ const groupedMembers = grouped.pipe(
 );
 
 export type Contracts = [
+  Assert<Judgment<typeof rank, RankComparisonJudgment>>,
+  Assert<Equal<RankComparisonJudgment, ExpectedRankComparison>>,
+  Assert<Equal<IsAny<RankComparisonJudgment>, false>>,
+  Assert<
+    Equal<
+      TaxonomicRank,
+      "domain" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus" | "species"
+    >
+  >,
+  Assert<Judgment<typeof identity, TaxonIdentityJudgment>>,
+  Assert<Judgment<typeof containment, TaxonContainmentJudgment>>,
   Assert<Equal<UnionOperands, Array.NonEmptyReadonlyArray<TaxonSet.TaxonSet>>>,
   Assert<Equal<IntersectionOperands, Array.NonEmptyReadonlyArray<TaxonSet.TaxonSet>>>,
   Assert<Equal<IsAny<UnionOperands[number]>, false>>,
   Assert<Equal<IsAny<IntersectionOperands[number]>, false>>,
-  Assert<Judgment<typeof relation, TaxonSetRelationResult>>,
-  Assert<Judgment<typeof membership, TaxonMembershipResult>>,
+  Assert<Judgment<typeof relation, TaxonSetRelationJudgment>>,
+  Assert<Judgment<typeof membership, TaxonMembershipJudgment>>,
   Assert<Judgment<typeof partition, RecordMembershipPartition<typeof specimen>>>,
   Assert<Judgment<typeof grouped, RecordsGroupedByTaxa<typeof specimen>>>,
-  Assert<Judgment<typeof all, CollectionMembershipResult>>,
-  Assert<Judgment<typeof some, CollectionMembershipResult>>,
-  Assert<Judgment<typeof none, CollectionMembershipResult>>,
+  Assert<Judgment<typeof all, CollectionMembershipJudgment>>,
+  Assert<Judgment<typeof some, CollectionMembershipJudgment>>,
+  Assert<Judgment<typeof none, CollectionMembershipJudgment>>,
   Assert<Judgment<typeof members, readonly (typeof specimen)[]>>,
   Assert<Judgment<typeof groupedMembers, (readonly (typeof specimen)[])[]>>,
   Assert<

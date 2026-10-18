@@ -17,16 +17,22 @@ export const program = Effect.gen(function* () {
   return Match.value(result).pipe(
     Match.tagsExhaustive({
       SameTaxonAtRank: () => "Same species",
-      DifferentTaxaAtRank: () => "Different species",
+      SameMultipleTaxaAtRank: () => "Same set of several species",
+      SameTaxaAtRank: () => "Same species set; count uncertain",
+      LeftTaxaWithinRightAtRank: () => "Left species form a proper subset of right species",
+      RightTaxaWithinLeftAtRank: () => "Right species form a proper subset of left species",
+      PartlySharedTaxaAtRank: () => "Some species shared; each side also has others",
+      NoSharedTaxaAtRank: () => "No species shared",
+      DifferentTaxaAtRank: () => "Unequal species sets; detailed relation uncertain",
       Undetermined: () => "Not enough information",
       MultipleTaxaAtRank: ({ side }) =>
-        `The model reads ${side} as describing multiple species. This comparison needs one species assignment per record.`,
+        `A combined name on ${side} needs clarification before comparison.`,
     }),
   );
 });
 ```
 
-Provide your application's `DecisionModel` layer before running this Effect. Results are model judgments, not biological certification; provider failures remain Effect errors. The default reports a selected label only when it has at least half the support and uniquely leads. Pass `{ policy: RankComparisonPolicy.make({ minimumSupport: 0.95, minimumMargin: 0.25 }) }` for stricter reporting.
+Provide your application's `DecisionModel` layer before running this Effect. Rank comparisons combine support for matching or differing taxon collections before applying the thresholds. More specific judgments require sufficient support too. Pass `{ policy: AcceptancePolicy.make({ minimumSupport: 0.95, minimumMargin: 0.25 }) }` for stricter reporting. Provider failures remain Effect errors.
 
 `RecordLabel` describes a record; `TaxonName` describes a whole taxon. Constructors reject blank text and preserve accepted text exactly, without lookup. `TaxonomicRecord` accepts a label, scientific name, or scoped `TaxonId`, without requiring invented labels. `sameLabel` stays pure and compares only original text. Effect's AI APIs are currently unstable, even in Effect 4.
 
@@ -46,9 +52,11 @@ export const comparison = Taxonomy.sameGenus(first, second);
 
 The rank question names the requested rank and quotes every supplied identifying field once. Conflicting labels, names, and IDs stay together; no field is chosen as authoritative. An omitted taxonomy release stays unspecified, not “latest.” Rank adapters receive `null` state: the record facts are already in the question. This presentation does not certify the model's answer.
 
+Rank comparisons compare the taxa represented at the requested rank, including clear combinations. `SameTaxonAtRank` reports one shared taxon; `SameMultipleTaxaAtRank` reports several. `SameTaxaAtRank` leaves the count uncertain. `DifferentTaxaAtRank` reports unequal collections when their precise relation remains uncertain. Every judgment retains `rank`.
+
 ## Taxa, records, and sets
 
-Use `sameTaxon` for the same taxonomic grouping, including resolved synonyms. Use `taxonWithin(inner, outer)` when every organism belonging to the inner taxon must belong to the outer; equality counts. Neither `DifferentTaxa` nor `NotContained` establishes disjointness.
+Use `sameTaxon` to ask whether names refer to the same taxon, including resolved synonyms. Use `taxonWithin(inner, outer)` to distinguish full inclusion, partial inclusion, and disjointness. `NotContained` preserves a negative answer when overlap remains uncertain.
 
 ```ts
 import { TaxonName, Taxonomy } from "robo-taxonomist";
@@ -79,7 +87,7 @@ export const membership = Effect.gen(function* () {
     Match.tagsExhaustive({
       Member: () => "Every represented subject belongs",
       NotMember: () => "Every represented subject is outside",
-      MixedMembership: () => "Subjects are established both inside and outside",
+      MixedMembership: () => "Some subjects belong; others lie outside",
       Undetermined: () => "Membership needs review",
       MultipleTaxaInTargetName: ({ targetName }) =>
         `Review the target name “${targetName}”. Use TaxonSet.union to combine separately constructed taxa.`,
@@ -90,13 +98,13 @@ export const membership = Effect.gen(function* () {
 export const subset = TaxonSet.isSubsetOf(selected, TaxonSet.of(TaxonName.make("Fagaceae")));
 ```
 
-Membership asks about the complete record and target. Multiple subjects alone do not establish `MixedMembership`. A target-name diagnosis identifies an original supplied name; it does not split it, invent a replacement, or certify the other names. Scalar `MultipleTaxa` diagnoses retain the original side (`left` means inner for `taxonWithin`). Diagnoses and uncertainty are successful results, separate from `AiError` failures.
+Membership asks about the complete record and target. `MixedMembership` reports subjects inside and outside the target. A clarification result identifies the original supplied name or side (`left` means inner for `taxonWithin`). Clear combinations can be interpreted directly. Judgments and uncertainty are successful values; input and provider failures use `AiError`.
 
 Set questions return `Yes`, `No`, `Undetermined`, or `MultipleTaxaInSetName`, retaining the asked `relation`. `isSubsetOf` includes equality; `isProperSubsetOf` additionally requires unequal sets. `equivalent` asks for equal organism sets, not taxonomic grouping identity. `overlaps` asks whether the sets share any organisms; `disjoint` maps one overlap judgment to its opposite while preserving uncertainty and diagnoses.
 
-All these questions use your application's `DecisionModel`. Pass `{ policy: JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 }) }` to change non-rank thresholds. The default requires at least half the support and a uniquely leading selected answer. Thresholds are reporting preferences, not calibrated biological accuracy; separate calls need not agree.
+All these questions use your application's `DecisionModel` and accept the same `AcceptancePolicy`. By default, an answer needs at least half the support and a unique lead. Thresholds control reporting; model probabilities are not calibrated biological accuracy.
 
-Each scalar, singleton membership, or set question makes one classification in one `DecisionModel.decide` call except for literal top-level `Empty` facts: membership is `NotMember`; an empty left is a subset; nothing is a proper subset of an empty right; two empty sets are equivalent; either empty operand prevents overlap and establishes disjointness. These shortcuts do not inspect or certify the other operand. Nonliteral expressions such as `difference(A, A)` are not simplified and still need a judgment outside those cases.
+Each scalar, singleton membership, or set question makes one classification in one `DecisionModel.decide` call except for literal top-level `Empty` facts: membership is `NotMember`; an empty left is a subset; nothing is a proper subset of an empty right; two empty sets are equivalent; either empty operand prevents overlap and implies disjointness. These shortcuts do not inspect or certify the other operand. Nonliteral expressions such as `difference(A, A)` are not simplified and still need a judgment outside those cases.
 
 Adapters receive null state for scalar questions, flat `{ nodes, left, right }` state for set questions, and flat `{ nodes, target }` state for membership questions. Numeric roots and child references index the shared `nodes` table. Record facts occur once in membership questions. No provider, runtime, retry, cache, lookup, or consistency repair is supplied by the library.
 
@@ -152,7 +160,7 @@ export const partition = Taxonomy.partitionRecordsByMembership(
 );
 ```
 
-Grouping processes targets sequentially, so the cap does not multiply by target count. Independent operations have independent caps. These are record/request counts, not byte limits or measured optimal settings. Collections also accept the same optional `JudgmentPolicy`.
+Grouping processes targets sequentially, so the cap does not multiply by target count. Independent operations have independent caps. These are record/request counts, not byte limits or measured optimal settings. Collections also accept the same optional `AcceptancePolicy`.
 
 Quantifiers wait for each window of up to `concurrency` batches to succeed, then scan answers in input order. The first decisive membership answer or accepted name diagnosis wins; uncertainty is remembered if no later answer settles the question. No later window starts after settlement. Already-requested records may extend beyond that answer, and cancellation cannot recall sent requests. Any current-window failure fails the operation before its answers are scanned, even beside a decisive answer. Partitions and groups need every judgment and return no successful partial output. Defects and caller interruption retain normal Effect behavior.
 

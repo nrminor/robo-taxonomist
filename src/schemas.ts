@@ -104,61 +104,6 @@ export const TaxonomicRecord = Schema.Union([
  */
 export type TaxonomicRecord = typeof TaxonomicRecord.Type;
 
-const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
-
-/**
- * Configure acceptance for rank judgments and multiple-taxa diagnoses.
- * Support is the selected answer's probability. Margin is its lead over the strongest alternative.
- * The selected answer must uniquely lead and meet the support and margin thresholds.
- * Each threshold ranges from 0 to 1, and the margin check allows machine-precision rounding.
- *
- * @example
- * import { RankComparisonPolicy } from "robo-taxonomist";
- * export const cautious = RankComparisonPolicy.make({
- *   minimumSupport: 0.95,
- *   minimumMargin: 0.25,
- * });
- */
-export const RankComparisonPolicy = Schema.Struct({
-  minimumSupport: UnitInterval,
-  minimumMargin: UnitInterval,
-}).pipe(Schema.brand("RankComparisonPolicy"));
-
-/**
- * RankComparisonPolicy.make returns this type after validating the thresholds.
- * Rank-comparison functions accept it in their policy option.
- *
- * @example
- * import { Taxonomy, type RankComparisonPolicy, type RecordLabel } from "robo-taxonomist";
- * export const compareWith = (first: RecordLabel, second: RecordLabel, policy: RankComparisonPolicy) =>
- *   Taxonomy.sameSpecies(first, second, { policy });
- */
-export type RankComparisonPolicy = typeof RankComparisonPolicy.Type;
-
-/**
- * Configure acceptance for taxon, membership, and set judgments.
- * Support is the selected answer's probability. Margin is its lead over the strongest alternative.
- * The selected answer must uniquely lead and meet the support and margin thresholds.
- * Each threshold ranges from 0 to 1, and the margin check allows machine-precision rounding.
- * @example
- * import { JudgmentPolicy } from "robo-taxonomist";
- * export const cautious = JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
- */
-export const JudgmentPolicy = Schema.Struct({
-  minimumSupport: UnitInterval,
-  minimumMargin: UnitInterval,
-}).pipe(Schema.brand("JudgmentPolicy"));
-
-/**
- * JudgmentPolicy.make returns this type after validating the thresholds.
- * Taxon, membership, and set functions accept it in their policy option.
- * @example
- * import { TaxonName, Taxonomy, type JudgmentPolicy } from "robo-taxonomist";
- * export const compare = (left: TaxonName, right: TaxonName, policy: JudgmentPolicy) =>
- *   Taxonomy.sameTaxon(left, right, { policy });
- */
-export type JudgmentPolicy = typeof JudgmentPolicy.Type;
-
 const positiveInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 
 /**

@@ -1,7 +1,9 @@
-import { Array, Effect, Match, Number, Option, Record, Schema, Struct, pipe } from "effect";
+import { Array, Effect, Option, Record, Schema, Struct, pipe } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
-import { JudgmentPolicy, TaxonName, taxonSetSchema } from "./schemas.ts";
+import { defaultPolicy, select, type AcceptancePolicy, type Scored } from "./AcceptancePolicy.ts";
+import { TaxonName, taxonSetSchema } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
+import * as TaxonRelations from "./TaxonRelations.ts";
 
 /**
  * TaxonSet constructors return this type to describe a set of organisms.
@@ -91,7 +93,7 @@ const setRelationSchema = Schema.Literals([
   "overlap",
   "disjoint",
 ]);
-const setRelationResultSchema = Schema.TaggedUnion({
+const setRelationJudgmentSchema = Schema.TaggedUnion({
   Yes: { relation: setRelationSchema },
   No: { relation: setRelationSchema },
   Undetermined: { relation: setRelationSchema },
@@ -110,8 +112,8 @@ const setRelationResultSchema = Schema.TaggedUnion({
  * with a TaxonSet.union of separately constructed TaxonSet.of expressions, then retry.
  * @example
  * import { Match } from "effect";
- * import type { TaxonSetRelationResult } from "robo-taxonomist";
- * export const describe = (result: TaxonSetRelationResult) => Match.value(result).pipe(
+ * import type { TaxonSetRelationJudgment } from "robo-taxonomist";
+ * export const describe = (result: TaxonSetRelationJudgment) => Match.value(result).pipe(
  *   Match.tagsExhaustive({
  *     Yes: ({ relation }) => `Yes: ${relation}`, No: ({ relation }) => `No: ${relation}`,
  *     Undetermined: ({ relation }) => `Uncertain: ${relation}`,
@@ -121,45 +123,21 @@ const setRelationResultSchema = Schema.TaggedUnion({
  *   }),
  * );
  */
-export type TaxonSetRelationResult = typeof setRelationResultSchema.Type;
+export type TaxonSetRelationJudgment = typeof setRelationJudgmentSchema.Type;
 
-type JudgmentOptions = { readonly policy?: JudgmentPolicy };
+type JudgmentOptions = { readonly policy?: AcceptancePolicy };
 // Fn aliases keep public calling contracts separate from traced implementations.
 type SetRelationFn = (
   left: TaxonSet,
   right: TaxonSet,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonSetRelationResult, AiError.AiError, DecisionModel.DecisionModel>;
-const defaultJudgmentPolicy = JudgmentPolicy.make({ minimumSupport: 0.5, minimumMargin: 0 });
+) => Effect.Effect<TaxonSetRelationJudgment, AiError.AiError, DecisionModel.DecisionModel>;
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
-const relationQuestions = {
-  subset: {
-    instructions: "Is the complete left organism set a subset of the complete right organism set?",
-    yes: "Every organism in the left set also belongs to the right set; equality counts.",
-    no: "At least one organism in the left set does not belong to the right set.",
-  },
-  "proper-subset": {
-    instructions:
-      "Is the complete left organism set a proper subset of the complete right organism set?",
-    yes: "Every organism in the left set belongs to the right set, and at least one organism in the right set is outside the left set.",
-    no: "An organism in the left set is outside the right set, or the two sets contain exactly the same organisms.",
-  },
-  equivalent: {
-    instructions: "Do the two complete sets contain exactly the same organisms?",
-    yes: "The two sets contain exactly the same organisms.",
-    no: "At least one organism belongs to one set but not the other.",
-  },
-  overlap: {
-    instructions: "Do the two complete sets share any organisms?",
-    yes: "At least one organism belongs to both sets.",
-    no: "No organism belongs to both sets.",
-  },
-};
 
-const makeRelationQuestion = Effect.fnUntraced(function* (
-  relation: keyof typeof relationQuestions,
-  input: { readonly left: TaxonSet; readonly right: TaxonSet },
-) {
+const makeRelationQuestion = Effect.fnUntraced(function* (input: {
+  readonly left: TaxonSet;
+  readonly right: TaxonSet;
+}) {
   const compiled = yield* TaxonSetGraph.compile(input).pipe(
     Effect.mapError((reason) =>
       AiError.make({
@@ -185,19 +163,13 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       }),
     ),
   );
-  const question = relationQuestions[relation];
-  const relationshipChoices = {
-    yes: question.yes,
-    no: question.no,
-    undetermined: "The available information is insufficient.",
-  };
   const leftNameChoices = Record.fromEntries(
     Array.map(
       names.leftNames,
       (name, index) =>
         [
           `multipleLeft${index}`,
-          `The left-set name ${quoteText(name)} jointly names distinct taxa, rather than one taxon. The caller needs to supply these taxa separately in an explicit union.`,
+          `The left-set name ${quoteText(name)} combines taxa and needs clarification.`,
         ] as const,
     ),
   );
@@ -207,12 +179,12 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       (name, index) =>
         [
           `multipleRight${index}`,
-          `The right-set name ${quoteText(name)} jointly names distinct taxa, rather than one taxon. The caller needs to supply these taxa separately in an explicit union.`,
+          `The right-set name ${quoteText(name)} combines taxa and needs clarification.`,
         ] as const,
     ),
   );
   const criteria = pipe(
-    relationshipChoices,
+    TaxonRelations.criteria,
     Struct.assign(leftNameChoices),
     Struct.assign(rightNameChoices),
   );
@@ -223,7 +195,7 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
       input: Schema.toEncoded(TaxonSetGraph.relationInputSchema),
       decisions: {
         relation: Decision.classify({
-          instructions: `${question.instructions}\n${TaxonSetGraph.instructions} Roots are left and right.`,
+          instructions: `Compare the organisms in the complete left and right sets.\n${TaxonSetGraph.instructions} Roots are left and right.`,
           criteria,
         }),
       },
@@ -231,66 +203,56 @@ const makeRelationQuestion = Effect.fnUntraced(function* (
   };
 });
 
-const accepts = (answer: Decision.ClassifyAnswer<string>, policy: JudgmentPolicy) => {
-  if (answer.label === "undetermined") return false;
-  const support = Record.get(answer.probabilities, answer.label).pipe(Option.getOrThrow);
-  const strongestAlternative = Record.reduce(
-    answer.probabilities,
-    0,
-    (strongest, probability, label) =>
-      label === answer.label ? strongest : Number.max(strongest, probability),
-  );
-  const margin = support - strongestAlternative;
-  return (
-    margin > 0 &&
-    support >= policy.minimumSupport &&
-    (margin >= policy.minimumMargin || policy.minimumMargin - margin <= globalThis.Number.EPSILON)
-  );
-};
+type RelationAnswer = Decision.Answer<
+  Effect.Success<ReturnType<typeof makeRelationQuestion>>["definition"]["decisions"]["relation"]
+>;
 
 const interpretRelation = (
   requestedRelation: typeof setRelationSchema.Type,
-  answer: Decision.ClassifyAnswer<string>,
+  answer: RelationAnswer,
   input: Effect.Success<ReturnType<typeof makeRelationQuestion>>["names"],
-  policy: JudgmentPolicy,
-) => {
-  if (!accepts(answer, policy))
-    return setRelationResultSchema.cases.Undetermined.make({ relation: requestedRelation });
-  return Match.value(answer.label).pipe(
-    Match.when("yes", () =>
-      setRelationResultSchema.cases.Yes.make({ relation: requestedRelation }),
+  policy: AcceptancePolicy,
+): TaxonSetRelationJudgment => {
+  const p = answer.probabilities;
+  const support = TaxonRelations.predicateSupports[requestedRelation](p);
+  const undetermined = setRelationJudgmentSchema.cases.Undetermined.make({
+    relation: requestedRelation,
+  });
+  const candidates: Array.NonEmptyReadonlyArray<Scored<TaxonSetRelationJudgment>> = [
+    {
+      answer: setRelationJudgmentSchema.cases.Yes.make({ relation: requestedRelation }),
+      support: support.yes,
+    },
+    {
+      answer: setRelationJudgmentSchema.cases.No.make({ relation: requestedRelation }),
+      support: support.no,
+    },
+    { answer: undetermined, support: p.undetermined },
+  ];
+  const withClarifications = pipe(
+    candidates,
+    Array.appendAll(
+      Array.map(input.leftNames, (taxonName, index): Scored<TaxonSetRelationJudgment> => ({
+        answer: setRelationJudgmentSchema.cases.MultipleTaxaInSetName.make({
+          relation: requestedRelation,
+          side: "left",
+          taxonName,
+        }),
+        support: Record.get(p, `multipleLeft${index}`).pipe(Option.getOrThrow),
+      })),
     ),
-    Match.when("no", () => setRelationResultSchema.cases.No.make({ relation: requestedRelation })),
-    Match.orElse(() =>
-      Array.findFirst(
-        input.leftNames,
-        (_name, index) => answer.label === `multipleLeft${index}`,
-      ).pipe(
-        Option.map((taxonName) =>
-          setRelationResultSchema.cases.MultipleTaxaInSetName.make({
-            relation: requestedRelation,
-            side: "left",
-            taxonName,
-          }),
-        ),
-        Option.orElse(() =>
-          Array.findFirst(
-            input.rightNames,
-            (_name, index) => answer.label === `multipleRight${index}`,
-          ).pipe(
-            Option.map((taxonName) =>
-              setRelationResultSchema.cases.MultipleTaxaInSetName.make({
-                relation: requestedRelation,
-                side: "right",
-                taxonName,
-              }),
-            ),
-          ),
-        ),
-        Option.getOrThrow,
-      ),
+    Array.appendAll(
+      Array.map(input.rightNames, (taxonName, index): Scored<TaxonSetRelationJudgment> => ({
+        answer: setRelationJudgmentSchema.cases.MultipleTaxaInSetName.make({
+          relation: requestedRelation,
+          side: "right",
+          taxonName,
+        }),
+        support: Record.get(p, `multipleRight${index}`).pipe(Option.getOrThrow),
+      })),
     ),
   );
+  return select(withClarifications, policy).pipe(Option.getOrElse(() => undetermined));
 };
 
 /**
@@ -306,14 +268,14 @@ export const isSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isSubsetOf")(functi
   options: JudgmentOptions = {},
 ) {
   if (taxonSetSchema.guards.Empty(left))
-    return setRelationResultSchema.cases.Yes.make({ relation: "subset" });
-  const request = yield* makeRelationQuestion("subset", { left, right });
+    return setRelationJudgmentSchema.cases.Yes.make({ relation: "subset" });
+  const request = yield* makeRelationQuestion({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "subset",
     answers.relation,
     request.names,
-    options.policy ?? defaultJudgmentPolicy,
+    options.policy ?? defaultPolicy,
   );
 });
 
@@ -330,14 +292,14 @@ export const isProperSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isProperSubse
   options: JudgmentOptions = {},
 ) {
   if (taxonSetSchema.guards.Empty(right))
-    return setRelationResultSchema.cases.No.make({ relation: "proper-subset" });
-  const request = yield* makeRelationQuestion("proper-subset", { left, right });
+    return setRelationJudgmentSchema.cases.No.make({ relation: "proper-subset" });
+  const request = yield* makeRelationQuestion({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "proper-subset",
     answers.relation,
     request.names,
-    options.policy ?? defaultJudgmentPolicy,
+    options.policy ?? defaultPolicy,
   );
 });
 
@@ -354,14 +316,14 @@ export const equivalent: SetRelationFn = Effect.fn("TaxonSet.equivalent")(functi
   options: JudgmentOptions = {},
 ) {
   if (taxonSetSchema.guards.Empty(left) && taxonSetSchema.guards.Empty(right))
-    return setRelationResultSchema.cases.Yes.make({ relation: "equivalent" });
-  const request = yield* makeRelationQuestion("equivalent", { left, right });
+    return setRelationJudgmentSchema.cases.Yes.make({ relation: "equivalent" });
+  const request = yield* makeRelationQuestion({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "equivalent",
     answers.relation,
     request.names,
-    options.policy ?? defaultJudgmentPolicy,
+    options.policy ?? defaultPolicy,
   );
 });
 
@@ -378,14 +340,14 @@ export const overlaps: SetRelationFn = Effect.fn("TaxonSet.overlaps")(function* 
   options: JudgmentOptions = {},
 ) {
   if (taxonSetSchema.guards.Empty(left) || taxonSetSchema.guards.Empty(right))
-    return setRelationResultSchema.cases.No.make({ relation: "overlap" });
-  const request = yield* makeRelationQuestion("overlap", { left, right });
+    return setRelationJudgmentSchema.cases.No.make({ relation: "overlap" });
+  const request = yield* makeRelationQuestion({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "overlap",
     answers.relation,
     request.names,
-    options.policy ?? defaultJudgmentPolicy,
+    options.policy ?? defaultPolicy,
   );
 });
 
@@ -401,15 +363,15 @@ export const disjoint: SetRelationFn = Effect.fn("TaxonSet.disjoint")(function* 
   right: TaxonSet,
   options: JudgmentOptions = {},
 ) {
-  return setRelationResultSchema.match(yield* overlaps(left, right, options), {
-    Yes: (): TaxonSetRelationResult =>
-      setRelationResultSchema.cases.No.make({ relation: "disjoint" }),
-    No: (): TaxonSetRelationResult =>
-      setRelationResultSchema.cases.Yes.make({ relation: "disjoint" }),
-    Undetermined: (): TaxonSetRelationResult =>
-      setRelationResultSchema.cases.Undetermined.make({ relation: "disjoint" }),
-    MultipleTaxaInSetName: ({ side, taxonName }): TaxonSetRelationResult =>
-      setRelationResultSchema.cases.MultipleTaxaInSetName.make({
+  return setRelationJudgmentSchema.match(yield* overlaps(left, right, options), {
+    Yes: (): TaxonSetRelationJudgment =>
+      setRelationJudgmentSchema.cases.No.make({ relation: "disjoint" }),
+    No: (): TaxonSetRelationJudgment =>
+      setRelationJudgmentSchema.cases.Yes.make({ relation: "disjoint" }),
+    Undetermined: (): TaxonSetRelationJudgment =>
+      setRelationJudgmentSchema.cases.Undetermined.make({ relation: "disjoint" }),
+    MultipleTaxaInSetName: ({ side, taxonName }): TaxonSetRelationJudgment =>
+      setRelationJudgmentSchema.cases.MultipleTaxaInSetName.make({
         relation: "disjoint",
         side,
         taxonName,

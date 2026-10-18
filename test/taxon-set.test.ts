@@ -13,11 +13,9 @@ import {
   Predicate,
   Record,
   String,
-  Struct,
-  pipe,
 } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
-import { JudgmentPolicy, TaxonName, TaxonSet } from "../src/index.ts";
+import { AcceptancePolicy, TaxonName, TaxonSet } from "../src/index.ts";
 
 function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
   const question = Option.getOrThrow(Record.get(decisions, "relation"));
@@ -81,12 +79,44 @@ it("preserves literal Empty and derived syntax without normalization", () => {
 });
 
 const operations = [
-  ["subset", TaxonSet.isSubsetOf, "Yes", "No"],
-  ["proper-subset", TaxonSet.isProperSubsetOf, "Yes", "No"],
-  ["equivalent", TaxonSet.equivalent, "Yes", "No"],
-  ["overlap", TaxonSet.overlaps, "Yes", "No"],
-  ["disjoint", TaxonSet.disjoint, "No", "Yes"],
+  ["subset", TaxonSet.isSubsetOf, "Yes", "No", "properSubset", "disjoint"],
+  ["proper-subset", TaxonSet.isProperSubsetOf, "Yes", "No", "properSubset", "equal"],
+  ["equivalent", TaxonSet.equivalent, "Yes", "No", "equal", "properSubset"],
+  ["overlap", TaxonSet.overlaps, "Yes", "No", "partialOverlap", "disjoint"],
+  ["disjoint", TaxonSet.disjoint, "No", "Yes", "partialOverlap", "disjoint"],
 ] as const;
+
+// Literal provider protocol, independent of production criteria and projection tables.
+const baseRelationLabels = [
+  "equal",
+  "properSubset",
+  "properSuperset",
+  "partialOverlap",
+  "disjoint",
+  "bothEmpty",
+  "leftEmpty",
+  "rightEmpty",
+  "undetermined",
+] as const;
+
+function relationProbabilities(
+  probabilities: Readonly<Record<string, number>>,
+  diagnoses: Readonly<Record<string, number>> = { multipleLeft0: 0, multipleRight0: 0 },
+) {
+  return {
+    equal: 0,
+    properSubset: 0,
+    properSuperset: 0,
+    partialOverlap: 0,
+    disjoint: 0,
+    bothEmpty: 0,
+    leftEmpty: 0,
+    rightEmpty: 0,
+    undetermined: 0,
+    ...diagnoses,
+    ...probabilities,
+  };
+}
 
 // These transport fixtures are not biological predictions.
 it.effect.each(operations)(
@@ -148,6 +178,85 @@ const relationLayer = (answer: DecisionModel.ProviderClassifyAnswer) =>
     }),
   );
 
+it.effect.each([
+  ["equal", ["Yes", "No", "Yes", "Yes", "No"]],
+  ["properSubset", ["Yes", "Yes", "No", "Yes", "No"]],
+  ["properSuperset", ["No", "No", "No", "Yes", "No"]],
+  ["partialOverlap", ["No", "No", "No", "Yes", "No"]],
+  ["disjoint", ["No", "No", "No", "No", "Yes"]],
+  ["bothEmpty", ["Yes", "No", "Yes", "No", "Yes"]],
+  ["leftEmpty", ["Yes", "Yes", "No", "No", "Yes"]],
+  ["rightEmpty", ["No", "No", "No", "No", "Yes"]],
+] as const)("projects the model's %s answer for nonliteral expressions", ([label, expected]) =>
+  Effect.gen(function* () {
+    const left = TaxonSet.union(TaxonSet.of(TaxonName.make("A")), TaxonSet.empty());
+    const right = TaxonSet.union(TaxonSet.of(TaxonName.make("B")), TaxonSet.empty());
+    for (const [index, [relation, operation]] of operations.entries()) {
+      expect(yield* operation(left, right)).toEqual({
+        _tag: Array.getUnsafe(expected, index),
+        relation,
+      });
+    }
+  }).pipe(
+    Effect.provide(
+      relationLayer({
+        _tag: "Classify",
+        label,
+        probabilities: relationProbabilities({ [label]: 1 }),
+      }),
+    ),
+  ),
+);
+
+it.effect.each([
+  ["Yes", "disjoint", { equal: 0.3, properSubset: 0.3, disjoint: 0.35, undetermined: 0.05 }],
+  ["No", "equal", { equal: 0.35, properSuperset: 0.3, partialOverlap: 0.3, undetermined: 0.05 }],
+] as const)(
+  "accepts grouped subset support for %s despite a different selected label",
+  ([_tag, label, probabilities]) =>
+    Effect.gen(function* () {
+      expect(
+        yield* TaxonSet.isSubsetOf(
+          TaxonSet.of(TaxonName.make("A")),
+          TaxonSet.of(TaxonName.make("B")),
+        ),
+      ).toEqual({ _tag, relation: "subset" });
+    }).pipe(
+      Effect.provide(
+        relationLayer({
+          _tag: "Classify",
+          label,
+          probabilities: relationProbabilities(probabilities),
+        }),
+      ),
+    ),
+);
+
+it.effect("keeps a grouped probability tie unresolved", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* TaxonSet.isSubsetOf(
+        TaxonSet.of(TaxonName.make("A")),
+        TaxonSet.of(TaxonName.make("B")),
+      ),
+    ).toEqual({ _tag: "Undetermined", relation: "subset" });
+  }).pipe(
+    Effect.provide(
+      relationLayer({
+        _tag: "Classify",
+        label: "properSuperset",
+        probabilities: relationProbabilities({
+          equal: 0.1,
+          properSubset: 0.2,
+          bothEmpty: 0.15,
+          leftEmpty: 0.05,
+          properSuperset: 0.5,
+        }),
+      }),
+    ),
+  ),
+);
+
 it.effect(
   "shares original nodes across roots without merging equal distinct nodes or name locations",
   () => {
@@ -175,9 +284,7 @@ it.effect(
           });
           const question = relationQuestion(decisions);
           expect(Record.keys(question.criteria)).toEqual([
-            "yes",
-            "no",
-            "undetermined",
+            ...baseRelationLabels,
             "multipleLeft0",
             "multipleRight0",
             "multipleRight1",
@@ -241,9 +348,9 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
           answers: {
             relation: {
               _tag: "Classify",
-              label: "yes",
+              label: "equal",
               probabilities: Record.map(question.criteria, (_value, key) =>
-                key === "yes" ? 1 : 0,
+                key === "equal" ? 1 : 0,
               ),
             },
           },
@@ -324,15 +431,9 @@ it.effect("accepts an Effect-rescaled set answer despite zero confidence", () =>
           answers: {
             relation: {
               _tag: "Classify",
-              label: "yes",
+              label: "properSubset",
               confidence: 0,
-              probabilities: {
-                yes: 0.6,
-                no: 0.3,
-                undetermined: 0,
-                multipleLeft0: 0,
-                multipleRight0: 0,
-              },
+              probabilities: relationProbabilities({ properSubset: 0.6, disjoint: 0.3 }),
             },
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -343,16 +444,16 @@ it.effect("accepts an Effect-rescaled set answer despite zero confidence", () =>
     const a = TaxonSet.of(TaxonName.make("A"));
     expect(
       yield* TaxonSet.isSubsetOf(a, a, {
-        policy: JudgmentPolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
+        policy: AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
       }),
     ).toEqual({ _tag: "Yes", relation: "subset" });
   }).pipe(Effect.provide(layer));
 });
 
-for (const [relation, operation, yesTag, noTag] of operations) {
+for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations) {
   it.effect.each([
-    ["yes", { _tag: yesTag, relation }],
-    ["no", { _tag: noTag, relation }],
+    [yesLabel, { _tag: yesTag, relation }],
+    [noLabel, { _tag: noTag, relation }],
     ["undetermined", { _tag: "Undetermined", relation }],
     ["multipleLeft0", { _tag: "MultipleTaxaInSetName", relation, side: "left", taxonName: "A" }],
     ["multipleRight0", { _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" }],
@@ -366,14 +467,7 @@ for (const [relation, operation, yesTag, noTag] of operations) {
             relationLayer({
               _tag: "Classify",
               label,
-              probabilities: {
-                yes: 0,
-                no: 0,
-                undetermined: 0,
-                multipleLeft0: 0,
-                multipleRight0: 0,
-                [label]: 1,
-              },
+              probabilities: relationProbabilities({ [label]: 1 }),
             }),
           ),
         ),
@@ -401,9 +495,7 @@ it.effect(
           calls++;
           const question = relationQuestion(decisions);
           expect(Record.keys(question.criteria)).toEqual([
-            "yes",
-            "no",
-            "undetermined",
+            ...baseRelationLabels,
             "multipleLeft0",
             "multipleLeft1",
             "multipleRight0",
@@ -420,15 +512,10 @@ it.effect(
               relation: {
                 _tag: "Classify",
                 label: "multipleRight1",
-                probabilities: {
-                  yes: 0,
-                  no: 0,
-                  undetermined: 0,
-                  multipleLeft0: 0,
-                  multipleLeft1: 0,
-                  multipleRight0: 0,
-                  multipleRight1: 1,
-                },
+                probabilities: relationProbabilities(
+                  { multipleRight1: 1 },
+                  { multipleLeft0: 0, multipleLeft1: 0, multipleRight0: 0, multipleRight1: 0 },
+                ),
               },
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
@@ -502,15 +589,14 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
         seen.push(state);
         const question = relationQuestion(decisions);
         expect(Record.keys(decisions)).toEqual(["relation"]);
-        if (seen.length === 5)
-          expect(Record.keys(question.criteria)).toEqual(["yes", "no", "undetermined"]);
+        if (seen.length === 5) expect(Record.keys(question.criteria)).toEqual(baseRelationLabels);
         return Effect.succeed({
           answers: {
             relation: {
               _tag: "Classify",
-              label: "yes",
+              label: seen.length === 4 ? "properSubset" : "equal",
               probabilities: Record.map(question.criteria, (_value, key) =>
-                key === "yes" ? 1 : 0,
+                key === (seen.length === 4 ? "properSubset" : "equal") ? 1 : 0,
               ),
             },
           },
@@ -547,43 +633,69 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
   }).pipe(Effect.provide(layer));
 });
 
-for (const [relation, operation] of operations) {
+for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
   it.effect.each([
-    ["weak", "yes", { yes: 0.4, no: 0.3, undetermined: 0.3 }, 0.5, 0],
-    ["tied", "multipleLeft0", { multipleLeft0: 0.5, yes: 0.5 }, 0, 0],
-    ["nonleading", "no", { yes: 0.6, no: 0.4 }, 0, 0],
-    ["uncertain", "undetermined", { yes: 0.9, undetermined: 0.1 }, 0, 0],
+    [
+      "weak",
+      yesLabel,
+      { [yesLabel]: 0.4, [noLabel]: 0.3, undetermined: 0.3 },
+      0.5,
+      0,
+      "Undetermined",
+    ],
+    ["tied", "multipleLeft0", { multipleLeft0: 0.5, [yesLabel]: 0.5 }, 0, 0, "Undetermined"],
+    ["nonleading provider selection", noLabel, { [yesLabel]: 0.6, [noLabel]: 0.4 }, 0, 0, yesTag],
+    [
+      "nonleading uncertain selection",
+      "undetermined",
+      { [yesLabel]: 0.9, undetermined: 0.1 },
+      0,
+      0,
+      yesTag,
+    ],
     [
       "split diagnoses not summed",
       "multipleLeft0",
-      { multipleLeft0: 0.4, multipleRight0: 0.35, yes: 0.25 },
+      { multipleLeft0: 0.4, multipleRight0: 0.35, [yesLabel]: 0.25 },
       0.5,
       0,
+      "Undetermined",
     ],
-    ["exact support", "yes", { yes: 0.6, no: 0.4 }, 0.6000000000000001, 0],
-    ["beyond epsilon", "yes", { yes: 0.6, no: 0.4 }, 0.6, 0.2000000000000003],
+    [
+      "exact support",
+      yesLabel,
+      { [yesLabel]: 0.6, [noLabel]: 0.4 },
+      0.6000000000000001,
+      0,
+      "Undetermined",
+    ],
+    [
+      "beyond epsilon",
+      yesLabel,
+      { [yesLabel]: 0.6, [noLabel]: 0.4 },
+      0.6,
+      0.2000000000000003,
+      "Undetermined",
+    ],
   ] as const)(
     `applies ${relation} policy: %s`,
-    ([_case, label, probabilities, minimumSupport, minimumMargin]) =>
+    ([_case, label, probabilities, minimumSupport, minimumMargin, expectedTag]) =>
       Effect.gen(function* () {
         const a = TaxonSet.of(TaxonName.make("A"));
         const b = TaxonSet.of(TaxonName.make("B"));
         expect(
           yield* operation(a, b, {
-            policy: JudgmentPolicy.make({ minimumSupport, minimumMargin }),
+            policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
           }).pipe(
             Effect.provide(
               relationLayer({
                 _tag: "Classify",
                 label,
-                probabilities: pipe(
-                  { yes: 0, no: 0, undetermined: 0, multipleLeft0: 0, multipleRight0: 0 },
-                  Struct.assign(probabilities),
-                ),
+                probabilities: relationProbabilities(probabilities),
               }),
             ),
           ),
-        ).toEqual({ _tag: "Undetermined", relation });
+        ).toEqual({ _tag: expectedTag, relation });
       }),
   );
   it.effect(`accepts ${relation} exact support and margin boundary`, () =>
@@ -592,19 +704,13 @@ for (const [relation, operation] of operations) {
       const b = TaxonSet.of(TaxonName.make("B"));
       expect(
         yield* operation(a, b, {
-          policy: JudgmentPolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
+          policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
         }).pipe(
           Effect.provide(
             relationLayer({
               _tag: "Classify",
               label: "multipleRight0",
-              probabilities: {
-                yes: 0.4,
-                no: 0,
-                undetermined: 0,
-                multipleLeft0: 0,
-                multipleRight0: 0.6,
-              },
+              probabilities: relationProbabilities({ [yesLabel]: 0.4, multipleRight0: 0.6 }),
             }),
           ),
         ),
@@ -652,9 +758,9 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
       Array.sort(
         Iterable.map(
           [
-            ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
-            ["yes", "no", "undetermined", "multipleLeft0", "multipleLeft1"],
-            ["yes", "no", "undetermined", "multipleLeft0", "multipleRight0"],
+            [...baseRelationLabels, "multipleLeft0", "multipleRight0"],
+            [...baseRelationLabels, "multipleLeft0", "multipleLeft1"],
+            [...baseRelationLabels, "multipleLeft0", "multipleRight0"],
           ],
           (keys) => keys.join(","),
         ),
@@ -799,14 +905,8 @@ it.effect("maps a single overlap observation to disjoint without another classif
           answers: {
             relation: {
               _tag: "Classify",
-              label: "yes",
-              probabilities: {
-                yes: 1,
-                no: 0,
-                undetermined: 0,
-                multipleLeft0: 0,
-                multipleRight0: 0,
-              },
+              label: "partialOverlap",
+              probabilities: relationProbabilities({ partialOverlap: 1 }),
             },
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -831,22 +931,16 @@ it.effect("asks overlap directly with one complete-expression classification", (
         expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           criteria: {
-            yes: expect.any(globalThis.String),
-            no: expect.any(globalThis.String),
+            partialOverlap: expect.any(globalThis.String),
+            disjoint: expect.any(globalThis.String),
           },
         });
         return Effect.succeed({
           answers: {
             relation: {
               _tag: "Classify",
-              label: "no",
-              probabilities: {
-                yes: 0,
-                no: 1,
-                undetermined: 0,
-                multipleLeft0: 0,
-                multipleRight0: 0,
-              },
+              label: "disjoint",
+              probabilities: relationProbabilities({ disjoint: 1 }),
             },
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -870,20 +964,14 @@ it.effect("asks organism-set equivalence directly even for the same expression",
         calls++;
         expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
-          criteria: { yes: expect.any(globalThis.String) },
+          criteria: { equal: expect.any(globalThis.String) },
         });
         return Effect.succeed({
           answers: {
             relation: {
               _tag: "Classify",
-              label: "yes",
-              probabilities: {
-                yes: 1,
-                no: 0,
-                undetermined: 0,
-                multipleLeft0: 0,
-                multipleRight0: 0,
-              },
+              label: "equal",
+              probabilities: relationProbabilities({ equal: 1 }),
             },
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -907,15 +995,16 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
         expect(Record.keys(decisions)).toEqual(["relation"]);
         expect(decisions.relation).toMatchObject({
           criteria: {
-            yes: expect.any(globalThis.String),
+            properSubset: expect.any(globalThis.String),
+            leftEmpty: expect.any(globalThis.String),
           },
         });
         return Effect.succeed({
           answers: {
             relation: {
               _tag: "Classify",
-              label: "no",
-              probabilities: { yes: 0, no: 1, undetermined: 0, multipleRight0: 0 },
+              label: "equal",
+              probabilities: relationProbabilities({ equal: 1 }, { multipleRight0: 0 }),
             },
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -956,8 +1045,9 @@ it.effect(
           expect(decisions.relation).toMatchObject({
             _tag: "Classify",
             criteria: {
-              yes: expect.any(globalThis.String),
-              no: expect.any(globalThis.String),
+              equal: expect.any(globalThis.String),
+              properSubset: expect.any(globalThis.String),
+              disjoint: expect.any(globalThis.String),
               undetermined: expect.any(globalThis.String),
               multipleLeft0: expect.stringContaining('left-set name "A"'),
               multipleLeft1: expect.stringContaining('left-set name "B"'),
@@ -969,9 +1059,9 @@ it.effect(
             answers: {
               relation: {
                 _tag: "Classify",
-                label: "yes",
+                label: "properSubset",
                 probabilities: Record.map(question.criteria, (_value, key) =>
-                  key === "yes" ? 1 : 0,
+                  key === "properSubset" ? 1 : 0,
                 ),
               },
             },

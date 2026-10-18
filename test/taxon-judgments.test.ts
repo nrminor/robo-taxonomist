@@ -16,19 +16,74 @@ import {
 } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
-  JudgmentPolicy,
+  AcceptancePolicy,
   RecordLabel,
   TaxonId,
   TaxonomicRecord,
   TaxonName,
   Taxonomy,
   TaxonSet,
-  type TaxonIdentityResult,
-  type TaxonContainmentResult,
-  type TaxonMembershipResult,
+  type TaxonIdentityJudgment,
+  type TaxonContainmentJudgment,
+  type TaxonMembershipJudgment,
 } from "../src/index.ts";
 
 // Canned transport answers test library contracts, not biological accuracy.
+const containmentProbabilities = {
+  equal: 0,
+  properSubset: 0,
+  properSuperset: 0,
+  partialOverlap: 0,
+  disjoint: 0,
+  bothEmpty: 0,
+  leftEmpty: 0,
+  rightEmpty: 0,
+  undetermined: 0,
+  multipleLeft: 0,
+  multipleRight: 0,
+  multipleBoth: 0,
+};
+
+it.effect("retains non-containment when the kind of non-containment is uncertain", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () =>
+        Effect.succeed({
+          answers: {
+            containment: {
+              _tag: "Classify",
+              label: "partialOverlap",
+              probabilities: {
+                equal: 0.1,
+                properSubset: 0,
+                properSuperset: 0,
+                partialOverlap: 0.45,
+                disjoint: 0.4,
+                bothEmpty: 0,
+                leftEmpty: 0,
+                rightEmpty: 0,
+                undetermined: 0.05,
+                multipleLeft: 0,
+                multipleRight: 0,
+                multipleBoth: 0,
+              },
+            },
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        }),
+    }),
+  );
+  return Effect.gen(function* () {
+    expect(
+      yield* Taxonomy.taxonWithin(
+        TaxonName.make("Quercus robur and Acer saccharum"),
+        TaxonName.make("Quercus"),
+      ),
+    ).toEqual({ _tag: "NotContained" });
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect.each(["left", "right"] as const)(
   "preserves asymmetric escaped identity and %s diagnosis",
   (side) => {
@@ -120,7 +175,14 @@ it.effect("asks one identity question with quoted names and null state", () => {
 });
 
 it.effect.each([
-  ["notContained", { _tag: "NotContained" }],
+  ["equal", { _tag: "Contained" }],
+  ["properSubset", { _tag: "Contained" }],
+  ["properSuperset", { _tag: "PartlyContained" }],
+  ["partialOverlap", { _tag: "PartlyContained" }],
+  ["disjoint", { _tag: "Disjoint" }],
+  ["bothEmpty", { _tag: "Contained" }],
+  ["leftEmpty", { _tag: "Contained" }],
+  ["rightEmpty", { _tag: "Disjoint" }],
   ["multipleLeft", { _tag: "MultipleTaxa", side: "left" }],
   ["multipleRight", { _tag: "MultipleTaxa", side: "right" }],
   ["multipleBoth", { _tag: "MultipleTaxa", side: "both" }],
@@ -136,12 +198,7 @@ it.effect.each([
         _tag: "Classify",
         label,
         probabilities: {
-          contained: 0,
-          notContained: 0,
-          undetermined: 0,
-          multipleLeft: 0,
-          multipleRight: 0,
-          multipleBoth: 0,
+          ...containmentProbabilities,
           [label]: 1,
         },
       }),
@@ -149,25 +206,22 @@ it.effect.each([
   ),
 );
 
-it.effect("rejects a nonleading containment selection even with zero thresholds", () =>
+it.effect("uses projected containment support instead of a nonleading fine selection", () =>
   Effect.gen(function* () {
     expect(
       yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
-        policy: JudgmentPolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+        policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
       }),
-    ).toEqual({ _tag: "Undetermined" });
+    ).toEqual({ _tag: "Contained" });
   }).pipe(
     Effect.provide(
       scalarLayer("containment", {
         _tag: "Classify",
-        label: "notContained",
+        label: "disjoint",
         probabilities: {
-          contained: 0.6,
-          notContained: 0.4,
-          undetermined: 0,
-          multipleLeft: 0,
-          multipleRight: 0,
-          multipleBoth: 0,
+          ...containmentProbabilities,
+          equal: 0.6,
+          disjoint: 0.4,
         },
       }),
     ),
@@ -182,21 +236,18 @@ it.effect.each([
   Effect.gen(function* () {
     expect(
       yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
-        policy: JudgmentPolicy.make({ minimumSupport, minimumMargin }),
+        policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
       }),
     ).toEqual({ _tag: tag });
   }).pipe(
     Effect.provide(
       scalarLayer("containment", {
         _tag: "Classify",
-        label: "contained",
+        label: "equal",
         probabilities: {
-          contained: 0.75,
-          notContained: 0.25,
-          undetermined: 0,
-          multipleLeft: 0,
-          multipleRight: 0,
-          multipleBoth: 0,
+          ...containmentProbabilities,
+          equal: 0.75,
+          disjoint: 0.25,
         },
       }),
     ),
@@ -391,7 +442,7 @@ it.effect.each([
     Effect.gen(function* () {
       expect(
         yield* Taxonomy.recordBelongsTo(RecordLabel.make("A"), TaxonName.make("B"), {
-          policy: JudgmentPolicy.make({ minimumSupport, minimumMargin }),
+          policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
         }),
       ).toEqual({ _tag: tag });
     }).pipe(
@@ -489,10 +540,10 @@ it.effect(
 const nameA = TaxonName.make("A");
 const nameB = TaxonName.make("B");
 const recordA = RecordLabel.make("A");
-type JudgmentResult = TaxonIdentityResult | TaxonContainmentResult | TaxonMembershipResult;
+type Judgment = TaxonIdentityJudgment | TaxonContainmentJudgment | TaxonMembershipJudgment;
 const modelOperations: readonly (readonly [
   string,
-  () => Effect.Effect<JudgmentResult, AiError.AiError, DecisionModel.DecisionModel>,
+  () => Effect.Effect<Judgment, AiError.AiError, DecisionModel.DecisionModel>,
 ])[] = [
   ["identity", () => Taxonomy.sameTaxon(nameA, nameB)],
   ["containment", () => Taxonomy.taxonWithin(nameA, nameB)],
@@ -543,7 +594,7 @@ it.effect(
       }),
     );
     return Effect.gen(function* () {
-      const policy = JudgmentPolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 });
+      const policy = AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 });
       expect(yield* Taxonomy.sameTaxon(nameA, nameB, { policy })).toEqual({ _tag: "SameTaxon" });
       expect(yield* Taxonomy.recordBelongsTo(recordA, nameB, { policy })).toEqual({
         _tag: "MixedMembership",
@@ -567,7 +618,7 @@ it.effect(
     );
     return Effect.gen(function* () {
       const requests: readonly Effect.Effect<
-        JudgmentResult,
+        Judgment,
         AiError.AiError,
         DecisionModel.DecisionModel
       >[] = [
@@ -792,26 +843,26 @@ it.effect.each([
     "tie",
     "same",
     { same: 0.5, different: 0.5, undetermined: 0 },
-    JudgmentPolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+    AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
   ],
   [
     "nonleader",
     "multipleLeft",
     { same: 0.6, multipleLeft: 0.4 },
-    JudgmentPolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+    AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
   ],
   ["explicit uncertainty", "undetermined", { same: 0.9, undetermined: 0.1 }, undefined],
   [
     "support stays exact",
     "same",
     { same: 0.6, different: 0.4 },
-    JudgmentPolicy.make({ minimumSupport: 0.6000000000000001, minimumMargin: 0 }),
+    AcceptancePolicy.make({ minimumSupport: 0.6000000000000001, minimumMargin: 0 }),
   ],
   [
     "margin beyond epsilon",
     "multipleBoth",
     { multipleBoth: 0.6, same: 0.4 },
-    JudgmentPolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2000000000000003 }),
+    AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2000000000000003 }),
   ],
 ] as const)("abstains for identity %s", ([_case, label, probabilities, policy]) =>
   Effect.gen(function* () {
@@ -850,7 +901,7 @@ it.effect("accepts inclusive support and decimal margin for a selected diagnosis
   Effect.gen(function* () {
     expect(
       yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), {
-        policy: JudgmentPolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
+        policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
       }),
     ).toEqual({ _tag: "MultipleTaxa", side: "right" });
   }).pipe(
@@ -884,21 +935,19 @@ it.effect("asks the direct containment question with original left = inner", () 
             'Left (inner) taxon name: "A"\nRight (outer) taxon name: "B"',
           ),
           criteria: {
-            contained: expect.any(String),
+            equal: expect.any(String),
+            partialOverlap: expect.any(String),
+            disjoint: expect.any(String),
           },
         });
         return Effect.succeed({
           answers: {
             containment: {
               _tag: "Classify",
-              label: "contained",
+              label: "equal",
               probabilities: {
-                contained: 1,
-                notContained: 0,
-                undetermined: 0,
-                multipleLeft: 0,
-                multipleRight: 0,
-                multipleBoth: 0,
+                ...containmentProbabilities,
+                equal: 1,
               },
             },
           },

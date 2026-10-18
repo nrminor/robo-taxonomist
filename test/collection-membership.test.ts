@@ -16,13 +16,13 @@ import {
 import { AiError, Decision, DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
-  JudgmentPolicy,
+  AcceptancePolicy,
   RecordLabel,
   TaxonomicRecord,
   TaxonName,
   Taxonomy,
   TaxonSet,
-  type CollectionMembershipResult,
+  type CollectionMembershipJudgment,
 } from "../src/index.ts";
 
 const namedTargetState = Schema.Struct({
@@ -193,6 +193,43 @@ const response = (labels: readonly string[]): DecisionModel.ProviderResponse => 
   usage: { inputTokens: undefined, outputTokens: undefined },
 });
 
+it.effect.each([
+  ["all", Taxonomy.allRecordsBelongTo, "No"],
+  ["any", Taxonomy.anyRecordBelongsTo, "No"],
+  ["none", Taxonomy.noRecordBelongsTo, "Yes"],
+] as const)(
+  "groups outside and mixed support before answering %s",
+  ([quantifier, operation, tag]) => {
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.succeed({
+            answers: {
+              record0: {
+                _tag: "Classify",
+                label: "member",
+                probabilities: {
+                  member: 0.35,
+                  notMember: 0.3,
+                  mixed: 0.3,
+                  undetermined: 0.05,
+                  multipleTarget0: 0,
+                },
+              },
+            },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          }),
+      }),
+    );
+    return Effect.gen(function* () {
+      expect(
+        yield* operation([RecordLabel.make("Pooled subjects")], TaxonName.make("Quercus")),
+      ).toEqual({ _tag: tag, quantifier });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("snapshots original record occurrences before consuming later quantifier batches", () => {
   const input = [RecordLabel.make("first"), RecordLabel.make("original second")];
   const facts: string[] = [];
@@ -220,6 +257,38 @@ it.effect("snapshots original record occurrences before consuming later quantifi
       expect.stringContaining('Record label: "original second"'),
     ]);
     expect(input[1]).toBe("replacement second");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("keeps fine membership unresolved when only grouped non-membership is supported", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () =>
+        Effect.succeed({
+          answers: {
+            record0: {
+              _tag: "Classify",
+              label: "member",
+              probabilities: {
+                member: 0.35,
+                notMember: 0.3,
+                mixed: 0.3,
+                undetermined: 0.05,
+                multipleTarget0: 0,
+              },
+            },
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        }),
+    }),
+  );
+  return Effect.gen(function* () {
+    const record = RecordLabel.make("Pooled subjects");
+    const target = TaxonName.make("Quercus");
+    expect(yield* Taxonomy.recordBelongsTo(record, target)).toEqual({ _tag: "Undetermined" });
+    const partition = yield* Taxonomy.partitionRecordsByMembership([record], target);
+    expect(partition.Undetermined).toEqual([record]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -570,7 +639,7 @@ it.effect.each(quantifiers)(
       expect(settled).toBe(false);
       expect(calls).toBe(2);
       yield* Deferred.succeed(releaseFirst, undefined);
-      const result: CollectionMembershipResult = yield* Fiber.join(fiber);
+      const result: CollectionMembershipJudgment = yield* Fiber.join(fiber);
       expect(result).toEqual({ _tag: quantifier === "any" ? "Yes" : "No", quantifier });
       expect(calls).toBe(2);
     }),
@@ -922,7 +991,7 @@ it.effect(
     );
     return Effect.gen(function* () {
       const partition = yield* Taxonomy.partitionRecordsByMembership([first, second], expression, {
-        policy: JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
+        policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
       });
       expect(partition.MultipleTaxaInTargetName).toEqual([
         { record: first, targetName: problemName },
@@ -993,7 +1062,7 @@ it.effect.each(quantifiers)(
     return Effect.gen(function* () {
       expect(
         yield* operation(records, target, {
-          policy: JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
+          policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
           execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
         }),
       ).toEqual({ _tag: quantifier === "any" ? "Yes" : "No", quantifier });
@@ -1063,7 +1132,7 @@ it.effect("threads grouping policy without sharing or caching repeated execution
   );
   return Effect.gen(function* () {
     const program = Taxonomy.groupRecordsByTaxa([records[0]], [target], {
-      policy: JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
+      policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
     });
     const first = yield* program;
     const second = yield* program;
@@ -1332,7 +1401,7 @@ it.effect("uses default batches of 16 and independently applies policy to each a
   return Effect.gen(function* () {
     const repeated = Array.replicate(RecordLabel.make("same occurrence text"), 35);
     const partition = yield* Taxonomy.partitionRecordsByMembership(repeated, target, {
-      policy: JudgmentPolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
+      policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
     });
     expect(sizes).toEqual([16, 16, 3]);
     expect(partition.Member).toEqual([]);

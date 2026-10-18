@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Schema } from "effect";
 import {
-  RankComparisonPolicy,
+  AcceptancePolicy,
   RecordLabel,
   TaxonId,
   TaxonomicRecord,
@@ -63,5 +63,5 @@ it.each([
   { minimumSupport: 0.5, minimumMargin: 1.1 },
   { minimumSupport: 0.5, minimumMargin: Number.POSITIVE_INFINITY },
 ])("rejects invalid acceptance thresholds %j", (policy) => {
-  expect(() => RankComparisonPolicy.make(policy)).toThrow();
+  expect(() => AcceptancePolicy.make(policy)).toThrow();
 });
