@@ -45,7 +45,7 @@ function check() {
       "pnpm",
       [
         "install",
-        "--offline",
+        "--prefer-offline",
         "--ignore-scripts",
         "--ignore-workspace",
         "--config.auto-install-peers=false",
