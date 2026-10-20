@@ -31,13 +31,7 @@ jobs:
       - name: Verify tag matches package version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          mise exec -- node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-          assert.equal(process.env.RELEASE_TAG, `v${version}`);
-          NODE
+        run: test "$RELEASE_TAG" = "v$(mise exec -- pnpm pkg get version)"
 
       - name: Install locked dependencies
         run: mise run bootstrap
@@ -95,7 +89,7 @@ jobs:
           gh release create "$RELEASE_TAG" artifacts/*.tgz artifacts/SHA256SUMS --verify-tag --generate-notes --draft
           gh release edit "$RELEASE_TAG" --draft=false
 
-  publish-npm:
+  stage-npm:
     needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -125,25 +119,24 @@ jobs:
           cache: false
           working_directory: artifacts
 
-      - name: Publish stable release with trusted publishing
+      - name: Stage stable release with trusted publishing
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Automatic npm publishing requires a stable vX.Y.Z tag; prerelease dist-tags need a separate policy." >&2
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Automatic npm staging requires a stable vX.Y.Z tag; prerelease dist-tags need a separate policy." >&2
             exit 1
           fi
-          mise exec -- pnpm publish *.tgz --registry=https://registry.npmjs.org --access=public --tag=latest --ignore-scripts --no-git-checks --provenance --publish-wait-timeout=300000
+          mise exec -- pnpm stage publish *.tgz --registry=https://registry.npmjs.org --access=public --tag=latest --ignore-scripts --no-git-checks --provenance --json > staged-package.json
+          cat staged-package.json
 
-      - name: Verify published package integrity
+      - name: Report required maintainer approval
         run: |
-          mise exec -- node --input-type=module - *.tgz <<'NODE'
-          import assert from 'node:assert/strict';
-          import { createHash } from 'node:crypto';
-          import { readFileSync } from 'node:fs';
-          const version = process.env.RELEASE_TAG.slice(1);
-          const response = await fetch(`https://registry.npmjs.org/robo-taxonomist/${version}`);
-          assert.equal(response.status, 200);
-          const published = await response.json();
-          const expected = `sha512-${createHash('sha512').update(readFileSync(process.argv[2])).digest('base64')}`;
-          assert.equal(published.version, version);
-          assert.equal(published.dist.integrity, expected);
-          NODE
+          {
+            printf '### npm approval required for %s\n\n' "$RELEASE_TAG"
+            printf 'The package is staged. A maintainer must review it and approve it with 2FA.\n\n'
+            printf 'Staging receipt:\n\n```json\n'
+            cat staged-package.json
+            printf '\n```\n\n'
+            printf 'Use the stage ID above with `pnpm stage view` and `pnpm stage download`. Compare the downloaded archive with the GitHub release checksum and review its provenance before approving.\n\n'
+            printf 'Approve from your own authenticated terminal with `pnpm stage approve <stage-id>`, or through npmjs.com. Keep tokens and 2FA codes out of CI.\n\n'
+            printf 'After approval, manually compare the npm archive with the checksummed GitHub release artifact.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
