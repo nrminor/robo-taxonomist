@@ -14,7 +14,7 @@ check = { description = "Run all repository checks and build the library", run =
 build = { description = "Build ESM and TypeScript declarations", run = "pnpm run build" }
 fmt = { description = "Format project files", run = "pnpm run fmt" }
 "fmt:check" = { description = "Check project formatting", run = "pnpm run fmt:check" }
-lint = { description = "Run type-aware Oxlint", run = "pnpm run lint" }
+lint = { description = "Build the library and run type-aware Oxlint", run = "pnpm run lint" }
 typecheck = { description = "Check TypeScript and Effect diagnostics", run = "pnpm run typecheck" }
 test = { description = "Run tests", run = "pnpm run test" }
 "test:watch" = { description = "Run tests in watch mode", run = "pnpm run test:watch", interactive = true }

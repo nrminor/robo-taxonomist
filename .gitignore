@@ -20,11 +20,8 @@
 !/test/
 !/test/**/
 !/test/**/*.ts
-!/fixtures/
-!/fixtures/consumer/
-!/fixtures/consumer/contracts.ts
-!/fixtures/consumer/smoke.mjs
-!/fixtures/consumer/tsconfig.json
+!/test/fixtures/consumer/smoke.mjs
+!/test/fixtures/consumer/tsconfig.json
 !/.github/
 !/.github/workflows/
 !/.github/workflows/*.yml
