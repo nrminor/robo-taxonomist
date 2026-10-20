@@ -2,6 +2,7 @@
 *
 !/.gitignore
 !/mise.toml
+!/mise.lock
 !/package.json
 !/pnpm-lock.yaml
 !/pnpm-workspace.yaml

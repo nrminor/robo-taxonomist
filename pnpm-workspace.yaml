@@ -1,12 +1,12 @@
 # Exact releases selected for the initial Effect 4 toolchain, not blanket exemptions.
 minimumReleaseAgeExclude:
-  - "@effect/tsgo-darwin-arm64@0.47.2"
-  - "@effect/tsgo-darwin-x64@0.47.2"
-  - "@effect/tsgo-linux-arm64@0.47.2"
-  - "@effect/tsgo-linux-arm@0.47.2"
-  - "@effect/tsgo-linux-x64@0.47.2"
-  - "@effect/tsgo-win32-arm64@0.47.2"
-  - "@effect/tsgo-win32-x64@0.47.2"
-  - "@effect/tsgo@0.47.2"
+  - "@effect/tsgo-darwin-arm64@0.54.1"
+  - "@effect/tsgo-darwin-x64@0.54.1"
+  - "@effect/tsgo-linux-arm64@0.54.1"
+  - "@effect/tsgo-linux-arm@0.54.1"
+  - "@effect/tsgo-linux-x64@0.54.1"
+  - "@effect/tsgo-win32-arm64@0.54.1"
+  - "@effect/tsgo-win32-x64@0.54.1"
+  - "@effect/tsgo@0.54.1"
   - "@effect/vitest@4.0.0"
   - effect@4.0.0

@@ -571,8 +571,9 @@ it.effect("uses only the listed literal Empty shortcuts, without certifying othe
       _tag: "Yes",
       relation: "disjoint",
     });
+    const untyped: unknown = {};
     // @ts-expect-error Shortcut facts do not validate the unused right operand.
-    expect(yield* TaxonSet.isSubsetOf(empty, {})).toEqual({ _tag: "Yes", relation: "subset" });
+    expect(yield* TaxonSet.isSubsetOf(empty, untyped)).toEqual({ _tag: "Yes", relation: "subset" });
   }).pipe(Effect.provide(layer));
 });
 
@@ -784,9 +785,10 @@ it.effect.each(operations)(
       }),
     );
     return Effect.gen(function* () {
+      const malformed: unknown = { _tag: "Difference", left: TaxonSet.empty() };
       const error = yield* Effect.flip(
         // @ts-expect-error Malformed untyped expression lacks the right operand.
-        operation({ _tag: "Difference", left: TaxonSet.empty() }, TaxonSet.of(TaxonName.make("A"))),
+        operation(malformed, TaxonSet.of(TaxonName.make("A"))),
       );
       expect(error.reason._tag).toBe("InvalidUserInputError");
       expect(error.module).toBe("TaxonSet");
