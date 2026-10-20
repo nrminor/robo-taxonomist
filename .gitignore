@@ -23,6 +23,8 @@
 !/test/**/*.ts
 !/test/fixtures/consumer/smoke.mjs
 !/test/fixtures/consumer/tsconfig.json
+!/scripts/
+!/scripts/*.mjs
 !/.github/
 !/.github/workflows/
 !/.github/workflows/*.yml

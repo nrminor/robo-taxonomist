@@ -1,3 +1,6 @@
+allowBuilds:
+  esbuild@0.28.2: true
+
 # Exact releases selected for the initial Effect 4 toolchain, not blanket exemptions.
 minimumReleaseAgeExclude:
   - "@effect/tsgo-darwin-arm64@0.54.1"

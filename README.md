@@ -9,7 +9,7 @@ Rather than using inscrutable and nested regex patterns and other techniques to 
 
 `robo-taxonomist` alows you to compare individual taxonomic records, test membership of one taxon within another, and build and compare sets of taxa. Using [Effect v4](https://effect.website/docs/v4/onboarding)'s AI API, it allows you to plug your own decision model of choice, supporting TypeSafe-AI's Jev, Cloudflare's Clef, OpenAI's decision API, and any other API-compatible model.
 
-As of now, the library is pre-versioned. Versioned releases and npm distribution are coming soon.
+Version `0.1.0` is being prepared for a GitHub release. Nothing has been published to npm yet.
 
 ## Install
 
@@ -19,13 +19,17 @@ For now, build a checkout with [mise](https://mise.jdx.dev/):
 mise trust
 mise run bootstrap
 mise run build
+mise run pack
+mise run check:package -- artifacts/robo-taxonomist-0.1.0.tgz
 ```
 
-Then, from your application, install the local package and the provider used below:
+Then, from your application, install the checked tarball and the provider used below:
 
 ```sh
-pnpm add file:/path/to/robo-taxonomist effect@4.0.0 @effect/ai-typesafe@4.0.0
+pnpm add /path/to/robo-taxonomist/artifacts/robo-taxonomist-0.1.0.tgz effect@4.0.0 @effect/ai-typesafe@4.0.0
 ```
+
+The package check installs the tarball outside the checkout and checks JavaScript, declarations, and basic browser bundling. It does not establish full browser support or model accuracy. After release, the same tested tarball and its SHA-256 checksum will be available on GitHub. Maintainers release only by pushing an approved tag matching the package version; the tag workflow checks, packs, and tests before uploading assets to a draft and making it public.
 
 ## Example
 

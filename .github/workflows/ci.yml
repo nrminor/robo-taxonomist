@@ -34,3 +34,9 @@ jobs:
 
       - name: Check source and tooling
         run: mise run check
+
+      - name: Pack checked library
+        run: mise run pack
+
+      - name: Check packed package in isolation
+        run: mise run check:package -- artifacts/*.tgz

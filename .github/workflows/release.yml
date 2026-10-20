@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install fresh pinned tooling
+        uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: "2026.10.15"
+          bootstrap: false
+          cache: false
+
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mise exec -- node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          assert.equal(process.env.RELEASE_TAG, `v${version}`);
+          NODE
+
+      - name: Install locked dependencies
+        run: mise run bootstrap
+
+      - name: Check source and tooling
+        run: mise run check
+
+      - name: Pack library
+        run: mise run pack
+
+      - name: Check packed package in isolation
+        run: mise run check:package -- artifacts/*.tgz
+
+      - name: Checksum package
+        working-directory: artifacts
+        run: sha256sum *.tgz > SHA256SUMS
+
+      - name: Upload verified package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package
+          path: artifacts/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: artifacts
+
+      - name: Verify package checksum
+        working-directory: artifacts
+        run: sha256sum --check SHA256SUMS
+
+      - name: Create draft release and publish after assets upload
+        # If publication fails, inspect the remaining draft and its assets before
+        # publishing it manually. Reruns never overwrite an existing release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" artifacts/*.tgz artifacts/SHA256SUMS --verify-tag --generate-notes --draft
+          gh release edit "$RELEASE_TAG" --draft=false
