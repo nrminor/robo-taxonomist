@@ -106,7 +106,7 @@ All these questions use your application's `DecisionModel` and accept the same `
 
 Each scalar, singleton membership, or set question makes one classification in one `DecisionModel.decide` call except for literal top-level `Empty` facts: membership is `NotMember`; an empty left is a subset; nothing is a proper subset of an empty right; two empty sets are equivalent; either empty operand prevents overlap and implies disjointness. These shortcuts do not inspect or certify the other operand. Nonliteral expressions such as `difference(A, A)` are not simplified and still need a judgment outside those cases.
 
-Adapters receive null state for scalar questions, flat `{ nodes, left, right }` state for set questions, and flat `{ nodes, target }` state for membership questions. Numeric roots and child references index the shared `nodes` table. Record facts occur once in membership questions. No provider, runtime, retry, cache, lookup, or consistency repair is supplied by the library.
+Adapters receive null state for scalar questions, flat `{ nodes, left, right }` state for set questions, and flat `{ nodes, target }` state for membership questions. Numeric roots and child references index the shared `nodes` table; child rows can appear before or after their parents. Record facts occur once in membership questions. No provider, runtime, retry, cache, lookup, or consistency repair is supplied by the library.
 
 ## Collections
 

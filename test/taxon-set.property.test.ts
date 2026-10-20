@@ -34,7 +34,7 @@ it.effect.prop(
 it("rejects split sharing, merged equal objects and extra rows in a literal wire fixture", () => {
   const a = TaxonSet.of(TaxonName.make("A"));
   const roots = { left: TaxonSet.union(a, a), right: TaxonSet.of(TaxonName.make("A")) };
-  // A legal topological order need not be the compiler's particular traversal order.
+  // Valid references need not follow the compiler's particular row order.
   const wire: Wire = {
     nodes: [
       { _tag: "Taxon", name: "A" },
@@ -45,6 +45,18 @@ it("rejects split sharing, merged equal objects and extra rows in a literal wire
     right: 1,
   };
   expectSameGraph(wire, roots);
+  expectSameGraph(
+    {
+      nodes: [
+        { _tag: "Union", operands: [2, 2] },
+        { _tag: "Taxon", name: "A" },
+        { _tag: "Taxon", name: "A" },
+      ],
+      left: 0,
+      right: 1,
+    },
+    roots,
+  );
   expect(() => expectSameGraph({ ...wire, right: 0 }, roots)).toThrow();
   expect(() =>
     expectSameGraph(
@@ -193,7 +205,9 @@ function expectSameGraph(
     expect(actualChildren).toHaveLength(expectedChildren.length);
     expectedChildren.forEach((child, index) => {
       const childRef = at(actualChildren, index);
-      expect(childRef).toBeLessThan(ref);
+      expect(Number.isInteger(childRef)).toBe(true);
+      expect(childRef).toBeGreaterThanOrEqual(0);
+      expect(childRef).toBeLessThan(wire.nodes.length);
       pending.push([child, childRef]);
     });
   }

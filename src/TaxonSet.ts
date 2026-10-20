@@ -148,8 +148,8 @@ const makeRelationQuestion = Effect.fnUntraced(function* (input: {
     ),
   );
   const names = {
-    leftNames: TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.left),
-    rightNames: TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.right),
+    leftNames: compiled.names.left,
+    rightNames: compiled.names.right,
   };
   const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)({
     nodes: compiled.nodes,

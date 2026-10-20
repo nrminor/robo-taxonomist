@@ -272,15 +272,15 @@ it.effect(
         decide: ({ state, decisions }) => {
           expect(state).toEqual({
             nodes: [
+              { _tag: "Union", operands: [1, 1] },
               { _tag: "Taxon", name: "A" },
-              { _tag: "Union", operands: [0, 0] },
+              { _tag: "Intersection", operands: [3, 4] },
               { _tag: "Taxon", name: "B" },
+              { _tag: "Difference", left: 0, right: 5 },
               { _tag: "Taxon", name: "A" },
-              { _tag: "Difference", left: 1, right: 3 },
-              { _tag: "Intersection", operands: [2, 4] },
             ],
-            left: 1,
-            right: 5,
+            left: 0,
+            right: 2,
           });
           const question = relationQuestion(decisions);
           expect(Record.keys(question.criteria)).toEqual([
@@ -339,10 +339,10 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
       decide: ({ state, decisions }) => {
         // One taxon plus twelve distinct unions, shared by both roots.
         expect(state).toHaveProperty("nodes.length", 13);
-        expect(state).toMatchObject({ left: 12, right: 12 });
-        expect(state).toHaveProperty("nodes.0", { _tag: "Taxon", name: "A" });
-        expect(state).toHaveProperty("nodes.1", { _tag: "Union", operands: [0, 0] });
-        expect(state).toHaveProperty("nodes.12", { _tag: "Union", operands: [11, 11] });
+        expect(state).toMatchObject({ left: 0, right: 0 });
+        expect(state).toHaveProperty("nodes.0", { _tag: "Union", operands: [1, 1] });
+        expect(state).toHaveProperty("nodes.11", { _tag: "Union", operands: [12, 12] });
+        expect(state).toHaveProperty("nodes.12", { _tag: "Taxon", name: "A" });
         const question = relationQuestion(decisions);
         return Effect.succeed({
           answers: {
@@ -626,9 +626,9 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
     });
     expect(seen).toHaveLength(6);
     expect(seen[4]).toEqual({
-      nodes: [{ _tag: "Empty" }, { _tag: "Union", operands: [0, 0] }],
-      left: 1,
-      right: 1,
+      nodes: [{ _tag: "Union", operands: [1, 1] }, { _tag: "Empty" }],
+      left: 0,
+      right: 0,
     });
   }).pipe(Effect.provide(layer));
 });
@@ -1033,12 +1033,12 @@ it.effect(
           calls++;
           expect(state).toEqual({
             nodes: [
+              { _tag: "Union", operands: [1, 2] },
               { _tag: "Taxon", name: "A" },
               { _tag: "Taxon", name: "B" },
-              { _tag: "Union", operands: [0, 1] },
               { _tag: "Taxon", name: "C" },
             ],
-            left: 2,
+            left: 0,
             right: 3,
           });
           expect(Record.keys(decisions)).toEqual(["relation"]);

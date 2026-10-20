@@ -944,11 +944,11 @@ it.effect(
         decide: ({ state, decisions }) => {
           expect(state).toEqual({
             nodes: [
+              { _tag: "Union", operands: [1, 2] },
               { _tag: "Taxon", name: "A" },
               { _tag: "Taxon", name: 'B and "C"' },
-              { _tag: "Union", operands: [0, 1] },
             ],
-            target: 2,
+            target: 0,
           });
           expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
           expect(decisions.record0).toMatchObject({
@@ -1264,8 +1264,8 @@ it.effect("does not turn nonliteral empty expressions into collection shortcuts"
       decide: ({ state }) => {
         calls++;
         expect(state).toEqual({
-          nodes: [{ _tag: "Empty" }, { _tag: "Empty" }, { _tag: "Difference", left: 0, right: 1 }],
-          target: 2,
+          nodes: [{ _tag: "Difference", left: 1, right: 2 }, { _tag: "Empty" }, { _tag: "Empty" }],
+          target: 0,
         });
         return Effect.succeed({
           answers: {

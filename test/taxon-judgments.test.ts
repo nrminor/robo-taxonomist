@@ -302,16 +302,16 @@ it.effect(
         decide: ({ state, decisions }) => {
           expect(state).toEqual({
             nodes: [
+              { _tag: "Difference", left: 1, right: 2 },
+              { _tag: "Union", operands: [3, 4] },
+              { _tag: "Union", operands: [5, 6] },
               { _tag: "Taxon", name: 'A "quoted"' },
-              { _tag: "Taxon", name: "B" },
-              { _tag: "Intersection", operands: [1, 0] },
-              { _tag: "Union", operands: [0, 2] },
+              { _tag: "Intersection", operands: [7, 3] },
               { _tag: "Taxon", name: 'A "quoted"' },
               { _tag: "Taxon", name: "b" },
-              { _tag: "Union", operands: [4, 5] },
-              { _tag: "Difference", left: 3, right: 6 },
+              { _tag: "Taxon", name: "B" },
             ],
-            target: 7,
+            target: 0,
           });
           expect(decisions.record0).toMatchObject({
             criteria: {
@@ -383,8 +383,8 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         expect(state).toEqual({
-          nodes: [{ _tag: "Empty" }, { _tag: "Empty" }, { _tag: "Intersection", operands: [0, 1] }],
-          target: 2,
+          nodes: [{ _tag: "Intersection", operands: [1, 2] }, { _tag: "Empty" }, { _tag: "Empty" }],
+          target: 0,
         });
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
@@ -515,7 +515,16 @@ it.effect(
       );
       yield* first;
       expect(seen).toHaveLength(4);
-      expect(Array.filter(seen, Schema.is(Schema.Struct({ target: Schema.Literal(0) })))).toEqual([
+      expect(
+        Array.filter(
+          seen,
+          Schema.is(
+            Schema.Struct({
+              nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon") })]),
+            }),
+          ),
+        ),
+      ).toEqual([
         { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
         { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
       ]);
@@ -524,11 +533,11 @@ it.effect(
           { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
           {
             nodes: [
+              { _tag: "Union", operands: [1, 2] },
               { _tag: "Taxon", name: "target2" },
               { _tag: "Taxon", name: "target3" },
-              { _tag: "Union", operands: [0, 1] },
             ],
-            target: 2,
+            target: 0,
           },
           null,
         ]),

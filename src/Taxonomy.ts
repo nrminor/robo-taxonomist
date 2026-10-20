@@ -774,7 +774,7 @@ const prepareMembershipTarget = Effect.fnUntraced(function* (target: MembershipT
       }),
     ),
   );
-  const targetNames = TaxonSetGraph.collectTaxonNames(compiled.nodes, compiled.roots.target);
+  const targetNames = compiled.names.target;
   const input = yield* Schema.encodeEffect(TaxonSetGraph.membershipTargetSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
