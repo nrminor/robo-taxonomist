@@ -5,31 +5,31 @@
 - "Voucher A17 | Quercus robur"
 - "Voucher B42 | Fagus sylvatica"
 
-Rather than using inscrutable and nested regex patterns and other techniques to identify whether these two labels are, say, within the same Order, `robo-taxonomist` leverages a decision model to give a clear, calibrated decision.
+Rather than using inscrutable and nested regex patterns and other techniques to identify whether these two labels are, say, within the same Order, `robo-taxonomist` leverages a decision model to give a clear, scored decision.
 
-`robo-taxonomist` alows you to compare individual taxonomic records, test membership of one taxon within another, and build and compare sets of taxa. Using [Effect v4](https://effect.website/docs/v4/onboarding)'s AI API, it allows you to plug your own decision model of choice, supporting TypeSafe-AI's Jev, Cloudflare's Clef, OpenAI's decision API, and any other API-compatible model.
+`robo-taxonomist` allows you to compare individual taxonomic records, test membership of one taxon within another, and build and compare sets of taxa. Using [Effect v4](https://effect.website/docs/v4/onboarding)'s AI API, it allows you to plug your own decision model of choice, supporting TypeSafe-AI's Jev, Cloudflare's Clef, OpenAI's decision API, and any other API-compatible model.
 
-Version `0.1.0` is being prepared for a GitHub release. Nothing has been published to npm yet.
+Version [`0.1.0`](https://github.com/nrminor/robo-taxonomist/releases/tag/v0.1.0) is available on GitHub. Nothing has been published to npm yet.
 
 ## Install
 
-For now, build a checkout with [mise](https://mise.jdx.dev/):
+Download `robo-taxonomist-0.1.0.tgz` from the GitHub release. Then, from your application, install the tarball and the provider used below:
+
+```sh
+pnpm add ./robo-taxonomist-0.1.0.tgz effect@4.0.0 @effect/ai-typesafe@4.0.0
+```
+
+To build and check a source checkout with [mise](https://mise.jdx.dev/):
 
 ```sh
 mise trust
 mise run bootstrap
-mise run build
+mise run check
 mise run pack
 mise run check:package -- artifacts/robo-taxonomist-0.1.0.tgz
 ```
 
-Then, from your application, install the checked tarball and the provider used below:
-
-```sh
-pnpm add /path/to/robo-taxonomist/artifacts/robo-taxonomist-0.1.0.tgz effect@4.0.0 @effect/ai-typesafe@4.0.0
-```
-
-The package check installs the tarball outside the checkout and checks JavaScript, declarations, and basic browser bundling. It does not establish full browser support or model accuracy. After release, the same tested tarball and its SHA-256 checksum will be available on GitHub. Maintainers release only by pushing an approved tag matching the package version; the tag workflow checks, packs, and tests before uploading assets to a draft and making it public.
+The package check installs the tarball outside the checkout and checks JavaScript, declarations, and basic browser bundling. The release includes the tested tarball and its SHA-256 checksum. Full browser support and model accuracy need separate validation.
 
 ## Example
 

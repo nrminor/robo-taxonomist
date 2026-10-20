@@ -36,6 +36,8 @@ import * as TaxonRelations from "./TaxonRelations.ts";
  * Check whether two record labels contain exactly the same text. This is a simple
  * deterministic string comparison and does not invoke a model.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const equal = Taxonomy.sameLabel(
@@ -61,6 +63,8 @@ const taxonomicRankSchema = Schema.Literals([
  * The supported ranks start with domain at the highest level down to species
  * at the lowest level.
  *
+ * @category models
+ * @since 0.1.0
  * @example
  * import type { TaxonomicRank } from "robo-taxonomist";
  * export const requestedRank: TaxonomicRank = "species";
@@ -86,10 +90,14 @@ const rankComparisonJudgmentSchema = Schema.TaggedUnion({
 /**
  * Taxonomy.sameTaxonAtRank and its rank helpers return this type.
  * Match its cases to see how the taxa in the records compare at the requested rank.
- * SameTaxaAtRank reports the same taxa when their number is uncertain.
- * DifferentTaxaAtRank reports different sets of taxa when a more specific comparison is uncertain.
- * MultipleTaxaAtRank identifies a record whose combined assignment needs clarification.
+ * SameTaxaAtRank retains an accepted match when the number of taxa is uncertain.
+ * DifferentTaxaAtRank retains an accepted difference when the finer relation is uncertain.
+ * These judgments combine model-reported support for compatible choices under the policy.
+ * MultipleTaxaAtRank asks the caller to review a combined assignment on the reported side.
+ * Clear combinations are compared directly.
  *
+ * @category models
+ * @since 0.1.0
  * @example
  * import { Match } from "effect";
  * import type { RankComparisonJudgment } from "robo-taxonomist";
@@ -293,7 +301,11 @@ const interpretRankComparison = (
  * Compare the taxa described by two records at the requested rank.
  * A record describing Quercus robur and Quercus petraea can resolve to one genus,
  * Quercus, while describing two species for a species-rank comparison.
+ * Undetermined leaves the comparison unresolved.
  *
+ * @category comparisons
+ * @since 0.1.0
+ * @see {@link RankComparisonJudgment}
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameTaxonAtRank(
@@ -332,6 +344,9 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
 /**
  * Compare two records at species rank.
  *
+ * @category comparisons
+ * @since 0.1.0
+ * @see {@link sameTaxonAtRank} for rank comparison and result semantics.
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameSpecies(
@@ -348,6 +363,8 @@ export const sameSpecies: CompareRecordsFn = (
 /**
  * Compare two records at domain rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameDomain(
@@ -363,6 +380,8 @@ export const sameDomain: CompareRecordsFn = (
 /**
  * Compare two records at kingdom rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameKingdom(
@@ -378,6 +397,8 @@ export const sameKingdom: CompareRecordsFn = (
 /**
  * Compare two records at phylum rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.samePhylum(
@@ -393,6 +414,8 @@ export const samePhylum: CompareRecordsFn = (
 /**
  * Compare two records at class rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameClass(
@@ -408,6 +431,8 @@ export const sameClass: CompareRecordsFn = (
 /**
  * Compare two records at order rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameOrder(
@@ -423,6 +448,8 @@ export const sameOrder: CompareRecordsFn = (
 /**
  * Compare two records at family rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameFamily(
@@ -438,6 +465,8 @@ export const sameFamily: CompareRecordsFn = (
 /**
  * Compare two records at genus rank.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { RecordLabel, Taxonomy } from "robo-taxonomist";
  * export const comparison = Taxonomy.sameGenus(
@@ -460,7 +489,11 @@ const identityJudgmentSchema = Schema.TaggedUnion({
 /**
  * Taxonomy.sameTaxon returns this type to report its answer about two supplied names.
  * You can use Match.tagsExhaustive to handle each result.
- * MultipleTaxa identifies which combined name needs clarification.
+ * MultipleTaxa reports which combined name the model asks the caller to review.
+ * Clear combinations are interpreted directly, while Undetermined leaves the identity unresolved.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
  * import { Match } from "effect";
  * import type { TaxonIdentityJudgment } from "robo-taxonomist";
@@ -538,7 +571,10 @@ const interpretIdentity = (answer: IdentityAnswer, policy: AcceptancePolicy) => 
 
 /**
  * Ask whether two supplied taxonomic names refer to the same taxon.
+ * Resolved synonyms can match.
  *
+ * @category comparisons
+ * @since 0.1.0
  * @example
  * import { TaxonName, Taxonomy } from "robo-taxonomist";
  * export const identity = Taxonomy.sameTaxon(TaxonName.make("Quercus"), TaxonName.make("Fagus"));
@@ -572,8 +608,13 @@ const containmentJudgmentSchema = Schema.TaggedUnion({
 
 /**
  * Taxonomy.taxonWithin reports full inclusion, partial inclusion, or disjointness.
- * NotContained reports something outside when overlap remains uncertain.
- * MultipleTaxa identifies a combined name needing clarification: left is inner and right is outer.
+ * NotContained reports something outside when neither partial inclusion nor
+ * disjointness is accepted under the policy; that broader answer remains valid.
+ * MultipleTaxa asks the caller to review the reported side: left is inner and right is outer.
+ * Undetermined leaves containment unresolved.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
  * import { Match } from "effect";
  * import type { TaxonContainmentJudgment } from "robo-taxonomist";
@@ -676,7 +717,13 @@ const interpretContainment = (
 
 /**
  * Compare everything represented by inner with outer, interpreting clear combinations together.
+ * Contained includes equality.
  *
+ * @param inner - The taxon whose organisms are tested for containment.
+ * @param outer - The taxon that may contain all inner organisms.
+ * @category membership
+ * @since 0.1.0
+ * @see {@link TaxonContainmentJudgment}
  * @example
  * import { TaxonName, Taxonomy, TaxonSet } from "robo-taxonomist";
  * export const inclusion = Taxonomy.taxonWithin(TaxonName.make("Quercus"), TaxonName.make("Fagaceae"));
@@ -723,8 +770,12 @@ const membershipJudgmentSchema = Schema.TaggedUnion({
  * or some lie inside and others outside the target.
  * It can also identify a target name requiring review or leave the question unresolved.
  * You can use Match.tagsExhaustive to handle each result.
- * For MultipleTaxaInTargetName, replace the identified name in the target expression
- * with a TaxonSet.union of separately constructed TaxonSet.of expressions, then retry.
+ * MultipleTaxaInTargetName retains the exact supplied target name for review.
+ * If clarification is warranted, replace that name with a TaxonSet.union of separate
+ * TaxonSet.of expressions and retry.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
  * import { Match } from "effect";
  * import type { TaxonMembershipJudgment } from "robo-taxonomist";
@@ -734,8 +785,8 @@ const membershipJudgmentSchema = Schema.TaggedUnion({
  *     MixedMembership: () => "Subjects both inside and outside",
  *     Undetermined: () => "Needs review",
  *     MultipleTaxaInTargetName: ({ targetName }) =>
- *       `The target name ${targetName} describes several taxa. ` +
- *       "Replace it with separate TaxonSet.of expressions combined with TaxonSet.union, then retry.",
+ *       `Review the combined target name ${targetName}. ` +
+ *       "If needed, replace it with separate TaxonSet.of expressions combined with TaxonSet.union, then retry.",
  *   }),
  * );
  */
@@ -884,8 +935,12 @@ const decideMembershipBatch = Effect.fnUntraced(function* (
 
 /**
  * Ask whether every subject described by a record belongs to the complete target.
+ * Member reports that all subjects belong; NotMember reports that all subjects lie outside.
  * MixedMembership reports at least one subject inside and at least one outside the target.
- * Answer a literal Empty target directly; use one classification for other targets.
+ * A literal Empty target returns NotMember directly; other targets use one classification.
+ *
+ * @category membership
+ * @since 0.1.0
  * @example
  * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
  * export const membership = Taxonomy.recordBelongsTo(RecordLabel.make("Quercus robur specimen"), TaxonName.make("Quercus"));
@@ -974,14 +1029,23 @@ class MembershipPartition<A extends RecordInput> extends Data.Class<{
 
 /**
  * Taxonomy.partitionRecordsByMembership returns this type.
- * Its five buckets retain original records, caller-supplied fields, and input order.
+ * Its five buckets retain original record references, caller-supplied fields,
+ * repeated occurrences, and input order within each bucket.
  * You can use .pipe() to transform the partition.
- * Entries in MultipleTaxaInTargetName identify target names to replace with
- * explicit unions of separately constructed taxon expressions before retrying.
+ * Entries in MultipleTaxaInTargetName retain both the record and diagnosed target name for review.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
- * import type { RecordMembershipPartition, TaxonomicRecord } from "robo-taxonomist";
- * export const members = (partition: RecordMembershipPartition<TaxonomicRecord>) =>
- *   partition.pipe(value => value.Member);
+ * import { Effect } from "effect";
+ * import { TaxonName, Taxonomy } from "robo-taxonomist";
+ * const record = { scientificName: TaxonName.make("Quercus robur"), sampleId: "A17" };
+ * export const memberIds = Effect.gen(function* () {
+ *   const partition = yield* Taxonomy.partitionRecordsByMembership(
+ *     [record, record], TaxonName.make("Quercus"),
+ *   );
+ *   return partition.Member.map(member => member.sampleId);
+ * });
  */
 export type RecordMembershipPartition<A extends RecordInput> = MembershipPartition<A>;
 
@@ -993,9 +1057,15 @@ type PartitionRecordsFn = <A extends RecordInput>(
 
 /**
  * Separate records into membership buckets for a supplied target.
- * Keep original references, caller fields, and input order within each bucket.
- * Default to 16 records per request and one active batch call.
- * Return the partition after every requested batch succeeds.
+ * Preserve original references, caller fields, repeated occurrences, and input order
+ * within each bucket, even when parallel batches finish out of order.
+ * Defaults are 16 records per request and one active batch call; execution overrides
+ * control batch size and concurrency. Every requested batch must succeed before a
+ * partition is returned. Empty input returns empty buckets without a model call;
+ * a literal Empty target places every record in NotMember without a model call.
+ *
+ * @category collections
+ * @since 0.1.0
  * @example
  * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
  * export const partition = Taxonomy.partitionRecordsByMembership(
@@ -1049,11 +1119,20 @@ class MembershipPartitionsByTarget<A extends RecordInput> extends Data.Class<{
 /**
  * Taxonomy.groupRecordsByTaxa returns this type.
  * Each entry in groups pairs a supplied target with its complete membership partition.
- * The entries follow the supplied target order.
+ * Entries retain original targets, including repeats, in supplied order. Each partition
+ * retains original record references, custom fields, and repeated occurrences.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
- * import type { RecordsGroupedByTaxa, TaxonomicRecord } from "robo-taxonomist";
- * export const members = (grouped: RecordsGroupedByTaxa<TaxonomicRecord>) =>
- *   grouped.pipe(value => value.groups.map(group => group.partition.Member));
+ * import { Effect } from "effect";
+ * import { TaxonName, Taxonomy, TaxonSet } from "robo-taxonomist";
+ * const record = { scientificName: TaxonName.make("Quercus robur"), sampleId: "A17" };
+ * const target = TaxonSet.of(TaxonName.make("Quercus"));
+ * export const memberIdsByTarget = Effect.gen(function* () {
+ *   const grouped = yield* Taxonomy.groupRecordsByTaxa([record, record], [target, target]);
+ *   return grouped.groups.map(group => group.partition.Member.map(member => member.sampleId));
+ * });
  */
 export type RecordsGroupedByTaxa<A extends RecordInput> = MembershipPartitionsByTarget<A>;
 
@@ -1067,6 +1146,12 @@ type GroupRecordsFn = <A extends RecordInput>(
  * Partition records for each supplied target, processing targets in order.
  * Keep a complete membership partition for each target.
  * A record can belong to several targets, including a genus and its containing family.
+ * Repeated targets remain separate entries and are evaluated separately.
+ * A failed target fails the complete operation.
+ * An empty target list returns no groups without a model call.
+ *
+ * @category collections
+ * @since 0.1.0
  * @example
  * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
  * export const grouped = Taxonomy.groupRecordsByTaxa(
@@ -1106,8 +1191,15 @@ const collectionMembershipJudgmentSchema = Schema.TaggedUnion({
  * The allRecordsBelongTo, anyRecordBelongsTo, and noRecordBelongsTo functions return this type.
  * The quantifier field identifies which question they answered.
  * You can use Match.tagsExhaustive to handle the answer or report a target name requiring review.
- * For MultipleTaxaInTargetName, replace the identified target name with a TaxonSet.union
- * of separately constructed TaxonSet.of expressions, then retry the collection question.
+ * Each question concerns whole-record membership: every subject in a qualifying record belongs.
+ * The policy combines support for outside and mixed subjects to rule out whole-record membership,
+ * including cases where their separate judgments remain uncertain. A coarse Yes or No can
+ * therefore settle a question whose fine-grained partition buckets remain uncertain.
+ * MultipleTaxaInTargetName retains the diagnosed name for review. If needed, clarify it
+ * with a TaxonSet.union of separate TaxonSet.of expressions and retry.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
  * import { Match } from "effect";
  * import type { CollectionMembershipJudgment } from "robo-taxonomist";
@@ -1117,8 +1209,8 @@ const collectionMembershipJudgmentSchema = Schema.TaggedUnion({
  *     No: ({ quantifier }) => `The ${quantifier} question returned No.`,
  *     Undetermined: ({ quantifier }) => `The ${quantifier} question remains unresolved.`,
  *     MultipleTaxaInTargetName: ({ targetName }) =>
- *       `The target name ${targetName} describes several taxa. ` +
- *       "Replace it with separate TaxonSet.of expressions combined with TaxonSet.union, then retry.",
+ *       `Review the combined target name ${targetName}. ` +
+ *       "If needed, replace it with separate TaxonSet.of expressions combined with TaxonSet.union, then retry.",
  *   }),
  * );
  */
@@ -1239,8 +1331,14 @@ type QuantifyRecordsFn = (
 
 /**
  * Ask whether every complete record belongs to the target.
- * Return No for mixed membership and Yes for an empty collection.
- * Process bounded request windows until the answer is settled.
+ * Accepted support ruling out whole-record membership, including mixed subjects,
+ * settles No. An empty collection returns Yes without a model call.
+ * Process bounded request windows until the answer is settled; every call in the
+ * current window must succeed before answers are scanned in input order.
+ * Defaults are 16 records per batch and one concurrent call; execution can override both.
+ *
+ * @category collections
+ * @since 0.1.0
  * @example
  * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
  * export const all = Taxonomy.allRecordsBelongTo([RecordLabel.make("oak specimen")], TaxonName.make("Quercus"));
@@ -1257,8 +1355,13 @@ export const allRecordsBelongTo: QuantifyRecordsFn = Effect.fn("Taxonomy.allReco
 
 /**
  * Ask whether at least one complete record belongs to the target.
- * Return Yes after finding a Member record and No for an empty collection.
- * Require the current request window to succeed before selecting an answer.
+ * Accepted whole-record membership settles Yes; mixed subjects alone are not a witness.
+ * An empty collection returns No without a model call. Every call in the current
+ * bounded request window must succeed before answers are scanned in input order,
+ * so calls may include records beyond the one that settles the answer.
+ *
+ * @category collections
+ * @since 0.1.0
  * @example
  * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
  * export const any = Taxonomy.anyRecordBelongsTo([RecordLabel.make("oak specimen")], TaxonName.make("Quercus"));
@@ -1275,8 +1378,13 @@ export const anyRecordBelongsTo: QuantifyRecordsFn = Effect.fn("Taxonomy.anyReco
 
 /**
  * Ask whether zero complete records belong to the target.
- * Return Yes for an empty collection.
- * Send complete request windows, including records after the one that settles the answer.
+ * Mixed subjects do not count as a wholly belonging record, so a collection of only
+ * accepted mixed or outside records can yield Yes. An empty collection returns Yes
+ * without a model call. Every call in the current bounded request window must succeed
+ * before answers are scanned in input order, including calls beyond a decisive record.
+ *
+ * @category collections
+ * @since 0.1.0
  * @example
  * import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
  * export const none = Taxonomy.noRecordBelongsTo([RecordLabel.make("beech specimen")], TaxonName.make("Quercus"));

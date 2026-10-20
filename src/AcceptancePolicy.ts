@@ -3,10 +3,19 @@ import { Array, BigDecimal, Iterable, Number, Option, Schema, pipe } from "effec
 const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 
 /**
- * Control which judgments the library reports.
- * Support is an answer's probability. Margin is its lead over the strongest competing answer.
- * Pass this value in the policy option. Higher thresholds can produce a less specific
- * judgment or Undetermined.
+ * Set the minimum model-reported support and margin needed to accept a judgment.
+ * Support can combine probabilities for choices that imply the same broader answer.
+ * Margin is the lead over the strongest competing answer, including uncertainty
+ * and clarification choices. Every accepted answer must have a unique lead.
+ * Uncertainty and clarification retain their reported probability mass.
+ * Both thresholds are inclusive and must lie between zero and one.
+ *
+ * Pass this value in the policy option. The defaults are minimumSupport: 0.5 and
+ * minimumMargin: 0. A broader judgment can be accepted while its finer details
+ * remain uncertain. Model accuracy and probability calibration require separate evaluation.
+ *
+ * @category schemas
+ * @since 0.1.0
  * @example
  * import { AcceptancePolicy, RecordLabel, Taxonomy } from "robo-taxonomist";
  * const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
@@ -20,10 +29,14 @@ export const AcceptancePolicy = Schema.Struct({
 }).pipe(Schema.brand("AcceptancePolicy"));
 
 /**
- * Operations accept this type in their policy option.
+ * Supply a validated acceptance policy in an operation's policy option.
+ *
+ * @category models
+ * @since 0.1.0
  * @example
- * import type { AcceptancePolicy } from "robo-taxonomist";
- * export const options = (policy: AcceptancePolicy) => ({ policy });
+ * import { AcceptancePolicy } from "robo-taxonomist";
+ * const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
+ * export const options = { policy };
  */
 export type AcceptancePolicy = typeof AcceptancePolicy.Type;
 
