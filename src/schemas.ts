@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 /**
  * Describe a record with nonblank text, preserved exactly as supplied.

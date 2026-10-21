@@ -1,4 +1,10 @@
-import { Array, BigDecimal, Iterable, Number, Option, Schema, pipe } from "effect";
+import * as Array from "effect/Array";
+import * as BigDecimal from "effect/BigDecimal";
+import { pipe } from "effect/Function";
+import * as Iterable from "effect/Iterable";
+import * as Number from "effect/Number";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 
