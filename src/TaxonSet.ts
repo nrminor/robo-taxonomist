@@ -1,5 +1,13 @@
-import { Array, Effect, Option, Record, Schema, Struct, pipe } from "effect";
-import { AiError, Decision, DecisionModel } from "effect/ai";
+import * as AiError from "effect/ai/AiError";
+import * as Decision from "effect/ai/Decision";
+import * as DecisionModel from "effect/ai/DecisionModel";
+import * as Array from "effect/Array";
+import * as Effect from "effect/Effect";
+import { pipe } from "effect/Function";
+import * as Option from "effect/Option";
+import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { defaultPolicy, select, type AcceptancePolicy, type Scored } from "./AcceptancePolicy.ts";
 import { TaxonName, taxonSetSchema } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";

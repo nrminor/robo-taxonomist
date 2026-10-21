@@ -1,5 +1,12 @@
-import { Array, Effect, Graph, Match, Option, Predicate, Record, Schema } from "effect";
-import { AiError } from "effect/ai";
+import * as AiError from "effect/ai/AiError";
+import * as Array from "effect/Array";
+import * as Effect from "effect/Effect";
+import * as Graph from "effect/Graph";
+import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
 import { TaxonName, taxonSetSchema } from "./schemas.ts";
 
 type Expression = typeof taxonSetSchema.Type;

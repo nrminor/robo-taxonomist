@@ -1,18 +1,18 @@
-import {
-  Array,
-  Data,
-  Effect,
-  Equivalence,
-  Iterable,
-  Match,
-  Option,
-  Predicate,
-  Record,
-  Schema,
-  Struct,
-  pipe,
-} from "effect";
-import { AiError, Decision, DecisionModel } from "effect/ai";
+import * as AiError from "effect/ai/AiError";
+import * as Decision from "effect/ai/Decision";
+import * as DecisionModel from "effect/ai/DecisionModel";
+import * as Array from "effect/Array";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Equivalence from "effect/Equivalence";
+import { pipe } from "effect/Function";
+import * as Iterable from "effect/Iterable";
+import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import {
   accepts,
   defaultPolicy,
