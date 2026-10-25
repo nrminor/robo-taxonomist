@@ -9,11 +9,13 @@ import { pipe } from "effect/Function";
 import * as Iterable from "effect/Iterable";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import {
+  UnitInterval,
   accepts,
   defaultPolicy,
   select,
@@ -966,6 +968,272 @@ type CollectionOptions = {
   readonly policy?: AcceptancePolicy;
   readonly execution?: CollectionExecution;
 };
+
+const Support = UnitInterval.pipe(Schema.brand("Support"));
+type Support = typeof Support.Type;
+
+const taxonMatchJudgmentSchema = Schema.TaggedUnion({
+  Matched: {},
+  NotMatched: {},
+  Undetermined: {},
+});
+
+/**
+ * Report an accepted match, an accepted negative answer, or an unresolved comparison.
+ * Low match support alone does not establish NotMatched.
+ *
+ * @category models
+ * @since 0.2.0
+ */
+export type TaxonMatchJudgment = typeof taxonMatchJudgmentSchema.Type;
+
+const taxonMatchCriteria = {
+  sameTaxon: "A match: the record identifies this taxon, including resolved synonyms.",
+  withinTaxon: "A match: the record identifies taxa classified within this broader taxon.",
+  noMatch: "The supplied identification or panel expression rules out this classification.",
+  undetermined: "The supplied information does not establish whether this classification is valid.",
+};
+
+type TaxonMatchAnswer = Decision.ClassifyAnswer<keyof typeof taxonMatchCriteria>;
+
+/**
+ * Keep an original record and taxon node with their scored match judgment.
+ * Support is a finite number in [0, 1], combining same-taxon and broader-taxon answers.
+ * The complete validated model answer is retained without modification.
+ * The record's concrete type and caller metadata remain available through R.
+ *
+ * @category models
+ * @since 0.2.0
+ */
+class TaxonMatch<R extends RecordInput> extends Data.Class<{
+  readonly record: R;
+  readonly taxon: typeof taxonSetSchema.cases.Taxon.Type;
+  readonly support: Support;
+  readonly judgment: TaxonMatchJudgment;
+  readonly answer: TaxonMatchAnswer;
+}> {}
+
+export type { TaxonMatch };
+
+const taxonMatchInstructions =
+  "Assess whether each record can be classified under each supplied taxon. " +
+  "A match requires the same taxon, including resolved synonyms, " +
+  "or classification within a broader taxon. Several taxa can match.";
+
+const taxonMatchInputSchema = Schema.Struct({
+  instructions: Schema.String,
+  records: Schema.Array(Schema.String),
+  taxa: Schema.Array(TaxonName),
+  nodes: TaxonSetGraph.membershipTargetSchema.fields.nodes,
+  panel: Schema.Natural,
+});
+
+const makeTaxonMatch = Effect.fnUntraced(function* <R extends RecordInput>(
+  record: R,
+  taxon: typeof taxonSetSchema.cases.Taxon.Type,
+  answer: TaxonMatchAnswer,
+  policy: AcceptancePolicy,
+) {
+  const p = answer.probabilities;
+  const sameOrWithin = sumProbabilities([p.sameTaxon, p.withinTaxon]);
+  const total = sumProbabilities([sameOrWithin, p.noMatch, p.undetermined]);
+  const support = yield* Schema.decodeEffect(Support)(sameOrWithin / total).pipe(
+    Effect.mapError((error) =>
+      AiError.make({
+        module: "Taxonomy",
+        method: "classifyRecords",
+        reason: new AiError.InvalidOutputError({ description: error.message }),
+      }),
+    ),
+  );
+  const cases = taxonMatchJudgmentSchema.cases;
+  const candidates: Array.NonEmptyReadonlyArray<Scored<TaxonMatchJudgment>> = [
+    { answer: cases.Matched.make({}), support },
+    { answer: cases.NotMatched.make({}), support: p.noMatch / total },
+    { answer: cases.Undetermined.make({}), support: p.undetermined / total },
+  ];
+  const judgment = select(candidates, policy).pipe(
+    Option.getOrElse(() => cases.Undetermined.make({})),
+  );
+  return new TaxonMatch({ record, taxon, support, judgment, answer });
+});
+
+const taxaOf = (panel: TaxonSet) => {
+  const taxa: (typeof taxonSetSchema.cases.Taxon.Type)[] = [];
+  const emptyIncluded = new WeakSet<TaxonSet>();
+  const emptyExcluded = new WeakSet<TaxonSet>();
+  const pending: {
+    readonly expression: TaxonSet;
+    readonly include: boolean;
+    readonly start?: number;
+  }[] = [{ expression: panel, include: true }];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (next === undefined) break;
+    const { expression, include, start } = next;
+    const empty = include ? emptyIncluded : emptyExcluded;
+    if (empty.has(expression)) continue;
+    if (start !== undefined) {
+      // Productive shared subtrees retain every original occurrence.
+      if (taxa.length === start) empty.add(expression);
+      continue;
+    }
+    pending.push({ expression, include, start: taxa.length });
+    Match.value(expression).pipe(
+      Match.tagsExhaustive({
+        Empty: () => {},
+        Taxon: (taxon) => {
+          if (include) taxa.push(taxon);
+        },
+        Union: ({ operands }) => {
+          for (let index = operands.length - 1; index >= 0; index--) {
+            pending.push({ expression: Array.getUnsafe(operands, index), include });
+          }
+        },
+        Intersection: ({ operands }) => {
+          for (let index = operands.length - 1; index >= 0; index--) {
+            pending.push({ expression: Array.getUnsafe(operands, index), include });
+          }
+        },
+        Difference: ({ left, right }) => {
+          pending.push({ expression: right, include: !include });
+          pending.push({ expression: left, include });
+        },
+      }),
+    );
+  }
+  return taxa;
+};
+
+type ClassifyRecordsFn = <R extends RecordInput>(
+  records: readonly R[],
+  panel: TaxonSet,
+  options?: CollectionOptions,
+) => Effect.Effect<
+  {
+    readonly panel: TaxonSet;
+    readonly records: readonly {
+      readonly record: R;
+      readonly taxa: readonly TaxonMatch<R>[];
+      readonly ranking: readonly TaxonMatch<R>[];
+    }[];
+    readonly usage: readonly DecisionModel.DecisionUsage[];
+  },
+  AiError.AiError,
+  DecisionModel.DecisionModel
+>;
+
+/**
+ * Rank supported taxonomic matches for each record against a panel expression.
+ * Several taxa can match. Each record's taxa retains all outcomes in supplied
+ * occurrence order; ranking contains accepted matches in descending support order.
+ * Ties retain occurrence order. Original records, metadata and taxon nodes are preserved.
+ * Subtraction removes taxon occurrences from ranking options; nested subtraction can restore them.
+ * Every question receives the complete panel expression.
+ *
+ * Uses the existing record batch size and concurrency options. Empty records or
+ * a panel offering no taxa produce empty rankings without a model call.
+ * A failed request fails the complete operation. Support describes model judgments,
+ * not sequence-abundance fractions or a preference for a particular taxonomic rank.
+ *
+ * @category collections
+ * @since 0.2.0
+ * @example
+ * import { Effect } from "effect";
+ * import { TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
+ * const records = [{ scientificName: TaxonName.make("Quercus robur"), abundance: 8 }];
+ * const panel = TaxonSet.union(
+ *   TaxonSet.of(TaxonName.make("Quercus")),
+ *   TaxonSet.of(TaxonName.make("Quercus robur")),
+ * );
+ * export const ranked = Effect.gen(function* () {
+ *   const result = yield* Taxonomy.classifyRecords(records, panel);
+ *   return result.records.map(row => row.ranking.map(match => match.taxon.name));
+ * });
+ */
+export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRecords")(function* <
+  R extends RecordInput,
+>(records: readonly R[], panel: TaxonSet, options: CollectionOptions = {}) {
+  const invalid = (description: string) =>
+    AiError.make({
+      module: "Taxonomy",
+      method: "classifyRecords",
+      reason: new AiError.InvalidUserInputError({ description }),
+    });
+  const graph = yield* TaxonSetGraph.compile({ panel }).pipe(
+    Effect.mapError((reason) =>
+      AiError.make({ module: "Taxonomy", method: "classifyRecords", reason }),
+    ),
+  );
+  if (records.length === 0) return { panel, records: [], usage: [] };
+  const panelTaxa = taxaOf(panel);
+  if (panelTaxa.length === 0) {
+    return {
+      panel,
+      records: records.map((record) => ({ record, taxa: [], ranking: [] })),
+      usage: [],
+    };
+  }
+
+  const policy = options.policy ?? defaultPolicy;
+  const execution = options.execution ?? defaultCollectionExecution;
+  const classifyBatch = Effect.fnUntraced(function* (batch: readonly R[]) {
+    const encoded = yield* Schema.encodeEffect(Schema.Array(recordInputSchema))(batch).pipe(
+      Effect.mapError((error) => invalid(error.message)),
+    );
+    const rows = batch.map((record, row) => ({
+      record,
+      taxa: panelTaxa.map((taxon, column) => ({
+        taxon,
+        key: `r${row}t${column}` as const,
+        decision: Decision.classify({
+          instructions:
+            `Apply instructions. Classify records[${row}] under taxa[${column}], ` +
+            "using the expression rooted at nodes[panel].",
+          criteria: taxonMatchCriteria,
+        }),
+      })),
+    }));
+    const definition = Decision.make({
+      input: taxonMatchInputSchema,
+      decisions: Record.fromEntries(
+        rows.flatMap((row) => row.taxa.map(({ key, decision }) => [key, decision] as const)),
+      ),
+    });
+    const response = yield* DecisionModel.decide(definition, {
+      input: {
+        instructions: taxonMatchInstructions,
+        records: encoded.map(describeRecord),
+        taxa: panelTaxa.map((taxon) => taxon.name),
+        nodes: graph.nodes,
+        panel: graph.roots.panel,
+      },
+    });
+    const classified = yield* Effect.forEach(rows, (row) =>
+      Effect.gen(function* () {
+        const taxa = yield* Effect.forEach(row.taxa, ({ taxon, key }) =>
+          makeTaxonMatch(row.record, taxon, Struct.get(response.answers, key), policy),
+        );
+        const ranking = Array.sort(
+          taxa.filter((match) => taxonMatchJudgmentSchema.guards.Matched(match.judgment)),
+          Order.mapInput(Order.flip(Order.Number), (match: TaxonMatch<R>) => match.support),
+        );
+        return { record: row.record, taxa, ranking };
+      }),
+    );
+    return { records: classified, usage: response.usage };
+  });
+  const completed = yield* Effect.forEach(
+    Iterable.chunksOf(records, execution.batchSize),
+    classifyBatch,
+    { concurrency: execution.concurrency },
+  );
+  return {
+    panel,
+    records: completed.flatMap((batch) => batch.records),
+    usage: completed.map((batch) => batch.usage),
+  };
+});
 
 class MembershipPartition<A extends RecordInput> extends Data.Class<{
   readonly Member: readonly A[];

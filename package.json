@@ -1,6 +1,6 @@
 {
   "name": "robo-taxonomist",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Effect-based taxonomy reconciliation and set operations across taxonomic databases.",
   "license": "MIT",
   "repository": {
