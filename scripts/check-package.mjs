@@ -90,6 +90,7 @@ export const target = TaxonSet.of(TaxonName.make("Quercus"));
 export const deterministic = Effect.runSync(TaxonSet.isSubsetOf(TaxonSet.empty(), target));
 export const modelEffect = Taxonomy.sameSpecies(RecordLabel.make("Quercus robur"), RecordLabel.make("Quercus petraea"));
 export const collection = Taxonomy.partitionRecordsByMembership([{ label: RecordLabel.make("Quercus robur") }], target);
+export const classification = Taxonomy.classifyRecords([{ label: RecordLabel.make("Quercus robur") }], target);
 `,
     );
     buildSync({

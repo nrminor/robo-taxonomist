@@ -6,7 +6,7 @@ import * as Number from "effect/Number";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+export const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 
 /**
  * Set the minimum model-reported support and margin needed to accept a judgment.

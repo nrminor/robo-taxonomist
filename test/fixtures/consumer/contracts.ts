@@ -1,6 +1,7 @@
 // Compile only, against package exports after build; never executed by Vitest.
 import { Effect, type Array, type Types } from "effect";
-import type { AiError, DecisionModel } from "effect/ai";
+import type { AiError, Decision, DecisionModel } from "effect/ai";
+import * as RoboTaxonomist from "robo-taxonomist";
 import {
   AcceptancePolicy,
   RecordLabel,
@@ -15,6 +16,8 @@ import {
   type TaxonIdentityJudgment,
   type TaxonContainmentJudgment,
   type TaxonMembershipJudgment,
+  type TaxonMatch,
+  type TaxonMatchJudgment,
   type TaxonSetRelationJudgment,
 } from "robo-taxonomist";
 
@@ -78,6 +81,10 @@ const relation = TaxonSet.isSubsetOf(oaks, TaxonSet.union(oaks, TaxonSet.empty()
 const membership = Taxonomy.recordBelongsTo(specimen, oaks);
 const partition = Taxonomy.partitionRecordsByMembership(records, name);
 const grouped = Taxonomy.groupRecordsByTaxa(records, [name, oaks]);
+const classified = Taxonomy.classifyRecords(records, oaks, { policy });
+type Classified = Effect.Success<typeof classified>;
+type ClassifiedRow = Classified["records"][number];
+type ClassifiedMatch = ClassifiedRow["ranking"][number];
 const all = Taxonomy.allRecordsBelongTo(records, oaks);
 const some = Taxonomy.anyRecordBelongsTo(records, name);
 const none = Taxonomy.noRecordBelongsTo(records, oaks);
@@ -89,8 +96,33 @@ const groupedMembers = grouped.pipe(
     value.pipe((g) => g.groups.map(({ partition: p }) => p.pipe((buckets) => buckets.Member))),
   ),
 );
+const classifiedVouchers = classified.pipe(
+  Effect.map((value) =>
+    value.records.flatMap((row) => row.ranking.map((match) => match.pipe((m) => m.record.voucher))),
+  ),
+);
 
 export type Contracts = [
+  Assert<Equal<ClassifiedRow["record"], typeof specimen>>,
+  Assert<Equal<ClassifiedMatch["record"], typeof specimen>>,
+  Assert<Equal<ClassifiedMatch, TaxonMatch<typeof specimen>>>,
+  Assert<Equal<ClassifiedRow["taxa"][number], TaxonMatch<typeof specimen>>>,
+  Assert<Equal<ClassifiedMatch["taxon"], Types.ExtractTag<TaxonSet.TaxonSet, "Taxon">>>,
+  Assert<Equal<ClassifiedMatch["judgment"], TaxonMatchJudgment>>,
+  Assert<Equal<TaxonMatchJudgment["_tag"], "Matched" | "NotMatched" | "Undetermined">>,
+  Assert<
+    Equal<
+      ClassifiedMatch["answer"],
+      Decision.ClassifyAnswer<"sameTaxon" | "withinTaxon" | "noMatch" | "undetermined">
+    >
+  >,
+  Assert<Equal<Classified["usage"], readonly DecisionModel.DecisionUsage[]>>,
+  Assert<Equal<Effect.Error<typeof classified>, AiError.AiError>>,
+  Assert<Equal<Effect.Services<typeof classified>, DecisionModel.DecisionModel>>,
+  Assert<Equal<ClassifiedMatch["support"] extends number ? true : false, true>>,
+  Assert<Equal<number extends ClassifiedMatch["support"] ? true : false, false>>,
+  Assert<Equal<IsAny<ClassifiedMatch["support"]>, false>>,
+  Assert<Judgment<typeof classifiedVouchers, "A17"[]>>,
   Assert<Judgment<typeof rank, RankComparisonJudgment>>,
   Assert<Equal<RankComparisonJudgment, ExpectedRankComparison>>,
   Assert<Equal<IsAny<RankComparisonJudgment>, false>>,
@@ -191,3 +223,16 @@ export const rejectedTaxonName = TaxonSet.of(label);
 export const rejectedRecord = Taxonomy.recordBelongsTo(name, oaks);
 // @ts-expect-error Raw text must not bypass validated record labels.
 export const rejectedRawRecord = Taxonomy.recordBelongsTo("unvalidated", name);
+
+// @ts-expect-error Classification panels retain recursive expression validation.
+export const rejectedClassificationPanel = Taxonomy.classifyRecords(records, malformed);
+// @ts-expect-error Raw text cannot bypass the record-label schema.
+export const rejectedClassificationRecord = Taxonomy.classifyRecords(["unvalidated"], oaks);
+// @ts-expect-error Caller metadata alone is not an identifying description.
+export const rejectedClassificationMetadata = Taxonomy.classifyRecords([{ abundance: 8 }], oaks);
+// @ts-expect-error TaxonMatch is exported only as a type, not a runtime constructor.
+void RoboTaxonomist.TaxonMatch;
+// @ts-expect-error The support constructor is not part of the root API.
+void RoboTaxonomist.Support;
+// @ts-expect-error The shared internal bound is not part of the root API.
+void RoboTaxonomist.UnitInterval;

@@ -34,6 +34,8 @@ export {
  */
 export * as Taxonomy from "./Taxonomy.ts";
 export type {
+  TaxonMatch,
+  TaxonMatchJudgment,
   RecordMembershipPartition,
   RecordsGroupedByTaxa,
   CollectionMembershipJudgment,
