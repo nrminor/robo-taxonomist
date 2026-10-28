@@ -28,8 +28,8 @@
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "lint": "pnpm run build && oxlint --deny-warnings .",
-    "typecheck": "tsc --noEmit --project tsconfig.json && tsc --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict",
-    "test": "vitest run",
+    "typecheck": "tsc --noEmit --project tsconfig.json && tsc --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict && pnpm --filter @robo-taxonomist/demo typecheck",
+    "test": "vitest run && pnpm --filter @robo-taxonomist/demo test",
     "test:watch": "vitest",
     "knip": "knip",
     "prepack": "pnpm run build"

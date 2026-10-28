@@ -20,5 +20,5 @@
       }
     ]
   },
-  "ignorePatterns": [".agents/**", "dist/**"]
+  "ignorePatterns": [".agents/**", "dist/**", "**/.next/**", "**/next-env.d.ts"]
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@robo-taxonomist/demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit --project tsconfig.json && effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
+    "test": "vitest run --config vitest.config.ts",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "effect": "4.0.0"
+  }
+}

@@ -1,5 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "project": ["src/**/*.ts", "test/**/*.ts", "!test/fixtures/**"],
+  "workspaces": {
+    ".": {
+      "project": ["src/**/*.ts", "test/**/*.ts", "!test/fixtures/**"]
+    },
+    "sites/demo": {
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    }
+  },
   "ignoreDependencies": ["@effect/language-service"]
 }
