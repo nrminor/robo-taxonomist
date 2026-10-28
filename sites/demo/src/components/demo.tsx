@@ -9,6 +9,8 @@ import { panels } from "../lib/catalog.ts";
 import { PanelResponse } from "../lib/contract.ts";
 import { replaceDisplayed } from "../lib/display.ts";
 import { RequestFailureView } from "./request-failure.tsx";
+import { AbundanceChart } from "./abundance-chart.tsx";
+import { RecordMatches } from "./record-matches.tsx";
 import styles from "./demo.module.css";
 import {
   decodeReply,
@@ -69,6 +71,14 @@ function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
             {panels.find((panel) => panel.id === display.comparedWith)?.name}.
           </p>
         )}
+      </div>
+      <div className={styles.workspace}>
+        <section className={styles.chart} aria-labelledby="count-abundance">
+          <h3 id="count-abundance">Count abundance for each target</h3>
+          <p>Keep the same sample total when you compare panels.</p>
+          <AbundanceChart response={response} />
+        </section>
+        <RecordMatches response={response} />
       </div>
     </section>
   );

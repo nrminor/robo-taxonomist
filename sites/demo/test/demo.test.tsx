@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, Suspense, use, useLayoutEffect } from "react";
 import { Effect, Layer, Result, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -149,6 +149,46 @@ it("compares C with committed A, not successful B abandoned by Suspense", async 
   expect(await screen.findByRole("heading", { name: "Focused interests" })).toBeDefined();
   expect(screen.getByText(/records since Broad survey\./)).toBeDefined();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it("counts the full abundance for overlapping matches and lets a genus record rule out a species match", async () => {
+  await renderDemo(Promise.resolve(await replyFor("nested")), vi.fn());
+  const chart = await screen.findByRole("figure", { name: "Count abundance for each target" });
+  const description = within(chart).getByRole("img").getAttribute("aria-label");
+  expect(description).toContain("Fungi: 31%;");
+  expect(description).toContain("Saccharomyces: 18%;");
+  expect(description).toContain("Saccharomyces cerevisiae: 14%;");
+
+  fireEvent.click(screen.getByLabelText("Inspect Saccharomyces"));
+  const comparisons = screen.getByRole("table", { name: "Classify Saccharomyces" });
+  expect(
+    within(comparisons).getByRole("row", { name: /Saccharomyces cerevisiae Does not match/ }),
+  ).toBeDefined();
+  expect(within(comparisons).getByRole("row", { name: /^Saccharomyces Matches/ })).toBeDefined();
+});
+
+it("shows optional provider confidence separately from match support", async () => {
+  const reply = Result.map(
+    Schema.decodeSync(ClassificationReply)(await replyFor("broad")),
+    (response) => ({
+      ...response,
+      rows: response.rows.map((row) => ({
+        ...row,
+        matches: row.matches.map((match) => ({
+          ...match,
+          answer: { ...match.answer, confidence: 0.8 },
+        })),
+      })),
+    }),
+  );
+  await renderDemo(Promise.resolve(Schema.encodeSync(ClassificationReply)(reply)), vi.fn());
+  fireEvent.click(screen.getByLabelText("Inspect Saccharomyces cerevisiae"));
+  const comparisons = screen.getByRole("table", { name: "Classify Saccharomyces cerevisiae" });
+  const fungi = within(comparisons).getByRole("row", { name: /^Fungi / });
+  fireEvent.click(within(fungi).getByText("Within a broader taxon", { selector: "summary" }));
+  expect(within(fungi).getByText("Provider confidence")).toBeDefined();
+  expect(within(fungi).getByText("80%")).toBeDefined();
+  expect(within(fungi).getByText("95%")).toBeDefined();
 });
 
 it("ignores superseded replies when Broad survey is selected again before the initial reply arrives", async () => {

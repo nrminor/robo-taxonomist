@@ -75,6 +75,6 @@ await Effect.runPromise(program.pipe(Effect.provide(DecisionModelLive), Effect.t
 
 From a checkout of this repository, run `mise run bootstrap`, then `mise run demo:dev`. Open <http://127.0.0.1:3000>.
 
-Choose a panel to see how many of 24 synthetic records match a target and how those matches change between panels. The example uses fixed answers and does not call a model provider.
+Choose a panel to see which taxa match each of 24 synthetic records. Select a record to inspect its matches, or compare how much abundance matches each target. A record can match more than one target. The example uses fixed answers and does not call a model provider.
 
 Run `mise run demo:check` to check types, run tests, and build the site. `mise run check` also checks the demo.

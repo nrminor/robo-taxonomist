@@ -1,4 +1,4 @@
-import { type PanelId } from "./catalog.ts";
+import { panels, records, type PanelId } from "./catalog.ts";
 import { MatchJudgment, type PanelResponse } from "./contract.ts";
 
 export interface Display {
@@ -44,4 +44,21 @@ export function replaceDisplayed(previous: Display | undefined, response: PanelR
     comparedWith: previous?.response.panelId,
     changedRecords,
   };
+}
+
+export function targetAbundances(response: PanelResponse) {
+  const panel = panels.find((entry) => entry.id === response.panelId);
+  const accepted = acceptedTargets(response);
+  const total = records.reduce((sum, record) => sum + record.abundance, 0);
+  return (panel?.targets ?? []).map((target) => ({
+    id: target.id,
+    label: target.name,
+    abundance:
+      (records.reduce(
+        (sum, record) => sum + (accepted.get(record.id)?.has(target.id) ? record.abundance : 0),
+        0,
+      ) /
+        total) *
+      100,
+  }));
 }
