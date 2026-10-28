@@ -3,8 +3,9 @@ import { AiError } from "effect/ai";
 import { PanelId, panels, records } from "./catalog.ts";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
-const MatchJudgment = Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} });
-const PanelResponse = Schema.Struct({
+export const MatchJudgment = Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} });
+export type MatchJudgment = typeof MatchJudgment.Type;
+export const PanelResponse = Schema.Struct({
   panelId: PanelId,
   rows: Schema.Array(
     Schema.Struct({
@@ -46,6 +47,7 @@ const PanelResponse = Schema.Struct({
     );
   }),
 );
+export type PanelResponse = typeof PanelResponse.Type;
 
 export const PublicModelReason = Schema.TaggedUnion({
   RateLimitError: {

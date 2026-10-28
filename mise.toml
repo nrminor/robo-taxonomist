@@ -21,3 +21,5 @@ typecheck = { description = "Check TypeScript and Effect diagnostics", run = "pn
 test = { description = "Run tests", run = "pnpm run test" }
 "test:watch" = { description = "Run tests in watch mode", run = "pnpm run test:watch", interactive = true }
 knip = { description = "Check unused code and dependencies", run = "pnpm run knip" }
+"demo:check" = { description = "Check and build the demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo check" }
+"demo:test" = { description = "Test the demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo test" }
