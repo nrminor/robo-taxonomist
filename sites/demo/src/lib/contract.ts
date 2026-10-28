@@ -86,3 +86,4 @@ export type ClassificationFailure = typeof ClassificationFailure.Type;
 export const ClassificationReply = Schema.toCodecJson(
   Schema.Result(PanelResponse, ClassificationFailure),
 );
+export const ClassifyRequest = Schema.Struct({ panelId: PanelId });

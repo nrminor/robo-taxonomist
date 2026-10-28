@@ -4,12 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit --project tsconfig.json && effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "typecheck": "next typegen && tsc --noEmit --project tsconfig.json && effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
     "test": "vitest run --config vitest.config.ts",
-    "check": "pnpm run typecheck && pnpm run test"
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "dependencies": {
     "effect": "4.0.0",
-    "robo-taxonomist": "workspace:*"
+    "next": "16.4.3",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "robo-taxonomist": "workspace:*",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.2"
   }
 }

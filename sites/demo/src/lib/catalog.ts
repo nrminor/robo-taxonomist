@@ -2,6 +2,7 @@ import { Schema } from "effect";
 
 export const PanelId = Schema.Literals(["broad", "focused", "nested"]);
 export type PanelId = typeof PanelId.Type;
+export const initialPanelId: PanelId = "broad";
 
 export const records = [
   { id: "r01", name: "Saccharomyces cerevisiae", abundance: 14, kind: "species" },

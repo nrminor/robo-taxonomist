@@ -21,7 +21,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "check": "pnpm run fmt:check && pnpm run check:fast && pnpm run test && pnpm run knip && pnpm run check:consumer",
+    "check": "pnpm run fmt:check && pnpm run check:fast && pnpm run test && pnpm run knip && pnpm run check:consumer && pnpm --filter @robo-taxonomist/demo build",
     "check:consumer": "tsc --project test/fixtures/consumer/tsconfig.json && node test/fixtures/consumer/smoke.mjs",
     "check:package": "node scripts/check-package.mjs",
     "check:fast": "pnpm run lint && pnpm run typecheck",
