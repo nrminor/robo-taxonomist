@@ -1,9 +1,11 @@
 import "server-only";
-import { Effect, Exit, ManagedRuntime, Option, Result, Schema } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Result, Schema } from "effect";
+import { FetchHttpClient } from "effect/http";
 import { initialPanelId } from "../lib/catalog.ts";
 import { ClassificationFailure, ClassificationReply, ClassifyRequest } from "../lib/contract.ts";
 import { publicCauseFailure } from "../lib/failures.ts";
 import { classifyPanel, PanelResults } from "./panel-results.ts";
+import { ConfiguredPanelResults } from "./configured-model.ts";
 
 const encodeReply = Schema.encodeSync(ClassificationReply);
 
@@ -15,7 +17,9 @@ const failureStatus = (failure: ClassificationFailure): number =>
     InternalFailure: () => 500,
   });
 
-export function makeHandlers(runtime: ManagedRuntime.ManagedRuntime<PanelResults, never>) {
+export function makeHandlers(
+  runtime: ManagedRuntime.ManagedRuntime<PanelResults, ClassificationFailure>,
+) {
   async function initialReply(): Promise<Schema.Json> {
     const exit = await runtime.runPromiseExit(classifyPanel(initialPanelId));
     return Exit.match(exit, {
@@ -69,5 +73,14 @@ export function makeHandlers(runtime: ManagedRuntime.ManagedRuntime<PanelResults
   return { initialReply, classifyHttp };
 }
 
-// Share one cache between server rendering and POST requests.
-export const { initialReply, classifyHttp } = makeHandlers(ManagedRuntime.make(PanelResults.layer));
+declare global {
+  var __roboTaxonomistDemoRuntime:
+    | ManagedRuntime.ManagedRuntime<PanelResults, ClassificationFailure>
+    | undefined;
+}
+
+// Share one cache across server rendering, POST requests, and development module reloads.
+globalThis.__roboTaxonomistDemoRuntime ??= ManagedRuntime.make(
+  ConfiguredPanelResults.pipe(Layer.provide(FetchHttpClient.layer)),
+);
+export const { initialReply, classifyHttp } = makeHandlers(globalThis.__roboTaxonomistDemoRuntime);

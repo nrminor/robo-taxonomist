@@ -25,3 +25,7 @@ knip = { description = "Check unused code and dependencies", run = "pnpm run kni
 "demo:check" = { description = "Check and build the demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo check" }
 "demo:test" = { description = "Test the demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo test" }
 "demo:browser:install" = { description = "Install Chromium and its system dependencies for browser tests", run = "pnpm --filter @robo-taxonomist/demo exec playwright install --with-deps chromium" }
+"demo:credentials:check" = { description = "Validate local live-demo credentials without inference", run = "pnpm --filter @robo-taxonomist/demo credentials:check" }
+"demo:credentials:account" = { description = "Store the live-demo account ID using a prompt", run = "pnpm --filter @robo-taxonomist/demo credentials:account", interactive = true }
+"demo:credentials:token" = { description = "Store the live-demo token using a masked prompt", run = "pnpm --filter @robo-taxonomist/demo credentials:token", interactive = true }
+"demo:dev:live" = { description = "Build the public library, then run the live provider demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo dev:live" }

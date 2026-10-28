@@ -75,8 +75,23 @@ await Effect.runPromise(program.pipe(Effect.provide(DecisionModelLive), Effect.t
 
 From a checkout of this repository, run `mise run bootstrap`, then `mise run demo:dev`. Open <http://127.0.0.1:3000>.
 
-Choose a panel to see which taxa match each of 24 synthetic records. Select a record to inspect its matches, or compare how much abundance matches each target. A record can match more than one target. The example uses fixed answers and does not call a model provider.
+Choose a panel to see which taxa match each of 24 synthetic records. Select a record to inspect its matches, or compare how much abundance matches each target. A record can match more than one target. The default fixture mode uses fixed answers without calling a model provider.
 
 Run `mise run demo:check` to check types, run tests, and build the site. `mise run check` also checks the demo.
 
 UI tests run in Chromium through Vitest's Playwright provider; service and HTTP tests run in Node with Effect. Before running checks on a new machine, run `mise run demo:browser:install` after `mise run bootstrap`. This installs the browser revision pinned by Playwright and its system dependencies; Linux may require elevated privileges for the system packages.
+
+### Local live-demo credentials
+
+Use `mise run demo:dev` for fixture results without credentials or provider calls. Use the separate live command for Cloudflare Clef. Varlock resolves local credentials before starting Next.js; Effect Config reads them on the server.
+
+1. Run `mise run bootstrap`.
+2. Follow Cloudflare's [Workers AI REST API setup](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) to obtain your account ID and an account-scoped token. Use the built-in Workers AI token template rather than guessing custom Read/Edit permissions.
+3. Run `mise run demo:credentials:token` and enter the token at the masked prompt. Never put it in chat or command arguments. This stores it in macOS Keychain and writes a reference into ignored `sites/demo/.env.local`.
+4. Run `mise run demo:credentials:account` and enter the account ID at the prompt. This stores it in Keychain and writes its reference alongside the token reference. The public `.env.schema` contains no credentials and defaults `DEMO_MODEL` to `clef` only for the Varlock live flow.
+5. Run `mise run demo:credentials:check` to validate configuration without starting a server or making model calls. This resolves your local Keychain reference; agent output masks the token but preserves public account metadata.
+6. When ready for provider calls, run `mise run demo:dev:live`. It builds the public library without injected credentials first, then injects credentials only into Next.js.
+
+**Live mode calls the provider on initial page load and each uncached panel selection:** four serial requests, six records per batch, and 36 or 60 questions per batch. The three panel results are cached in the server process, with no automatic retries. Live results can differ from fixture results.
+
+Restart the server after credential or provider-configuration changes. Keep provider credentials server-only: never use `NEXT_PUBLIC_` names or dump raw environment variables. Varlock redacts piped output; interactive terminal output passes through. Effect's redacted values also need care when unwrapped. Only the public `sites/demo/.env.schema` is tracked; `.env.local` and other environment files remain ignored.

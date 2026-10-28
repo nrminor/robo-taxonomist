@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { afterAll, vi } from "vitest";
 import { Deferred, Effect, Layer, ManagedRuntime, Result, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
@@ -14,6 +14,8 @@ import { PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
 vi.mock("server-only", () => ({}));
+vi.stubEnv("DEMO_MODEL", "fixture");
+afterAll(() => vi.unstubAllEnvs());
 
 it.effect("interrupts provider work when its active HTTP request is cancelled", () =>
   Effect.gen(function* () {
@@ -105,8 +107,8 @@ it.effect("cancels an active HTTP request without cancelling a shared initial re
     const reply = Schema.decodeSync(ClassificationReply)(yield* Effect.promise(() => remaining));
     expect(Result.isSuccess(reply)).toBe(true);
     if (Result.isSuccess(reply)) expect(reply.success.rows).toHaveLength(24);
-    // Both entry points share the two provider batches for this panel.
-    expect(calls).toBe(2);
+    // Both entry points share the four provider batches for this panel.
+    expect(calls).toBe(4);
     expect(interruptions).toBe(0);
   }),
 );

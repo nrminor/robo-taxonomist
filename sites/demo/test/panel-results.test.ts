@@ -175,10 +175,10 @@ it.effect("loads only requested panels, coalesces pending requests and reuses su
       const firstResult = yield* Fiber.join(first);
       expect(yield* Fiber.join(second)).toBe(firstResult);
       expect(yield* classifyPanel("broad")).toBe(firstResult);
-      // The public operation splits 24 records into two provider batches.
-      expect(calls).toBe(2);
-      yield* classifyPanel("focused");
+      // Four six-record batches stay within Clef's question limit for either panel size.
       expect(calls).toBe(4);
+      yield* classifyPanel("focused");
+      expect(calls).toBe(8);
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   }),
 );
@@ -214,9 +214,9 @@ it.effect("does not retain failures and permits an explicit same-panel retry", (
       expect(calls).toBe(1);
       const retried = yield* classifyPanel("broad");
       expect(retried.rows).toHaveLength(24);
-      expect(calls).toBe(3);
+      expect(calls).toBe(5);
       expect(yield* classifyPanel("broad")).toBe(retried);
-      expect(calls).toBe(3);
+      expect(calls).toBe(5);
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   }),
 );
@@ -270,9 +270,9 @@ it.effect(
         yield* Deferred.succeed(release, undefined);
         const retried = yield* classifyPanel("broad");
         expect(retried.rows).toHaveLength(24);
-        expect(calls).toBe(3);
+        expect(calls).toBe(5);
         expect(yield* classifyPanel("broad")).toBe(retried);
-        expect(calls).toBe(3);
+        expect(calls).toBe(5);
         expect(interruptions).toBe(1);
       }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
     }),

@@ -1,5 +1,5 @@
 import { Cache, Context, Duration, Effect, Exit, Layer, Schema } from "effect";
-import { RecordLabel, TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
+import { CollectionExecution, RecordLabel, TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
 import { PanelId, panels, records } from "../lib/catalog.ts";
 import { ClassificationFailure, MatchJudgment, PanelResponse } from "../lib/contract.ts";
 import { publicModelFailure } from "../lib/failures.ts";
@@ -11,6 +11,8 @@ const inputs = records.map((record) =>
     : { id: record.id, abundance: record.abundance, scientificName: TaxonName.make(record.name) },
 );
 
+const execution = CollectionExecution.make({ batchSize: 6, concurrency: 1 });
+
 const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
   const panel = panels.find((entry) => entry.id === panelId);
   if (panel === undefined)
@@ -19,7 +21,7 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
     (set, target) => TaxonSet.union(set, TaxonSet.of(TaxonName.make(target.name))),
     TaxonSet.empty(),
   );
-  const result = yield* Taxonomy.classifyRecords(inputs, taxonSet).pipe(
+  const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution }).pipe(
     Effect.mapError(publicModelFailure),
   );
   return yield* Schema.decodeUnknownEffect(PanelResponse)({
