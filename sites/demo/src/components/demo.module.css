@@ -1,0 +1,162 @@
+.body {
+  margin: 0;
+  color: #171717;
+  background: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  color-scheme: light;
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 40px 64px;
+}
+
+.shell ::selection {
+  color: #10234a;
+  background: #dbeafe;
+}
+.shell :focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 4px;
+}
+.shell h1,
+.shell h2,
+.shell h3 {
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.shell h1 {
+  margin: 48px 0 12px;
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+.shell h2 {
+  margin: 0 0 12px;
+  font-size: 1.5rem;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+}
+.shell h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 650;
+}
+.shell p {
+  max-width: 70ch;
+  margin: 8px 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e5e5;
+}
+.brand {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.header a {
+  color: #525252;
+  font-size: 0.85rem;
+  text-underline-offset: 4px;
+}
+.intro {
+  color: #404040;
+  font-size: 1rem;
+}
+.example {
+  color: #525252;
+  font-size: 0.85rem;
+}
+.panelControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 28px;
+}
+.panelControls button,
+.shell [role="alert"] button {
+  min-height: 44px;
+  padding: 9px 16px;
+  border: 1px solid #d4d4d4;
+  border-radius: 6px;
+  background: #fff;
+  color: #262626;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 550;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.panelControls button[aria-pressed="true"] {
+  color: #fff;
+  border-color: #171717;
+  background: #171717;
+}
+.panelDescription {
+  min-height: 24px;
+  padding: 4px 0 22px;
+  color: #525252;
+  font-size: 0.9rem;
+}
+.resultHeader {
+  padding: 24px 0;
+  border-top: 1px solid #e5e5e5;
+}
+.resultHeader p {
+  color: #404040;
+  font-size: 0.9rem;
+}
+.shell [role="status"] {
+  padding: 12px 0;
+  color: #525252;
+}
+.shell [role="alert"] {
+  margin: 16px 0;
+  padding: 16px 20px;
+  border: 1px solid #e5c7c7;
+  border-radius: 6px;
+  color: #7f1d1d;
+  background: #fffafa;
+}
+.shell [role="alert"] p {
+  margin: 0 0 8px;
+}
+
+@media (hover: hover) {
+  .panelControls button:not([aria-pressed="true"]):hover,
+  .shell [role="alert"] button:hover {
+    background: #f5f5f5;
+  }
+}
+
+@media (max-width: 960px) {
+  .shell {
+    padding: 20px 24px 48px;
+  }
+}
+
+@media (max-width: 480px) {
+  .shell {
+    padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
+  }
+  .shell h1 {
+    margin-top: 32px;
+  }
+  .panelControls {
+    gap: 6px;
+  }
+  .panelControls button {
+    flex: 1 1 auto;
+    padding: 9px 10px;
+    font-size: 0.82rem;
+  }
+}

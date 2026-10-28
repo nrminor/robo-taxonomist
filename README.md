@@ -70,3 +70,11 @@ const program = Effect.gen(function* () {
 // Supply the model at the application boundary and run the complete program.
 await Effect.runPromise(program.pipe(Effect.provide(DecisionModelLive), Effect.tap(Effect.log)));
 ```
+
+## Try the demo
+
+From a checkout of this repository, run `mise run bootstrap`, then `mise run demo:dev`. Open <http://127.0.0.1:3000>.
+
+Choose a panel to see how many of 24 synthetic records match a target and how those matches change between panels. The example uses fixed answers and does not call a model provider.
+
+Run `mise run demo:check` to check types, run tests, and build the site. `mise run check` also checks the demo.
