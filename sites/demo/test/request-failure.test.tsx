@@ -149,7 +149,7 @@ it.each([
       return;
     }
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("heading", { name: "Broad survey" })).toBeDefined();
+    expect(await screen.findByRole("region", { name: "Broad groups" })).toBeDefined();
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).toBeNull();
   },
@@ -217,7 +217,7 @@ it.each([
     const mockFetch = vi.fn<typeof globalThis.fetch>(response);
     await renderDemo(initial, mockFetch);
 
-    fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(message));
     expect(document.body.textContent).not.toContain("SECRET");
     expect(mockFetch).toHaveBeenCalledTimes(1);

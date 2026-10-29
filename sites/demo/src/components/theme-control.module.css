@@ -1,0 +1,29 @@
+.themeControl {
+  display: grid;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.themeSun,
+.themeMoon {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+:global(:root[data-theme="light"]) .themeSun,
+:global(:root[data-theme="dark"]) .themeMoon {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .themeControl:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+}

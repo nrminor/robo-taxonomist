@@ -42,22 +42,38 @@ const replyFor = (panelId: PanelId) =>
     ),
   );
 
+it("presents native panel choices beside a records-first workspace", async () => {
+  const fetch = vi.fn(() => Promise.reject(new Error("Unexpected browser request")));
+  await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
+  expect(screen.getByRole("heading", { name: "robo-taxonomist demo" })).toBeDefined();
+  const controls = screen.getByRole("complementary", { name: "Classification controls" });
+  expect(within(controls).getAllByRole("radio")).toHaveLength(3);
+  expect(within(controls).getByRole("radio", { name: "Broad groups" })).toHaveProperty(
+    "checked",
+    true,
+  );
+  const input = await screen.findByRole("region", { name: "Input records" });
+  const targets = screen.getByRole("region", { name: "Panel targets" });
+  expect(input.compareDocumentPosition(targets) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("accepts a panel selection while the initial result is pending and ignores its late reply", async () => {
   const initial = Promise.withResolvers<Schema.Json>();
   const pending = Promise.withResolvers<Response>();
   const fetch = vi.fn(() => pending.promise);
   await renderDemo(initial.promise, fetch);
 
-  fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   const nested = await replyFor("nested");
   await act(async () => pending.resolve(Response.json(nested)));
-  expect(await screen.findByRole("heading", { name: "Nested targets" })).toBeDefined();
+  expect(await screen.findByRole("region", { name: "Groups and subgroups" })).toBeDefined();
   expect(screen.getByText("12 of 24 records match a target.")).toBeDefined();
 
   const broad = await replyFor("broad");
   await act(async () => initial.resolve(broad));
-  expect(screen.getByRole("heading", { name: "Nested targets" })).toBeDefined();
+  expect(screen.getByRole("region", { name: "Groups and subgroups" })).toBeDefined();
   expect(screen.queryByText("22 of 24 records match a target.")).toBeNull();
   expect(screen.queryByText(/records changed/)).toBeNull();
 });
@@ -81,12 +97,12 @@ it("compares with the last displayed panel and keeps that comparison stable in S
   const initial = Promise.resolve(await replyFor("broad"));
   await renderDemo(initial, fetch);
 
-  fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
   expect(screen.getByText("22 of 24 records match a target.")).toBeDefined();
   const nested = await replyFor("nested");
   await act(async () => pending.resolve(Response.json(nested)));
   expect(
-    await screen.findByText("Matches changed for 19 records since Broad survey."),
+    await screen.findByText("Matches changed for 19 records since Broad groups."),
   ).toBeDefined();
   expect(screen.getByText("12 of 24 records match a target.")).toBeDefined();
 });
@@ -143,11 +159,11 @@ it("compares C with committed A, not successful B abandoned by Suspense", async 
   expect(screen.getByText("Candidate suspended")).toBeDefined();
   expect(reachedGate).toHaveBeenCalledWith(true);
   expect(committedGate).not.toHaveBeenCalledWith(true);
-  expect(screen.queryByRole("heading", { name: "Nested targets" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Groups and subgroups" })).toBeNull();
 
   await act(async () => view.rerender(tree(focused, false)));
-  expect(await screen.findByRole("heading", { name: "Focused interests" })).toBeDefined();
-  expect(screen.getByText(/records since Broad survey\./)).toBeDefined();
+  expect(await screen.findByRole("region", { name: "Families, genera and species" })).toBeDefined();
+  expect(screen.getByText(/records since Broad groups\./)).toBeDefined();
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -201,9 +217,9 @@ it("ignores superseded replies when Broad survey is selected again before the in
     .mockReturnValueOnce(latest.promise);
   await renderDemo(initial.promise, fetch);
 
-  fireEvent.click(screen.getByRole("button", { name: "Focused interests" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Families, genera and species" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole("button", { name: "Broad survey" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Broad groups" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
   const broad = await replyFor("broad");
@@ -215,8 +231,8 @@ it("ignores superseded replies when Broad survey is selected again before the in
     first.resolve(Response.json(focused));
     initial.resolve(broad);
   });
-  expect(screen.getByRole("heading", { name: "Broad survey" })).toBeDefined();
-  expect(screen.queryByRole("heading", { name: "Focused interests" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Broad groups" })).toBeDefined();
+  expect(screen.queryByRole("region", { name: "Families, genera and species" })).toBeNull();
   expect(screen.queryByText(/Matches changed/)).toBeNull();
 });
 
@@ -237,18 +253,18 @@ it("keeps the displayed matches and their comparison after failure, then compare
     .mockImplementationOnce(() => Promise.resolve(Response.json(failure, { status: 503 })))
     .mockImplementationOnce(() => Promise.resolve(Response.json(focused)));
   await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
-  fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
-  await screen.findByText("Matches changed for 19 records since Broad survey.");
+  fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
+  await screen.findByText("Matches changed for 19 records since Broad groups.");
 
-  fireEvent.click(screen.getByRole("button", { name: "Focused interests" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Families, genera and species" }));
   await screen.findByText("Wait 30 seconds before you try again.");
-  expect(screen.getByRole("heading", { name: "Nested targets" })).toBeDefined();
-  expect(screen.getByText("Matches changed for 19 records since Broad survey.")).toBeDefined();
+  expect(screen.getByRole("region", { name: "Groups and subgroups" })).toBeDefined();
+  expect(screen.getByText("Matches changed for 19 records since Broad groups.")).toBeDefined();
   expect(fetch).toHaveBeenCalledTimes(2);
 
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(
-    await screen.findByText("Matches changed for 18 records since Nested targets."),
+    await screen.findByText("Matches changed for 18 records since Groups and subgroups."),
   ).toBeDefined();
   expect(screen.getByText("13 of 24 records match a target.")).toBeDefined();
   expect(screen.queryByRole("alert")).toBeNull();
@@ -264,11 +280,17 @@ it("does not count a support-only change as a change in matches", async () => {
     })),
   }));
   const wire = Schema.encodeSync(ClassificationReply)(revised);
-  const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(wire)));
+  const pending = Promise.withResolvers<Response>();
+  const fetch = vi
+    .fn()
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValueOnce(Response.json(wire));
   await renderDemo(Promise.resolve(original), fetch);
-  fireEvent.click(screen.getByRole("button", { name: "Broad survey" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("radio", { name: "Broad groups" }));
   expect(
-    await screen.findByText("Matches changed for 0 records since Broad survey."),
+    await screen.findByText("Matches changed for 0 records since Broad groups."),
   ).toBeDefined();
   expect(screen.getByText("22 of 24 records match a target.")).toBeDefined();
 });
@@ -281,20 +303,20 @@ it("does not report a superseded failure", async () => {
     .mockReturnValueOnce(earlier.promise)
     .mockImplementationOnce(() => Promise.resolve(Response.json(focused)));
   await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
-  fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole("button", { name: "Focused interests" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Families, genera and species" }));
   await screen.findByText("13 of 24 records match a target.");
   await act(async () => earlier.reject(new Error("Superseded request failed")));
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("heading", { name: "Focused interests" })).toBeDefined();
+  expect(screen.getByRole("region", { name: "Families, genera and species" })).toBeDefined();
 });
 
 it("interrupts an unfinished request when its registry is disposed", async () => {
   const pending = Promise.withResolvers<Response>();
   const fetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);
   await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
-  fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   vi.useFakeTimers();
   try {
@@ -320,9 +342,9 @@ it.each([
       Promise.resolve(Response.json(reply, { status })),
     );
     await renderDemo(Promise.resolve(broad), fetch);
-    fireEvent.click(screen.getByRole("button", { name: "Nested targets" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
     expect(await screen.findByText("Could not read the reply. Try again.")).toBeDefined();
-    expect(screen.getByRole("heading", { name: "Broad survey" })).toBeDefined();
+    expect(screen.getByRole("region", { name: "Broad groups" })).toBeDefined();
     expect(screen.queryByText(/Matches changed/)).toBeNull();
   },
 );

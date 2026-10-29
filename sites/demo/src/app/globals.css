@@ -1,0 +1,130 @@
+@layer reset, theme, base;
+
+@layer reset {
+  :where(*, *::before, *::after) {
+    box-sizing: border-box;
+  }
+
+  :where(body, h1, h2, h3, h4, h5, h6, p, figure) {
+    margin: 0;
+  }
+}
+
+@layer theme {
+  :root {
+    color-scheme: light;
+    --color-page: #fff;
+    --color-surface: #f7f8fa;
+    --color-record-surface: #eeeff2;
+    --color-control-surface: #fff;
+    --color-text: #252a30;
+    --color-text-muted: #626b75;
+    --color-border: #e1e4e8;
+    --color-control-border: #ccd1d7;
+    --color-hover: #e7e9ed;
+    --color-bar: #2563eb;
+    --color-grid: #e9ecf0;
+    --color-selected-record: #087e79;
+    --color-selected-record-surface: #e4f3ef;
+    --color-focus: #4b596a;
+    --color-tooltip-surface: #29313b;
+    --color-tooltip-text: #fff;
+    --color-scroll-thumb: #b8bfc7;
+    --color-matched: #166534;
+    --color-unmatched: #b91c1c;
+    --color-uncertain: #92400e;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --color-page: #171b20;
+    --color-surface: #1e232a;
+    --color-record-surface: #15191e;
+    --color-control-surface: #303740;
+    --color-text: #e7ebef;
+    --color-text-muted: #abb4be;
+    --color-border: #343c46;
+    --color-control-border: #59636f;
+    --color-hover: #29313a;
+    --color-bar: #7aa8ff;
+    --color-grid: #303842;
+    --color-selected-record: #50c7bb;
+    --color-selected-record-surface: #203d3b;
+    --color-focus: #becbd9;
+    --color-tooltip-surface: #e2e8ee;
+    --color-tooltip-text: #1c2229;
+    --color-scroll-thumb: #59636f;
+    --color-matched: #86efac;
+    --color-unmatched: #fca5a5;
+    --color-uncertain: #fcd34d;
+  }
+}
+
+@layer base {
+  :where(body) {
+    background: var(--color-page);
+    color: var(--color-text);
+    font:
+      14px/1.45 -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :where(h1) {
+    font-size: 27px;
+    font-weight: 620;
+    letter-spacing: -0.035em;
+    line-height: 1.2;
+  }
+
+  :where(h2) {
+    font-size: 17px;
+    font-weight: 620;
+    letter-spacing: -0.02em;
+  }
+
+  :where(h3) {
+    font-size: 14px;
+  }
+
+  :where(button, input, select, textarea) {
+    font: inherit;
+  }
+
+  :where(button) {
+    color: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  :where(input, select) {
+    touch-action: manipulation;
+  }
+
+  :where(button:disabled, input:disabled, select:disabled) {
+    cursor: default;
+  }
+
+  :where(:focus-visible) {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background: var(--color-text);
+    color: var(--color-page);
+  }
+
+  :where(*) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scroll-thumb) var(--color-surface);
+  }
+
+  @media (max-width: 759px) {
+    :where(h1) {
+      font-size: 25px;
+    }
+  }
+}

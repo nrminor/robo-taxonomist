@@ -1,0 +1,41 @@
+.panelChoices {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.panelChoices legend {
+  padding: 0;
+  margin-block-end: 9px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.panelChoice {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 10px;
+  min-block-size: 44px;
+  padding-block: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.panelChoice input {
+  inline-size: 16px;
+  block-size: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--color-text);
+  cursor: pointer;
+}
+
+.choiceDescription {
+  display: block;
+  margin-block-start: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}

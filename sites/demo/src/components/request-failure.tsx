@@ -11,6 +11,7 @@ import {
   selectPanelAtom,
 } from "../client/panel-atoms.ts";
 import { PublicModelReason } from "../lib/contract.ts";
+import styles from "./request-failure.module.css";
 
 const authenticationMessages = {
   InvalidKey: "Set a valid API key, then try again.",
@@ -144,11 +145,12 @@ export function RequestFailureView({ error }: { readonly error: RequestFailure }
   });
 
   return (
-    <aside role="alert">
+    <aside role="alert" className={styles.failure}>
       <p>{details.message}</p>
       {details.requestId !== undefined && <p>Request ID: {details.requestId}</p>}
       {details.retry && (
         <Button
+          className={styles.retry}
           onClick={() => {
             const panelId = selectedPanelId(selection);
             choose(Selection.cases.Panel.make({ panelId }));

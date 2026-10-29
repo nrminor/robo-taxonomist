@@ -6,6 +6,7 @@ export default defineConfig({
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     allowOnly: false,
     environment: "jsdom",
+    setupFiles: ["./test/setup.ts"],
     restoreMocks: true,
   },
 });

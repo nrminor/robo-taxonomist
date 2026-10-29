@@ -61,8 +61,8 @@ export const panels: ReadonlyArray<{
 }> = [
   {
     id: "broad",
-    name: "Broad survey",
-    description: "Classify each record within six broad groups.",
+    name: "Broad groups",
+    description: "Fungi, Lactobacillaceae and Archaea.",
     targets: [
       fungi,
       lactobacillaceae,
@@ -74,8 +74,8 @@ export const panels: ReadonlyArray<{
   },
   {
     id: "focused",
-    name: "Focused interests",
-    description: "Look for selected genera and species. Some records will not match.",
+    name: "Families, genera and species",
+    description: "Acetobacteraceae, Saccharomyces and Kluyveromyces lactis.",
     targets: [
       saccharomyces,
       target("Kluyveromyces lactis", "species"),
@@ -91,8 +91,8 @@ export const panels: ReadonlyArray<{
   },
   {
     id: "nested",
-    name: "Nested targets",
-    description: "Match records to broad groups and the taxa within them.",
+    name: "Groups and subgroups",
+    description: "Fungi, Saccharomyces and Saccharomyces cerevisiae in the same lineage.",
     targets: [
       fungi,
       target("Saccharomycetaceae", "family"),
