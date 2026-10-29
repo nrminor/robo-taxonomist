@@ -89,6 +89,19 @@ it("shows the initial matches without sending another classification request", a
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it("does not invent a comparison when an ancestor rerenders the same initial reply", async () => {
+  const initial = Promise.resolve(await replyFor("broad"));
+  const tree = () => (
+    <RegistryProvider>
+      <Demo initial={initial} />
+    </RegistryProvider>
+  );
+  const view = await renderBrowser(tree());
+  await expect.element(view.getByText("22 of 24 records match a target.")).toBeVisible();
+  await view.rerender(tree());
+  await expect.element(view.getByText(/Matches changed/)).not.toBeInTheDocument();
+});
+
 it("compares with the last displayed panel and keeps that comparison stable in Strict Mode", async () => {
   const pending = Promise.withResolvers<Response>();
   const fetch = vi.fn(() => pending.promise);
@@ -103,6 +116,61 @@ it("compares with the last displayed panel and keeps that comparison stable in S
     .element(page.getByText("Matches changed for 19 records since Broad groups."))
     .toBeVisible();
   await expect.element(page.getByText("12 of 24 records match a target.")).toBeVisible();
+});
+
+it("preserves the record list and open answer disclosure through the first panel request", async () => {
+  const pending = Promise.withResolvers<Response>();
+  const view = await renderDemo(Promise.resolve(await replyFor("broad")), () => pending.promise);
+  const row = view.getByRole("button", { name: /^Saccharomyces cerevisiae, / });
+  await row.click();
+  const fungi = view.getByRole("group", { name: "Fungi", exact: true });
+  await fungi.getByText("Answer probabilities", { exact: true }).click();
+  const originalRow = row.element();
+  const disclosure = fungi
+    .getByText("Answer probabilities", { exact: true })
+    .element().parentElement;
+  const scroller = view.getByLabelText("Sample records and selected-record matches").element();
+  const scrollTop = scroller.scrollTop;
+
+  await view.getByRole("radio", { name: "Groups and subgroups" }).click();
+  expect(row.element()).toBe(originalRow);
+  expect(disclosure).toHaveProperty("open", true);
+  expect(scroller.scrollTop).toBe(scrollTop);
+
+  pending.resolve(Response.json(await replyFor("nested")));
+  await expect.element(view.getByText("12 of 24 records match a target.")).toBeVisible();
+  expect(row.element()).toBe(originalRow);
+  expect(fungi.getByText("Answer probabilities", { exact: true }).element().parentElement).toBe(
+    disclosure,
+  );
+  expect(disclosure).toHaveProperty("open", true);
+  expect(scroller.scrollTop).toBe(scrollTop);
+});
+
+it("keeps the target workspace in place while a request is pending and after it fails", async () => {
+  const pending = Promise.withResolvers<Response>();
+  const view = await renderDemo(Promise.resolve(await replyFor("broad")), () => pending.promise);
+  const targets = view.getByRole("region", { name: "Panel targets" });
+  await expect.element(targets).toBeVisible();
+  const top = targets.element().getBoundingClientRect().top;
+  await view.getByRole("radio", { name: "Families, genera and species" }).click();
+  expect(targets.element().getBoundingClientRect().top).toBe(top);
+  pending.resolve(
+    Response.json(
+      Schema.encodeSync(ClassificationReply)(
+        Result.fail(
+          ClassificationFailure.cases.ModelFailure.make({
+            reason: PublicModelReason.cases.RateLimitError.make({}),
+            retryable: true,
+          }),
+        ),
+      ),
+      { status: 503 },
+    ),
+  );
+  await expect.element(view.getByRole("alert")).toMatchTextContent("Wait before you try again.");
+  expect(targets.element().getBoundingClientRect().top).toBe(top);
+  await expect.element(view.getByText("22 of 24 records match a target.")).toBeVisible();
 });
 
 it("compares C with committed A, not successful B abandoned by Suspense", async () => {

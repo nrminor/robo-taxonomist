@@ -1,15 +1,8 @@
 "use client";
 
 import { Button } from "@base-ui/react/button";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { DateTime } from "effect";
-import {
-  RequestFailure,
-  selectedPanelId,
-  selectionAtom,
-  Selection,
-  selectPanelAtom,
-} from "../client/panel-atoms.ts";
+import { RequestFailure } from "../client/panel-atoms.ts";
 import { PublicModelReason } from "../lib/contract.ts";
 import styles from "./request-failure.module.css";
 
@@ -21,10 +14,17 @@ const authenticationMessages = {
   Unknown: "Check the API key and its permissions, then try again.",
 } satisfies Record<(typeof PublicModelReason.cases.AuthenticationError.Type)["kind"], string>;
 
-export function RequestFailureView({ error }: { readonly error: RequestFailure }) {
-  const selection = useAtomValue(selectionAtom);
-  const choose = useAtomSet(selectionAtom);
-  const run = useAtomSet(selectPanelAtom);
+export function RequestFailureView({
+  error,
+  context,
+  pending,
+  onRetry,
+}: {
+  readonly error: RequestFailure;
+  readonly context: string;
+  readonly pending?: string | undefined;
+  readonly onRetry: () => void;
+}) {
   const details: {
     readonly message: string;
     readonly retry: boolean;
@@ -145,21 +145,30 @@ export function RequestFailureView({ error }: { readonly error: RequestFailure }
   });
 
   return (
-    <aside role="alert" className={styles.failure}>
-      <p>{details.message}</p>
-      {details.requestId !== undefined && <p>Request ID: {details.requestId}</p>}
-      {details.retry && (
-        <Button
-          className={styles.retry}
-          onClick={() => {
-            const panelId = selectedPanelId(selection);
-            choose(Selection.cases.Panel.make({ panelId }));
-            run(panelId);
-          }}
-        >
-          Try again
-        </Button>
-      )}
-    </aside>
+    <div className={styles.failure} role={pending === undefined ? "alert" : undefined}>
+      <p aria-hidden={pending !== undefined}>{pending ?? context}</p>
+      <details open>
+        <summary>Request details</summary>
+        <div className={styles.details}>
+          {pending === undefined && (
+            <>
+              <p className={styles.message}>{details.message}</p>
+              {details.requestId !== undefined && <p>Request ID: {details.requestId}</p>}
+            </>
+          )}
+          {details.retry && (
+            <Button
+              className={styles.retry}
+              aria-disabled={pending !== undefined}
+              onClick={() => {
+                if (pending === undefined) onRetry();
+              }}
+            >
+              Try again
+            </Button>
+          )}
+        </div>
+      </details>
+    </div>
   );
 }
