@@ -36,6 +36,9 @@ jobs:
       - name: Install locked dependencies
         run: mise run bootstrap
 
+      - name: Install browser test dependencies
+        run: mise run demo:browser:install
+
       - name: Check source and tooling
         run: mise run check
 

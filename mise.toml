@@ -24,3 +24,4 @@ knip = { description = "Check unused code and dependencies", run = "pnpm run kni
 "demo:dev" = { description = "Run the demo locally with supplied answers", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo dev" }
 "demo:check" = { description = "Check and build the demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo check" }
 "demo:test" = { description = "Test the demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo test" }
+"demo:browser:install" = { description = "Install Chromium and its system dependencies for browser tests", run = "pnpm --filter @robo-taxonomist/demo exec playwright install --with-deps chromium" }

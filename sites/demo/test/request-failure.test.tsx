@@ -1,5 +1,6 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { render } from "vitest-browser-react";
+import { page } from "vitest/browser";
 import { RegistryProvider } from "@effect/atom-react";
 import { StrictMode } from "react";
 import { DateTime, Effect, Layer, Result, Schema } from "effect";
@@ -10,25 +11,22 @@ import { browserRuntime } from "../src/client/panel-atoms.ts";
 import {
   ClassificationFailure,
   ClassificationReply,
+  ClassifyRequest,
   PublicModelReason,
 } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
-
-afterEach(cleanup);
 
 const renderDemo = async (initial: Schema.Json, mockFetch: typeof globalThis.fetch) => {
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, mockFetch)),
   );
-  await act(async () => {
-    render(
-      <StrictMode>
-        <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
-          <Demo initial={Promise.resolve(initial)} />
-        </RegistryProvider>
-      </StrictMode>,
-    );
-  });
+  return render(
+    <StrictMode>
+      <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
+        <Demo initial={Promise.resolve(initial)} />
+      </RegistryProvider>
+    </StrictMode>,
+  );
 };
 
 const failedReply = (failure: ClassificationFailure) =>
@@ -45,20 +43,24 @@ it("waits for an explicit retry after showing the initial rate limit and sends t
   const mockFetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(initial)));
   await renderDemo(initial, mockFetch);
 
-  expect((await screen.findByRole("alert")).textContent).toContain(
-    "Wait 30 seconds before you try again.",
-  );
-  expect(screen.getByText("Request ID: req-rate-limit")).toBeDefined();
+  await expect
+    .element(page.getByRole("alert"))
+    .toMatchTextContent("Wait 30 seconds before you try again.");
+  await expect.element(page.getByText("Request ID: req-rate-limit")).toBeVisible();
   expect(mockFetch).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-  await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect.poll(() => mockFetch.mock.calls.length).toBe(1);
   const call = mockFetch.mock.calls[0];
   if (call === undefined) throw new Error("Expected a classification request");
   const [url, init] = call;
   const requestUrl = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
   expect(requestUrl).toContain("/api/classify");
   expect(init?.method).toBe("POST");
-  expect(await new Response(init?.body).json()).toEqual({ panelId: "broad" });
+  expect(
+    Schema.decodeSync(Schema.fromJsonString(ClassifyRequest))(
+      await new Response(init?.body).text(),
+    ),
+  ).toEqual({ panelId: "broad" });
 });
 
 it.each([
@@ -75,14 +77,12 @@ it.each([
       requestId: "req-auth",
     }),
   );
-  const mockFetch = vi.fn<typeof globalThis.fetch>(() =>
-    Promise.reject(new Error("Unexpected request")),
-  );
+  const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(initial, mockFetch);
 
-  expect((await screen.findByRole("alert")).textContent).toContain(message);
-  expect(screen.getByText("Request ID: req-auth")).toBeDefined();
-  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  await expect.element(page.getByRole("alert")).toMatchTextContent(message);
+  await expect.element(page.getByText("Request ID: req-auth")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   expect(mockFetch).not.toHaveBeenCalled();
 });
 
@@ -95,15 +95,13 @@ it("shows the quota reset time without offering a request that cannot succeed ye
       retryable: true,
     }),
   );
-  const mockFetch = vi.fn<typeof globalThis.fetch>(() =>
-    Promise.reject(new Error("Unexpected request")),
-  );
+  const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(initial, mockFetch);
 
-  expect((await screen.findByRole("alert")).textContent).toContain(
-    "Wait until 2026-10-29T00:00:00.000Z",
-  );
-  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  await expect
+    .element(page.getByRole("alert"))
+    .toMatchTextContent("Wait until 2026-10-29T00:00:00.000Z");
+  await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   expect(mockFetch).not.toHaveBeenCalled();
 });
 
@@ -139,33 +137,31 @@ it.each([
       classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
     );
     const success = Schema.encodeSync(ClassificationReply)(Result.succeed(broad));
-    const mockFetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(success)));
+    const mockFetch = vi.fn(() => Promise.resolve(Response.json(success)));
     await renderDemo(initial, mockFetch);
 
-    expect((await screen.findByRole("alert")).textContent).toContain(message);
+    await expect.element(page.getByRole("alert")).toMatchTextContent(message);
     expect(mockFetch).not.toHaveBeenCalled();
     if (!offersRetry) {
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
       return;
     }
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("region", { name: "Broad groups" })).toBeDefined();
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect.element(page.getByRole("region", { name: "Broad groups" })).toBeVisible();
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("alert")).toBeNull();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
   },
 );
 
 it("shows safe reply guidance for malformed initial data rather than exposing its contents", async () => {
-  const mockFetch = vi.fn<typeof globalThis.fetch>(() =>
-    Promise.reject(new Error("Unexpected request")),
-  );
+  const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo({ invalid: "SECRET raw schema issues" }, mockFetch);
 
-  expect((await screen.findByRole("alert")).textContent).toContain(
-    "Could not read the reply. Try again.",
-  );
-  expect(document.body.textContent).not.toContain("SECRET");
-  expect(screen.getByRole("button", { name: "Try again" })).toBeDefined();
+  await expect
+    .element(page.getByRole("alert"))
+    .toMatchTextContent("Could not read the reply. Try again.");
+  await expect.element(page.getByText(/SECRET/)).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(mockFetch).not.toHaveBeenCalled();
 });
 
@@ -179,15 +175,13 @@ it("does not display an invalid authentication kind from a malformed reply", asy
   const invalid = Schema.decodeSync(Schema.fromJsonString(Schema.Json))(
     JSON.stringify(valid).replace('"InvalidKey"', '"SECRET invalid authentication kind"'),
   );
-  const mockFetch = vi.fn<typeof globalThis.fetch>(() =>
-    Promise.reject(new Error("Unexpected request")),
-  );
+  const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(invalid, mockFetch);
 
-  expect((await screen.findByRole("alert")).textContent).toContain(
-    "Could not read the reply. Try again.",
-  );
-  expect(document.body.textContent).not.toContain("SECRET");
+  await expect
+    .element(page.getByRole("alert"))
+    .toMatchTextContent("Could not read the reply. Try again.");
+  await expect.element(page.getByText(/SECRET/)).not.toBeInTheDocument();
   expect(mockFetch).not.toHaveBeenCalled();
 });
 
@@ -217,14 +211,19 @@ it.each([
     const mockFetch = vi.fn<typeof globalThis.fetch>(response);
     await renderDemo(initial, mockFetch);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Groups and subgroups" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(message));
-    expect(document.body.textContent).not.toContain("SECRET");
+    await page.getByRole("radio", { name: "Groups and subgroups" }).click();
+    await expect.element(page.getByRole("alert")).toMatchTextContent(message);
+    await expect.element(page.getByText(/SECRET/)).not.toBeInTheDocument();
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
-    expect(await new Response(mockFetch.mock.calls[1]?.[1]?.body).json()).toEqual({
-      panelId: "nested",
-    });
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => mockFetch.mock.calls.length).toBe(2);
+    const retry = mockFetch.mock.calls[1];
+    if (retry === undefined) throw new Error("Expected a retry request");
+    expect(retry[1]?.method).toBe("POST");
+    expect(
+      Schema.decodeSync(Schema.fromJsonString(ClassifyRequest))(
+        await new Response(retry[1]?.body).text(),
+      ),
+    ).toEqual({ panelId: "nested" });
   },
 );

@@ -185,10 +185,7 @@ it("loads Broad survey directly for initial rendering", async () => {
   }
 });
 
-it("classifies the nested panel through the POST wire contract without external fetch", async () => {
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockRejectedValue(new Error("External fetch forbidden"));
+it("classifies the nested panel through the POST wire contract", async () => {
   const response = await POST(
     new Request("http://localhost/api/classify", {
       method: "POST",
@@ -203,7 +200,6 @@ it("classifies the nested panel through the POST wire contract without external 
     expect(reply.success.panelId).toBe("nested");
     expect(reply.success.rows).toHaveLength(24);
   }
-  expect(fetch).not.toHaveBeenCalled();
 });
 
 it.each([

@@ -78,3 +78,5 @@ From a checkout of this repository, run `mise run bootstrap`, then `mise run dem
 Choose a panel to see which taxa match each of 24 synthetic records. Select a record to inspect its matches, or compare how much abundance matches each target. A record can match more than one target. The example uses fixed answers and does not call a model provider.
 
 Run `mise run demo:check` to check types, run tests, and build the site. `mise run check` also checks the demo.
+
+UI tests run in Chromium through Vitest's Playwright provider; service and HTTP tests run in Node with Effect. Before running checks on a new machine, run `mise run demo:browser:install` after `mise run bootstrap`. This installs the browser revision pinned by Playwright and its system dependencies; Linux may require elevated privileges for the system packages.

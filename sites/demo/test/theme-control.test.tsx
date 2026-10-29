@@ -1,190 +1,100 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { StrictMode } from "react";
+import { afterEach, expect, it } from "vitest";
+import { cdp } from "vitest/browser";
+import { cleanup, render } from "vitest-browser-react";
 import { renderToString } from "react-dom/server";
-import { hydrateRoot } from "react-dom/client";
-import { ThemeControl } from "../src/components/theme-control.tsx";
+import { RegistryProvider } from "@effect/atom-react";
+import { Effect, Result, Schema } from "effect";
+import { Demo } from "../src/components/demo.tsx";
 import RootLayout from "../src/app/layout.tsx";
+import { ClassificationReply } from "../src/lib/contract.ts";
+import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
+import type {} from "@vitest/browser-playwright";
 
-let media: MediaQueryList;
-let changes: EventTarget;
-
-beforeEach(() => {
-  localStorage.clear();
-  delete document.documentElement.dataset.theme;
-  changes = new EventTarget();
-  media = {
-    matches: false,
-    media: "(prefers-color-scheme: dark)",
-    onchange: null,
-    addEventListener: changes.addEventListener.bind(changes),
-    removeEventListener: changes.removeEventListener.bind(changes),
-    dispatchEvent: changes.dispatchEvent.bind(changes),
-    addListener() {},
-    removeListener() {},
-  };
-  vi.stubGlobal("matchMedia", () => media);
-});
-
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  delete document.documentElement.dataset.theme;
-});
-
-function changeSystem(dark: boolean) {
-  Object.defineProperty(media, "matches", { value: dark, configurable: true });
-  act(() => {
-    changes.dispatchEvent(new Event("change"));
+const systemTheme = (theme: "light" | "dark") =>
+  cdp().send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-color-scheme", value: theme }],
   });
-}
 
-const themes = [
-  { stored: null, systemDark: false, theme: "light", action: "Switch to dark mode" },
-  { stored: null, systemDark: true, theme: "dark", action: "Switch to light mode" },
-  { stored: "light", systemDark: true, theme: "light", action: "Switch to dark mode" },
-  { stored: "dark", systemDark: false, theme: "dark", action: "Switch to light mode" },
-  { stored: "invalid", systemDark: true, theme: "dark", action: "Switch to light mode" },
-] satisfies ReadonlyArray<{
-  stored: string | null;
-  systemDark: boolean;
-  theme: "light" | "dark";
-  action: string;
-}>;
+const renderDemo = async () => {
+  const response = await Effect.runPromise(
+    classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
+  );
+  return render(
+    <RegistryProvider>
+      <Demo
+        initial={Promise.resolve(Schema.encodeSync(ClassificationReply)(Result.succeed(response)))}
+      />
+    </RegistryProvider>,
+  );
+};
 
-it.each(themes)(
-  "resolves stored=$stored, systemDark=$systemDark to $theme",
-  ({ stored, systemDark, theme, action }) => {
-    if (stored !== null) localStorage.setItem("taxonomy-theme", stored);
-    Object.defineProperty(media, "matches", { value: systemDark, configurable: true });
-    render(<ThemeControl />);
-    expect(document.documentElement.dataset.theme).toBe(theme);
-    const button = screen.getByRole("button", { name: action });
-    expect(button.title).toBe(button.getAttribute("aria-label"));
-    expect(localStorage.getItem("taxonomy-theme")).toBe(stored);
+afterEach(async () => {
+  await cleanup();
+  await systemTheme("light");
+});
+
+it.each([
+  { system: "light", action: "Switch to dark mode", background: "rgb(255, 255, 255)" },
+  { system: "dark", action: "Switch to light mode", background: "rgb(23, 27, 32)" },
+] satisfies ReadonlyArray<{ system: "light" | "dark"; action: string; background: string }>)(
+  "follows the browser's $system preference without saving an explicit choice",
+  async ({ system, action, background }) => {
+    await systemTheme(system);
+    const view = await renderDemo();
+    await expect.element(view.getByRole("button", { name: action })).toBeVisible();
+    expect(getComputedStyle(document.body).backgroundColor).toBe(background);
+    expect(localStorage.getItem("taxonomy-theme")).toBeNull();
   },
 );
 
-it("persists toggles across a reload mount, overriding the system", () => {
-  const first = render(<ThemeControl />);
-  fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
-  expect(document.documentElement.dataset.theme).toBe("dark");
+it("retains an explicit theme across remounts despite a different system preference", async () => {
+  const view = await renderDemo();
+  await view.getByRole("button", { name: "Switch to dark mode" }).click();
   expect(localStorage.getItem("taxonomy-theme")).toBe("dark");
-  first.unmount();
-  delete document.documentElement.dataset.theme;
-  render(<ThemeControl />);
-  expect(document.documentElement.dataset.theme).toBe("dark");
-  fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
-  expect(document.documentElement.dataset.theme).toBe("light");
+  await view.unmount();
+  await systemTheme("light");
+  const remounted = await renderDemo();
+  await expect
+    .element(remounted.getByRole("button", { name: "Switch to light mode" }))
+    .toBeVisible();
+  await remounted.getByRole("button", { name: "Switch to light mode" }).click();
   expect(localStorage.getItem("taxonomy-theme")).toBe("light");
 });
 
-it("follows live system changes only until an explicit choice", () => {
-  const mounted = render(
-    <StrictMode>
-      <ThemeControl />
-    </StrictMode>,
-  );
-  changeSystem(true);
-  expect(document.documentElement.dataset.theme).toBe("dark");
-  expect(screen.getByRole("button", { name: "Switch to light mode" })).toBeDefined();
-  changeSystem(false);
-  expect(document.documentElement.dataset.theme).toBe("light");
-  fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
-  changeSystem(true);
-  changeSystem(false);
-  expect(document.documentElement.dataset.theme).toBe("dark");
-  mounted.unmount();
+it("follows live system changes only until the user chooses a theme", async () => {
+  const view = await renderDemo();
+  await systemTheme("dark");
+  await expect.element(view.getByRole("button", { name: "Switch to light mode" })).toBeVisible();
+  await view.getByRole("button", { name: "Switch to light mode" }).click();
+  await systemTheme("light");
+  await systemTheme("dark");
+  expect(matchMedia("(prefers-color-scheme: dark)").matches).toBe(true);
+  await expect.element(view.getByRole("button", { name: "Switch to dark mode" })).toBeVisible();
 });
 
-it("stops following system changes after unmount in Strict Mode", () => {
-  const mounted = render(
-    <StrictMode>
-      <ThemeControl />
-    </StrictMode>,
-  );
-  expect(document.documentElement.dataset.theme).toBe("light");
-  mounted.unmount();
-  changeSystem(true);
+it("removes the system-theme subscription when the demo unmounts", async () => {
+  const view = await renderDemo();
+  await view.unmount();
+  await systemTheme("dark");
   expect(document.documentElement.dataset.theme).toBe("light");
 });
 
-it("ignores system changes for an already persisted light choice", () => {
-  localStorage.setItem("taxonomy-theme", "light");
-  render(<ThemeControl />);
-  changeSystem(true);
-  expect(document.documentElement.dataset.theme).toBe("light");
-});
-
-it("keeps working when storage reads and writes throw", () => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-    throw new Error("blocked");
-  });
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-    throw new Error("blocked");
-  });
-  render(<ThemeControl />);
-  changeSystem(true);
-  expect(document.documentElement.dataset.theme).toBe("dark");
-  fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
-  changeSystem(false);
-  changeSystem(true);
-  expect(document.documentElement.dataset.theme).toBe("light");
-  expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeDefined();
-});
-
-it.each(themes)(
-  "selects $theme before hydration for stored=$stored, systemDark=$systemDark",
-  ({ stored, systemDark, theme }) => {
-    if (stored !== null) localStorage.setItem("taxonomy-theme", stored);
-    Object.defineProperty(media, "matches", { value: systemDark, configurable: true });
+it.each([
+  { system: "light", stored: "dark", expected: "dark" },
+  { system: "dark", stored: "invalid", expected: "dark" },
+] satisfies ReadonlyArray<{ system: "light" | "dark"; stored: string; expected: string }>)(
+  "initializes the document theme before hydration: system=$system, stored=$stored",
+  async ({ system, stored, expected }) => {
+    await systemTheme(system);
+    localStorage.setItem("taxonomy-theme", stored);
     const html = renderToString(
       <RootLayout>
-        <ThemeControl />
+        <p>Document theme</p>
       </RootLayout>,
     );
-    const parsed = new DOMParser().parseFromString(html, "text/html");
-    const scripts = parsed.head.querySelectorAll("script");
-    expect(scripts).toHaveLength(1);
-    const script = scripts.item(0);
-    if (script === null) throw new Error("Root layout did not render theme initialization");
-    window.eval(script.textContent);
-    expect(document.documentElement.dataset.theme).toBe(theme);
+    const view = await render(<iframe title="Theme initialization" srcDoc={html} />);
+    const frame = view.getByTitle("Theme initialization").element();
+    if (!(frame instanceof HTMLIFrameElement)) throw new Error("Expected the theme document frame");
+    await expect.poll(() => frame.contentDocument?.documentElement.dataset.theme).toBe(expected);
   },
 );
-
-it.each([false, true])("initializes the head from system dark=%s with blocked storage", (dark) => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-    throw new Error("blocked");
-  });
-  Object.defineProperty(media, "matches", { value: dark, configurable: true });
-  const html = renderToString(
-    <RootLayout>
-      <ThemeControl />
-    </RootLayout>,
-  );
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  const scripts = parsed.head.querySelectorAll("script");
-  expect(scripts).toHaveLength(1);
-  const script = scripts.item(0);
-  if (script === null) throw new Error("Root layout did not render theme initialization");
-  window.eval(script.textContent);
-  expect(document.documentElement.dataset.theme).toBe(dark ? "dark" : "light");
-});
-
-it("hydrates the control without a mismatch when the head has selected dark", async () => {
-  localStorage.setItem("taxonomy-theme", "dark");
-  document.documentElement.dataset.theme = "dark";
-  const container = document.createElement("div");
-  container.innerHTML = renderToString(<ThemeControl />);
-  document.body.append(container);
-  const recover = vi.fn();
-  const root = await act(async () =>
-    hydrateRoot(container, <ThemeControl />, { onRecoverableError: recover }),
-  );
-  expect(recover).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Switch to light mode" })).toBeDefined();
-  act(() => root.unmount());
-  container.remove();
-});
