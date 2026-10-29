@@ -52,19 +52,37 @@ export function replaceDisplayed(previous: Display | undefined, response: PanelR
   };
 }
 
-export function targetAbundances(response: PanelResponse) {
+export interface TargetComposition {
+  readonly id: string;
+  readonly name: string;
+  readonly rank: string;
+  readonly abundance: number;
+  readonly contributors: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly abundance: number;
+    readonly offset: number;
+  }>;
+}
+
+export function targetCompositions(response: PanelResponse): ReadonlyArray<TargetComposition> {
   const panel = panels.find((entry) => entry.id === response.panelId);
   const accepted = acceptedTargets(response);
-  const total = records.reduce((sum, record) => sum + record.abundance, 0);
-  return (panel?.targets ?? []).map((target) => ({
-    id: target.id,
-    label: target.name,
-    abundance:
-      (records.reduce(
-        (sum, record) => sum + (accepted.get(record.id)?.has(target.id) ? record.abundance : 0),
-        0,
-      ) /
-        total) *
-      100,
-  }));
+  return (panel?.targets ?? []).map((target) => {
+    let abundance = 0;
+    const contributors = records
+      .filter((record) => accepted.get(record.id)?.has(target.id))
+      .map((record) => {
+        const share = (record.abundance / sampleWeight) * 100;
+        const contributor = {
+          id: record.id,
+          name: record.name,
+          abundance: share,
+          offset: abundance,
+        };
+        abundance += share;
+        return contributor;
+      });
+    return { ...target, abundance, contributors };
+  });
 }

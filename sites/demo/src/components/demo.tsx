@@ -25,6 +25,7 @@ import {
 } from "../client/panel-atoms.ts";
 
 function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
+  const [workspaceBoundary, setWorkspaceBoundary] = useState<HTMLElement | null>(null);
   const selection = useAtomValue(recordSelectionAtom);
   const recordId = Option.getOrUndefined(selection)?.recordId;
   const record = records.find((entry) => entry.id === recordId);
@@ -39,6 +40,7 @@ function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
   }, [remember, response]);
   return (
     <section
+      ref={setWorkspaceBoundary}
       className={styles.workspace}
       aria-label={panels.find((panel) => panel.id === response.panelId)?.name}
     >
@@ -68,7 +70,7 @@ function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
             )}
           </p>
         </div>
-        <AbundanceChart response={response} />
+        <AbundanceChart response={response} boundary={workspaceBoundary} />
       </section>
     </section>
   );

@@ -241,14 +241,14 @@ it("counts the full abundance for overlapping matches and lets a genus record ru
   );
   const chart = view.getByRole("figure", { name: "Count abundance for each target" });
   await expect
-    .element(chart.getByRole("img"))
-    .toHaveAttribute("aria-label", expect.stringContaining("Fungi: 31%;"));
+    .element(chart.getByRole("img", { name: /^Fungi · kingdom/ }))
+    .toHaveAttribute("aria-label", expect.stringContaining("31% of sample"));
   await expect
-    .element(chart.getByRole("img"))
-    .toHaveAttribute("aria-label", expect.stringContaining("Saccharomyces: 18%;"));
+    .element(chart.getByRole("img", { name: /^Saccharomyces · genus/ }))
+    .toHaveAttribute("aria-label", expect.stringContaining("18% of sample"));
   await expect
-    .element(chart.getByRole("img"))
-    .toHaveAttribute("aria-label", expect.stringContaining("Saccharomyces cerevisiae: 14%;"));
+    .element(chart.getByRole("img", { name: /^Saccharomyces cerevisiae · species/ }))
+    .toHaveAttribute("aria-label", expect.stringContaining("14% of sample"));
 
   await view.getByRole("button", { name: /^Saccharomyces, / }).click();
   const comparisons = view.getByRole("region", { name: "Saccharomyces", exact: true });
