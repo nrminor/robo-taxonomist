@@ -7,7 +7,7 @@
 }
 
 .axis,
-.row {
+.appearance {
   display: grid;
   grid-template-columns: minmax(145px, 45%) minmax(0, 1fr) 34px;
   column-gap: 9px;
@@ -44,10 +44,48 @@
   inset-inline-start: 0;
   inline-size: 100%;
   block-size: var(--target-row-height);
+}
+.appearance {
+  block-size: 100%;
   align-items: center;
 }
-.row[hidden] {
-  display: none;
+.row[data-phase="hidden"] {
+  visibility: hidden;
+}
+.row[data-phase="hidden"],
+.row[data-phase="exiting"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.row[data-phase="hidden"] .appearance {
+  transform: translateY(4px);
+}
+.row[data-phase="exiting"] .appearance {
+  transform: translateY(-4px);
+}
+.chart[data-animate="true"] .row[data-phase="present"] {
+  transition:
+    transform 200ms var(--ease-in-out),
+    opacity 200ms var(--ease-out);
+}
+.chart[data-animate="true"] .row[data-phase="entering"] {
+  transition: opacity 200ms var(--ease-out);
+}
+.chart[data-animate="true"] .row[data-phase="exiting"] {
+  transition: opacity 160ms var(--ease-out);
+}
+.chart[data-animate="true"] .row[data-phase="entering"] .appearance,
+.chart[data-animate="true"] .row[data-phase="present"] .appearance {
+  transition: transform 200ms var(--ease-out);
+}
+.chart[data-animate="true"] .row[data-phase="exiting"] .appearance {
+  transition: transform 160ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart[data-animate="true"] .row[data-phase],
+  .chart[data-animate="true"] .row[data-phase] .appearance {
+    transition: none;
+  }
 }
 .row:focus-visible {
   outline-offset: 0;
@@ -187,7 +225,7 @@
 
 @media (max-width: 759px) {
   .axis,
-  .row {
+  .appearance {
     grid-template-columns: minmax(130px, 46%) minmax(0, 1fr) 31px;
     column-gap: 7px;
   }

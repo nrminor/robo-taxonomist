@@ -1,13 +1,18 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { panels, type PanelId } from "../lib/catalog.ts";
-import { selectedPanelId, selectionAtom } from "../client/panel-atoms.ts";
+import { animatePanelsAtom, selectedPanelId, selectionAtom } from "../client/panel-atoms.ts";
 import styles from "./panel-controls.module.css";
 
 export function PanelControls({ onSelect }: { readonly onSelect: (panelId: PanelId) => void }) {
   const selection = useAtomValue(selectionAtom);
+  const animatePanels = useAtomSet(animatePanelsAtom);
   return (
     <>
-      <fieldset className={styles.panelChoices}>
+      <fieldset
+        className={styles.panelChoices}
+        onPointerDown={() => animatePanels(true)}
+        onKeyDown={() => animatePanels(false)}
+      >
         <legend>Compare records with</legend>
         {panels.map((panel) => (
           <label key={panel.id} className={styles.panelChoice}>

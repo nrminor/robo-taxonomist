@@ -12,6 +12,7 @@ import type { Display } from "../lib/display.ts";
 
 export const Selection = Schema.TaggedUnion({ Initial: {}, Panel: { panelId: PanelId } });
 export const selectionAtom = Atom.make<typeof Selection.Type>(Selection.cases.Initial.make({}));
+export const animatePanelsAtom = Atom.make(false);
 export const selectedPanelId = Selection.match({
   Initial: (): PanelId => initialPanelId,
   Panel: ({ panelId }): PanelId => panelId,
