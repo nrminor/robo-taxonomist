@@ -4,14 +4,15 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Cause, Option, Result, Schema } from "effect";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { Suspense, use, useLayoutEffect } from "react";
-import { panels } from "../lib/catalog.ts";
+import { panels, records } from "../lib/catalog.ts";
 import { PanelResponse } from "../lib/contract.ts";
-import { replaceDisplayed } from "../lib/display.ts";
+import { formatSampleShare, replaceDisplayed } from "../lib/display.ts";
 import { RequestFailureView } from "./request-failure.tsx";
 import { AbundanceChart } from "./abundance-chart.tsx";
 import { RecordMatches } from "./record-matches.tsx";
 import { ThemeControl } from "./theme-control.tsx";
 import { PanelControls } from "./panel-controls.tsx";
+import { RecordControls } from "./record-controls.tsx";
 import styles from "./demo.module.css";
 import {
   decodeReply,
@@ -20,9 +21,13 @@ import {
   selectionAtom,
   Selection,
   selectPanelAtom,
+  recordSelectionAtom,
 } from "../client/panel-atoms.ts";
 
 function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
+  const selection = useAtomValue(recordSelectionAtom);
+  const recordId = Option.getOrUndefined(selection)?.recordId;
+  const record = records.find((entry) => entry.id === recordId);
   const previous = useAtomValue(displayedAtom);
   const remember = useAtomSet(displayedAtom);
   const display = replaceDisplayed(Option.getOrUndefined(previous), response);
@@ -46,15 +51,22 @@ function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
           </span>
         </div>
         <div className={styles.resultSummary}>
-          <p>
-            {display.matchedRecords} of {response.rows.length} records match a target.
+          <p className={styles.chartInspection}>
+            {record === undefined
+              ? "Select an input record to inspect its matches."
+              : `Selected record: ${record.name} · ${formatSampleShare(record.abundance)} of sample`}
           </p>
-          {display.changedRecords !== undefined && (
-            <p>
-              Matches changed for {display.changedRecords} records since{" "}
-              {panels.find((panel) => panel.id === display.comparedWith)?.name}.
-            </p>
-          )}
+          <p>
+            <span>
+              {display.matchedRecords} of {response.rows.length} records match a target.
+            </span>{" "}
+            {display.changedRecords !== undefined && (
+              <span>
+                Matches changed for {display.changedRecords} records since{" "}
+                {panels.find((panel) => panel.id === display.comparedWith)?.name}.
+              </span>
+            )}
+          </p>
         </div>
         <AbundanceChart response={response} />
       </section>
@@ -131,6 +143,7 @@ export function Demo({ initial }: { readonly initial: Promise<Schema.Json> }) {
         <aside className={styles.controls} aria-label="Classification controls">
           <div className={styles.controlOptions}>
             <PanelControls />
+            <RecordControls />
           </div>
           <div className={styles.appearance}>
             <ThemeControl />

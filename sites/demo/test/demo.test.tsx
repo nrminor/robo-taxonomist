@@ -182,13 +182,21 @@ it("counts the full abundance for overlapping matches and lets a genus record ru
     .element(chart.getByRole("img"))
     .toHaveAttribute("aria-label", expect.stringContaining("Saccharomyces cerevisiae: 14%;"));
 
-  await view.getByLabelText("Inspect Saccharomyces", { exact: true }).click();
-  const comparisons = view.getByRole("table", { name: "Classify Saccharomyces", exact: true });
+  await view.getByRole("button", { name: /^Saccharomyces, / }).click();
+  const comparisons = view.getByRole("region", { name: "Saccharomyces", exact: true });
   await expect
-    .element(comparisons.getByRole("row", { name: /Saccharomyces cerevisiae Does not match/ }))
+    .element(
+      comparisons
+        .getByRole("group", { name: "Saccharomyces cerevisiae", exact: true })
+        .getByText("No match", { exact: true }),
+    )
     .toBeVisible();
   await expect
-    .element(comparisons.getByRole("row", { name: /^Saccharomyces Matches/ }))
+    .element(
+      comparisons
+        .getByRole("group", { name: "Saccharomyces", exact: true })
+        .getByText("Matches", { exact: true }),
+    )
     .toBeVisible();
 });
 
@@ -210,16 +218,15 @@ it("shows optional provider confidence separately from match support", async () 
     Promise.resolve(Schema.encodeSync(ClassificationReply)(reply)),
     () => Promise.reject(new Error("Unexpected browser request")),
   );
-  await view.getByLabelText("Inspect Saccharomyces cerevisiae", { exact: true }).click();
-  const comparisons = view.getByRole("table", {
-    name: "Classify Saccharomyces cerevisiae",
+  await view.getByRole("button", { name: /^Saccharomyces cerevisiae, / }).click();
+  const comparisons = view.getByRole("region", {
+    name: "Saccharomyces cerevisiae",
     exact: true,
   });
-  const fungi = comparisons.getByRole("row", { name: /^Fungi / });
-  await fungi.getByText("Within a broader taxon", { exact: true }).first().click();
-  await expect.element(fungi.getByText("Provider confidence")).toBeVisible();
-  await expect.element(fungi.getByText("80%")).toBeVisible();
-  await expect.element(fungi.getByText("95%")).toBeVisible();
+  const fungi = comparisons.getByRole("group", { name: "Fungi", exact: true });
+  await fungi.getByText("Answer probabilities", { exact: true }).click();
+  await expect.element(fungi.getByText("Answer confidence: 80%", { exact: true })).toBeVisible();
+  await expect.element(fungi.getByText("Match support: 95%", { exact: true })).toBeVisible();
 });
 
 it("ignores superseded replies when Broad survey is selected again before the initial reply arrives", async () => {

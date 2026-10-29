@@ -63,3 +63,7 @@ const postClassification = Effect.fn("postClassification")(function* (panelId: P
 export const browserRuntime = Atom.runtime(FetchHttpClient.layer);
 export const selectPanelAtom = browserRuntime.fn(postClassification);
 export const displayedAtom = Atom.make<Option.Option<Display>>(Option.none());
+
+export const recordSelectionAtom = Atom.make<
+  Option.Option<{ readonly recordId: string; readonly origin: "record" | "example" }>
+>(Option.none());

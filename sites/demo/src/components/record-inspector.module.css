@@ -1,0 +1,72 @@
+.inspector {
+  padding-block: 24px;
+  padding-inline: 20px 16px;
+  background: var(--color-surface);
+}
+.inspector h3 {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.intro {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-block: 7px 16px;
+}
+.judgment {
+  padding-block: 11px;
+  border-block-start: 1px solid var(--color-border);
+  font-size: 12px;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+}
+.header strong {
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.judgment p {
+  margin-block-start: 5px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+.judgment details {
+  margin-block-start: 7px;
+  color: var(--color-text-muted);
+}
+.judgment summary {
+  cursor: pointer;
+}
+.probabilities {
+  margin-block-start: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.matched {
+  color: var(--color-matched);
+}
+.unmatched {
+  color: var(--color-unmatched);
+}
+.uncertain {
+  color: var(--color-uncertain);
+}
+.back {
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 0;
+  margin-block-start: 12px;
+}
+@media (max-width: 759px) {
+  .inspector {
+    padding-inline: 10px;
+  }
+}

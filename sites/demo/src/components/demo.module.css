@@ -95,6 +95,13 @@
   color: var(--color-text-muted);
 }
 
+.chartInspection {
+  min-block-size: 2.9em;
+  color: var(--color-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1249px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);

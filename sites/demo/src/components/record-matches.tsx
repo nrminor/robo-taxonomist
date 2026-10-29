@@ -1,119 +1,135 @@
-import { Fragment } from "react";
-import { panels, records } from "../lib/catalog.ts";
+import { useLayoutEffect, useRef } from "react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { Option } from "effect";
+import { recordSelectionAtom } from "../client/panel-atoms.ts";
+import { records } from "../lib/catalog.ts";
 import { MatchJudgment, type PanelResponse } from "../lib/contract.ts";
+import { formatSampleShare } from "../lib/display.ts";
+import { RecordInspector } from "./record-inspector.tsx";
 import styles from "./record-matches.module.css";
 
-const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
-const answerLabels = {
-  sameTaxon: "Same taxon",
-  withinTaxon: "Within a broader taxon",
-  noMatch: "Does not match",
-  undetermined: "Cannot determine",
-} satisfies Record<PanelResponse["rows"][number]["matches"][number]["answer"]["label"], string>;
-const answerNames = ["sameTaxon", "withinTaxon", "noMatch", "undetermined"] as const;
-
 export function RecordMatches({ response }: { readonly response: PanelResponse }) {
-  const targets = panels.find((panel) => panel.id === response.panelId)?.targets ?? [];
+  const selection = useAtomValue(recordSelectionAtom);
+  const setSelection = useAtomSet(recordSelectionAtom);
+  const selectedId = Option.isSome(selection) ? selection.value.recordId : undefined;
+  const selected = records.find((record) => record.id === selectedId);
+  const scroller = useRef<HTMLDivElement>(null);
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const heading = useRef<HTMLHeadingElement>(null);
+  useLayoutEffect(() => {
+    if (Option.isNone(selection) || selection.value.origin !== "example") return;
+    const container = scroller.current;
+    const button = buttons.current.get(selection.value.recordId);
+    if (!container || !button) return;
+    const bounds = container.getBoundingClientRect();
+    const rect = button.getBoundingClientRect();
+    if (rect.top < bounds.top) container.scrollTop -= bounds.top - rect.top;
+    else if (rect.bottom > bounds.bottom) container.scrollTop += rect.bottom - bounds.bottom;
+  }, [selection]);
+
+  const clear = () => {
+    const button = selectedId === undefined ? undefined : buttons.current.get(selectedId);
+    button?.focus({ preventScroll: true });
+    setSelection(Option.none());
+  };
   return (
     <section aria-labelledby="check-records" className={styles.recordsSection}>
       <div className={styles.recordsHeading}>
         <h2 id="check-records">Input records</h2>
       </div>
+      <div className={styles.columns} aria-hidden="true">
+        <span>Record</span>
+        <span>Sample share</span>
+        <span>Panel result</span>
+      </div>
       <div
+        ref={scroller}
         className={styles.recordsScroll}
         tabIndex={0}
         aria-label="Sample records and selected-record matches"
       >
         <ul className={styles.recordList}>
-          {response.rows.map((row) => {
-            const record = records.find((entry) => entry.id === row.recordId);
-            if (record === undefined) return null;
-            const accepted = row.matches.filter((match) =>
+          {records.map((record) => {
+            const row = response.rows.find((entry) => entry.recordId === record.id);
+            const matched = row?.matches.some((match) =>
               MatchJudgment.guards.Matched(match.judgment),
-            ).length;
-            const unresolved = row.matches.some((match) =>
+            );
+            const uncertain = row?.matches.some((match) =>
               MatchJudgment.guards.Undetermined(match.judgment),
             );
-            const outcome =
-              accepted > 0
-                ? `Matches ${accepted} ${accepted === 1 ? "target" : "targets"}`
-                : unresolved
-                  ? "Cannot determine a match"
-                  : "Does not match a target";
+            const result = matched ? "Matches" : uncertain ? "Uncertain" : "No match";
+            const active = record.id === selectedId;
+            const share = formatSampleShare(record.abundance);
             return (
-              <li key={row.recordId}>
-                <details>
-                  <summary aria-label={`Inspect ${record.name}`} className={styles.recordSummary}>
-                    <span className={styles.recordName}>
-                      {record.kind === "vague" ? record.name : <em>{record.name}</em>}
+              <li
+                key={record.id}
+                className={`${styles.recordItem} ${active ? styles.selected : ""}`}
+              >
+                <button
+                  type="button"
+                  className={styles.record}
+                  aria-pressed={active}
+                  ref={(button) => {
+                    if (button) buttons.current.set(record.id, button);
+                    else buttons.current.delete(record.id);
+                  }}
+                  aria-label={`${record.name}, ${share} of sample. ${result}. ${active ? "Clear selection" : "Select record"}`}
+                  onClick={() =>
+                    active
+                      ? clear()
+                      : setSelection(Option.some({ recordId: record.id, origin: "record" }))
+                  }
+                >
+                  <span className={styles.recordName}>
+                    {record.name}
+                    <span className={styles.recordKind}>
+                      {record.kind === "vague"
+                        ? "Unresolved name"
+                        : record.kind === "genus"
+                          ? "Genus-only record"
+                          : "Species record"}
                     </span>
-                    <span className={styles.abundance}>
-                      {percent.format(record.abundance / 100)}
-                    </span>
-                    <span className={styles.outcome}>{outcome}</span>
-                    <svg
-                      className={styles.chevron}
-                      viewBox="0 0 16 16"
-                      width="16"
-                      height="16"
-                      aria-hidden="true"
+                  </span>
+                  <span className={styles.abundance}>{share}</span>
+                  <span
+                    className={`${styles.badge} ${matched ? styles.matched : uncertain ? styles.uncertain : styles.unmatched}`}
+                  >
+                    {result}
+                  </span>
+                </button>
+                {active && (
+                  <div className={styles.actions}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        heading.current?.scrollIntoView({ block: "start", behavior: "instant" });
+                        heading.current?.focus({ preventScroll: true });
+                      }}
                     >
-                      <path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                    </svg>
-                  </summary>
-                  <div className={styles.comparisons}>
-                    <table aria-label={`Classify ${record.name}`}>
-                      <thead>
-                        <tr>
-                          <th scope="col">Target</th>
-                          <th scope="col">Match</th>
-                          <th scope="col">Support</th>
-                          <th scope="col">Answer</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {row.matches.map((match) => (
-                          <tr key={match.targetId}>
-                            <th scope="row">
-                              {targets.find((target) => target.id === match.targetId)?.name}
-                            </th>
-                            <td>
-                              {MatchJudgment.match(match.judgment, {
-                                Matched: () => "Matches",
-                                NotMatched: () => "Does not match",
-                                Undetermined: () => "Cannot determine",
-                              })}
-                            </td>
-                            <td>{percent.format(match.support)}</td>
-                            <td>
-                              <details>
-                                <summary>{answerLabels[match.answer.label]}</summary>
-                                <dl>
-                                  {answerNames.map((name) => (
-                                    <Fragment key={name}>
-                                      <dt>{answerLabels[name]}</dt>
-                                      <dd>{percent.format(match.answer.probabilities[name])}</dd>
-                                    </Fragment>
-                                  ))}
-                                  {match.answer.confidence !== undefined && (
-                                    <>
-                                      <dt>Provider confidence</dt>
-                                      <dd>{percent.format(match.answer.confidence)}</dd>
-                                    </>
-                                  )}
-                                </dl>
-                              </details>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                      View answer details
+                    </button>
+                    <button type="button" onClick={clear}>
+                      Clear selection
+                    </button>
                   </div>
-                </details>
+                )}
               </li>
             );
           })}
         </ul>
+        {selected && (
+          <RecordInspector
+            key={selected.id}
+            record={selected}
+            response={response}
+            headingRef={heading}
+            onBack={() => {
+              const button = buttons.current.get(selected.id);
+              button?.scrollIntoView({ block: "center", behavior: "instant" });
+              button?.focus({ preventScroll: true });
+            }}
+          />
+        )}
       </div>
     </section>
   );

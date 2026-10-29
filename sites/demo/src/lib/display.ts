@@ -1,6 +1,12 @@
 import { panels, records, type PanelId } from "./catalog.ts";
 import { MatchJudgment, type PanelResponse } from "./contract.ts";
 
+const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 2 });
+const sampleWeight = records.reduce((sum, record) => sum + record.abundance, 0);
+
+export const formatPercent = (fraction: number): string => percent.format(fraction);
+export const formatSampleShare = (weight: number): string => formatPercent(weight / sampleWeight);
+
 export interface Display {
   readonly response: PanelResponse;
   readonly matchedRecords: number;
