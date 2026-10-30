@@ -63,10 +63,10 @@ const httpError = (error: HttpClientError.HttpClientError): AiError.AiError => {
   }
 };
 
-export function clefModelLayer(options: {
+export const clefModelLayer = (options: {
   readonly accountId: string;
   readonly apiToken: Redacted.Redacted<string>;
-}): Layer.Layer<DecisionModel.DecisionModel, never, HttpClient.HttpClient> {
+}): Layer.Layer<DecisionModel.DecisionModel, never, HttpClient.HttpClient> => {
   return Layer.effect(
     DecisionModel.DecisionModel,
     Effect.gen(function* () {
@@ -157,4 +157,4 @@ export function clefModelLayer(options: {
       return yield* DecisionModel.make({ decide });
     }),
   );
-}
+};

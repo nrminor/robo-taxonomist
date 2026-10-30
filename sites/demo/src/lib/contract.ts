@@ -5,49 +5,50 @@ import { PanelId, panels, records } from "./catalog.ts";
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 export const MatchJudgment = Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} });
 export type MatchJudgment = typeof MatchJudgment.Type;
-export const PanelResponse = Schema.Struct({
-  panelId: PanelId,
-  rows: Schema.Array(
+const Match = Schema.Struct({
+  targetId: Schema.String,
+  judgment: MatchJudgment,
+  support: probability,
+  answer: Schema.Struct({
+    confidence: Schema.optional(probability),
+    label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
+    probabilities: Schema.Struct({
+      sameTaxon: probability,
+      withinTaxon: probability,
+      noMatch: probability,
+      undetermined: probability,
+    }),
+  }),
+});
+
+const matchFor = (targetId: string) =>
+  Schema.Struct({ ...Match.fields, targetId: Schema.Literal(targetId) });
+
+export type PanelResponse = {
+  readonly panelId: PanelId;
+  readonly rows: ReadonlyArray<{
+    readonly recordId: string;
+    readonly matches: ReadonlyArray<typeof Match.Type>;
+  }>;
+};
+
+// Effect's Tuple type recursion infers [] for mapped arrays. Expose the domain
+// array shape explicitly; generated literals/tuples enforce order and length.
+export const PanelResponse: Schema.Codec<PanelResponse> = Schema.Union(
+  panels.map((panel) =>
     Schema.Struct({
-      recordId: Schema.String,
-      matches: Schema.Array(
-        Schema.Struct({
-          targetId: Schema.String,
-          judgment: MatchJudgment,
-          support: probability,
-          answer: Schema.Struct({
-            confidence: Schema.optional(probability),
-            label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
-            probabilities: Schema.Struct({
-              sameTaxon: probability,
-              withinTaxon: probability,
-              noMatch: probability,
-              undetermined: probability,
-            }),
+      panelId: Schema.Literal(panel.id),
+      rows: Schema.Tuple(
+        records.map((record) =>
+          Schema.Struct({
+            recordId: Schema.Literal(record.id),
+            matches: Schema.Tuple(panel.targets.map((target) => matchFor(target.id))),
           }),
-        }),
+        ),
       ),
     }),
   ),
-}).check(
-  Schema.makeFilter((response) => {
-    const panel = panels.find((entry) => entry.id === response.panelId);
-    return (
-      (panel !== undefined &&
-        response.rows.length === records.length &&
-        response.rows.every(
-          (row, index) =>
-            row.recordId === records[index]?.id &&
-            row.matches.length === panel.targets.length &&
-            row.matches.every(
-              (match, targetIndex) => match.targetId === panel.targets[targetIndex]?.id,
-            ),
-        )) ||
-      "The reply must contain every record and panel target in the supplied order."
-    );
-  }),
 );
-export type PanelResponse = typeof PanelResponse.Type;
 
 export const PublicModelReason = Schema.TaggedUnion({
   RateLimitError: {

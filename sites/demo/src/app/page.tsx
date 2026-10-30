@@ -1,13 +1,16 @@
 import { RegistryProvider } from "@effect/atom-react";
+import { connection } from "next/server";
 import { Demo } from "../components/demo.tsx";
 import { initialReply } from "../server/classify.ts";
 
-export const dynamic = "force-dynamic";
+const Page = async () => {
+  await connection();
 
-export default function Page() {
   return (
     <RegistryProvider>
       <Demo initial={initialReply()} />
     </RegistryProvider>
   );
-}
+};
+
+export default Page;
