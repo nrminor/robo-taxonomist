@@ -25,7 +25,7 @@ const classifyRequest = Effect.fn("classifyRequest")(function* (request: Request
   const input = yield* Schema.decodeUnknownEffect(ClassifyRequest, {
     onExcessProperty: "error",
   })(json).pipe(Effect.mapError(() => ClassificationFailure.cases.InvalidPanel.make({})));
-  return yield* classifyPanel(input.panelId);
+  return yield* classifyPanel(input.panelId, input.refresh);
 });
 
 const toHttpResponse = (exit: Exit.Exit<PanelResponse, ClassificationFailure>): Response =>

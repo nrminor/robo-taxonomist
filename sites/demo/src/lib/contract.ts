@@ -97,5 +97,8 @@ export const classificationFailureFields = {
 /** Browser-facing failures with optional correlation IDs, rather than raw server or provider errors. */
 export const ClassificationFailure = Schema.TaggedUnion(classificationFailureFields);
 export type ClassificationFailure = typeof ClassificationFailure.Type;
-/** Request body limited to a known panel ID; the HTTP handler additionally rejects excess properties. */
-export const ClassifyRequest = Schema.Struct({ panelId: PanelId });
+/** Classify one known panel; refresh explicitly requests new model decisions instead of a cached result. */
+export const ClassifyRequest = Schema.Struct({
+  panelId: PanelId,
+  refresh: Schema.optional(Schema.Boolean),
+});

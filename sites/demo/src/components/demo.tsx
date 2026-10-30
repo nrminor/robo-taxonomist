@@ -1,6 +1,7 @@
 "use client";
 
 import { useAtomValue } from "@effect/atom-react";
+import { Button } from "@base-ui/react/button";
 import { Array, Option } from "effect";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { panels, records } from "../lib/catalog.ts";
@@ -107,7 +108,7 @@ export const Demo = () => {
   const {
     initialActive,
     awaitingInitial,
-    requested,
+    request,
     committed,
     candidate,
     pending,
@@ -125,14 +126,14 @@ export const Demo = () => {
       ? undefined
       : Option.getOrUndefined(candidate)?.display.response;
   const requestedPanel = Option.getOrThrow(
-    Array.findFirst(panels, (panel) => panel.id === requested),
+    Array.findFirst(panels, (panel) => panel.id === request.panelId),
   );
   const requestedName = requestedPanel.name;
   const retained = Option.match(committed, {
     onNone: () => "No panel results have been displayed yet.",
     onSome: ({ display }) => `Still showing ${display.findings.panel.name}.`,
   });
-  const progress = `${retrying ? "Retrying" : "Updating to"} ${requestedName}. ${retained}`;
+  const progress = `${retrying ? "Retrying" : request.refresh ? "Reclassifying with" : "Updating to"} ${requestedName}. ${retained}`;
   const feedback = visible ? (
     <CommittedFeedback token={token} onCommit={feedbackCommitted}>
       <p>{progress}</p>
@@ -152,10 +153,25 @@ export const Demo = () => {
       <div className={styles.layout}>
         <aside className={styles.controls} aria-label="Classification controls">
           <div className={styles.controlOptions}>
-            <PanelControls selected={requested} onSelect={start} selectedInputRef={selectedPanel} />
+            <PanelControls
+              selected={request.panelId}
+              onSelect={(panelId, animate) => start({ panelId }, animate)}
+              selectedInputRef={selectedPanel}
+            />
             <RecordControls />
           </div>
           <div className={styles.appearance}>
+            <Button
+              className={styles.reclassify}
+              disabled={pending || awaitingInitial}
+              focusableWhenDisabled
+              title="Request fresh model decisions for this panel; live mode may incur API charges."
+              onClick={(event) =>
+                start({ panelId: request.panelId, refresh: true }, event.detail > 0)
+              }
+            >
+              {pending && request.refresh ? "Reclassifying…" : "Reclassify panel"}
+            </Button>
             <ThemeControl />
           </div>
         </aside>
@@ -193,7 +209,7 @@ export const Demo = () => {
             error={failure}
             context={`Could not update ${requestedName}. ${retained}`}
             pending={visible ? progress : undefined}
-            onRetry={(animate) => start(requested, animate, failure)}
+            onRetry={(animate) => start(request, animate, failure)}
           />
         </RequestFeedback>
       )}

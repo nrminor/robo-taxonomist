@@ -61,7 +61,29 @@
 .appearance {
   margin-block-start: auto;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.reclassify {
+  min-block-size: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-control-border);
+  border-radius: 5px;
+  background: var(--color-control-surface);
+  font-size: 12px;
+}
+
+.reclassify[data-disabled] {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .reclassify:not([data-disabled]):hover {
+    background: var(--color-hover);
+  }
 }
 
 .results {

@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Fiber, Layer, Record, Result, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import { panels, records } from "../src/lib/catalog.ts";
-import { PanelResponse } from "../src/lib/contract.ts";
+import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
@@ -181,6 +181,104 @@ it.effect("loads only requested panels, coalesces pending requests and reuses su
       expect(calls).toBe(8);
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   }),
+);
+
+it.effect("refreshes only the selected panel while retaining its success until replacement", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let calls = 0;
+    const model = Layer.effect(
+      DecisionModel.DecisionModel,
+      Effect.gen(function* () {
+        const fixture = yield* DecisionModel.DecisionModel;
+        return DecisionModel.DecisionModel.of({
+          ...fixture,
+          decide: (definition, options) =>
+            Effect.gen(function* () {
+              calls++;
+              if (calls === 9) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return yield* fixture.decide(definition, options);
+            }),
+        });
+      }),
+    ).pipe(Layer.provide(FixtureModel));
+    yield* Effect.gen(function* () {
+      const broad = yield* classifyPanel("broad");
+      expect(calls).toBe(4);
+      expect(yield* classifyPanel("broad", false)).toBe(broad);
+      expect(calls).toBe(4);
+      const focused = yield* classifyPanel("focused");
+      expect(calls).toBe(8);
+      const pending = yield* classifyPanel("broad", true).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      expect(yield* classifyPanel("broad")).toBe(broad);
+      expect(yield* classifyPanel("focused")).toBe(focused);
+      expect(calls).toBe(9);
+      yield* Deferred.succeed(release, undefined);
+      const refreshed = yield* Fiber.join(pending);
+      expect(refreshed).not.toBe(broad);
+      expect(refreshed).toEqual(broad);
+      expect(calls).toBe(12);
+      expect(yield* classifyPanel("broad")).toBe(refreshed);
+      expect(yield* classifyPanel("focused")).toBe(focused);
+      expect(calls).toBe(12);
+    }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
+  }),
+);
+
+it.effect(
+  "evicts a failed refresh without evicting another panel and retries with fresh work",
+  () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const model = Layer.effect(
+        DecisionModel.DecisionModel,
+        Effect.gen(function* () {
+          const fixture = yield* DecisionModel.DecisionModel;
+          return DecisionModel.DecisionModel.of({
+            ...fixture,
+            decide: (definition, options) =>
+              Effect.suspend(() => {
+                calls++;
+                return calls === 9
+                  ? Effect.fail(
+                      new AiError.AiError({
+                        module: "fixture",
+                        method: "decide",
+                        reason: new AiError.RateLimitError({}),
+                      }),
+                    )
+                  : fixture.decide(definition, options);
+              }),
+          });
+        }),
+      ).pipe(Layer.provide(FixtureModel));
+      yield* Effect.gen(function* () {
+        const broad = yield* classifyPanel("broad");
+        const focused = yield* classifyPanel("focused");
+        const failure = yield* classifyPanel("broad", true).pipe(Effect.flip);
+        expect(failure).toEqual(
+          ClassificationFailure.cases.ModelFailure.make({
+            reason: PublicModelReason.cases.RateLimitError.make({}),
+            retryable: true,
+          }),
+        );
+        expect(calls).toBe(9);
+        expect(yield* classifyPanel("focused")).toBe(focused);
+        expect(calls).toBe(9);
+        // A failed native refresh expires the selected cache entry, not just the error.
+        const retried = yield* classifyPanel("broad");
+        expect(retried).not.toBe(broad);
+        expect(retried).toEqual(broad);
+        expect(calls).toBe(13);
+        expect(yield* classifyPanel("broad")).toBe(retried);
+        expect(calls).toBe(13);
+      }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
+    }),
 );
 
 it.effect("does not retain failures and permits an explicit same-panel retry", () =>

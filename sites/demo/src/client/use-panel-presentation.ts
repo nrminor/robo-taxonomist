@@ -5,8 +5,8 @@ import { Cause, Exit, Option, Schema } from "effect";
 import * as Atom from "effect/reactivity/Atom";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { useCallback, useEffect, useReducer } from "react";
-import { initialPanelId, PanelId } from "../lib/catalog.ts";
-import { ClassificationFailure, PanelResponse } from "../lib/contract.ts";
+import { initialPanelId } from "../lib/catalog.ts";
+import { ClassificationFailure, ClassifyRequest, PanelResponse } from "../lib/contract.ts";
 import { type Display, replaceDisplayed } from "../lib/display.ts";
 import { RequestFailure, selectPanelAtom } from "./panel-atoms.ts";
 
@@ -14,8 +14,13 @@ const ReplyReference = Schema.declare<PanelResponse>(Schema.is(PanelResponse));
 
 const Intent = Schema.TaggedUnion({
   Initial: { token: Schema.Symbol },
-  Panel: { token: Schema.Symbol, panelId: PanelId, animate: Schema.Boolean },
-  Retry: { token: Schema.Symbol, panelId: PanelId, animate: Schema.Boolean, error: RequestFailure },
+  Panel: { token: Schema.Symbol, request: ClassifyRequest, animate: Schema.Boolean },
+  Retry: {
+    token: Schema.Symbol,
+    request: ClassifyRequest,
+    animate: Schema.Boolean,
+    error: RequestFailure,
+  },
 });
 const Phase = Schema.TaggedUnion({
   AwaitingInitial: {},
@@ -179,10 +184,10 @@ const isPending = Phase.match({
   WaitingVisibly: () => true,
   HoldingReply: () => true,
 });
-const requestedPanel = Intent.match({
-  Initial: () => initialPanelId,
-  Panel: ({ panelId }) => panelId,
-  Retry: ({ panelId }) => panelId,
+const requestedRequest = Intent.match<typeof ClassifyRequest.Type>({
+  Initial: () => ({ panelId: initialPanelId }),
+  Panel: ({ request }) => request,
+  Retry: ({ request }) => request,
 });
 const intentMotion = Intent.match({
   Initial: () => false,
@@ -217,7 +222,7 @@ const presentPublication = (state: Publication) => {
   return {
     initialActive: Intent.guards.Initial(state.intent),
     awaitingInitial: Phase.guards.AwaitingInitial(state.phase),
-    requested: requestedPanel(state.intent),
+    request: requestedRequest(state.intent),
     committed: state.committed,
     candidate,
     pending,
@@ -232,20 +237,21 @@ const presentPublication = (state: Publication) => {
  * Publishes the latest intent with a 150ms feedback grace and a 250ms minimum
  * from feedback commit. Failures bypass delays; superseded successes are ignored.
  * Requests and timers are cancelled on unmount, independently of display history.
+ * The intent retains the request so retries preserve an explicit refresh.
  */
 export const usePanelPresentation = () => {
   const [state, dispatch] = useReducer(reducePublication, undefined, initialPublication);
   const run = useAtomSet(selectPanelAtom, { mode: "promiseExit" });
   const interrupt = useAtomSet(selectPanelAtom);
   const start = useCallback(
-    (panelId: PanelId, animate: boolean, retryError?: RequestFailure): void => {
+    (request: typeof ClassifyRequest.Type, animate: boolean, retryError?: RequestFailure): void => {
       const token = Symbol();
       const intent =
         retryError === undefined
-          ? Intent.cases.Panel.make({ token, panelId, animate })
-          : Intent.cases.Retry.make({ token, panelId, animate, error: retryError });
+          ? Intent.cases.Panel.make({ token, request, animate })
+          : Intent.cases.Retry.make({ token, request, animate, error: retryError });
       dispatch(Event.cases.Start.make({ intent, now: performance.now() }));
-      void run(panelId).then(
+      void run(request).then(
         (exit) => dispatch(Event.cases.Completed.make({ token, exit })),
         () =>
           dispatch(Event.cases.Completed.make({ token, exit: Exit.fail(genericInternalFailure) })),

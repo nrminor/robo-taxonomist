@@ -21,10 +21,11 @@ const transportFailure = (cause: unknown) => RequestFailure.cases.TransportFailu
 const responseDecodingFailure = (cause: unknown) =>
   RequestFailure.cases.ResponseDecodingFailure.make({ cause });
 
-const encodeRequest = (panelId: PanelId) =>
-  HttpClientRequest.schemaBodyJson(ClassifyRequest)(HttpClientRequest.post("/api/classify"), {
-    panelId,
-  }).pipe(Effect.mapError(() => RequestFailure.cases.InternalFailure.make({})));
+const encodeRequest = (request: typeof ClassifyRequest.Type) =>
+  HttpClientRequest.schemaBodyJson(ClassifyRequest)(
+    HttpClientRequest.post("/api/classify"),
+    request,
+  ).pipe(Effect.mapError(() => RequestFailure.cases.InternalFailure.make({})));
 
 const readSuccess = (response: HttpClientResponse.HttpClientResponse, panelId: PanelId) =>
   HttpClientResponse.schemaBodyJson(PanelResponse)(response).pipe(
@@ -41,12 +42,14 @@ const readFailure = (response: HttpClientResponse.HttpClientResponse) =>
     Effect.flatMap(Effect.fail),
   );
 
-const postClassification = Effect.fn("postClassification")(function* (panelId: PanelId) {
+const postClassification = Effect.fn("postClassification")(function* (
+  input: typeof ClassifyRequest.Type,
+) {
   const client = yield* HttpClient.HttpClient;
-  const request = yield* encodeRequest(panelId);
+  const request = yield* encodeRequest(input);
   const response = yield* client.execute(request).pipe(Effect.mapError(transportFailure));
   return yield* HttpClientResponse.matchStatus(response, {
-    "2xx": (response) => readSuccess(response, panelId),
+    "2xx": (response) => readSuccess(response, input.panelId),
     orElse: readFailure,
   });
 });
@@ -55,9 +58,9 @@ const postClassification = Effect.fn("postClassification")(function* (panelId: P
 export const browserRuntime = Atom.runtime(FetchHttpClient.layer);
 /** Initial panel request with a server-renderable initial state and no idle retention. */
 export const initialQueryAtom = browserRuntime
-  .atom(postClassification(initialPanelId))
+  .atom(postClassification({ panelId: initialPanelId }))
   .pipe(Atom.setIdleTTL(0), Atom.withServerValueInitial);
-/** Run a selected-panel request, validating response structure and that its panel ID matches the request. */
+/** Run a selected-panel request, including explicit refresh, validating its response and panel identity. */
 export const selectPanelAtom = browserRuntime.fn(postClassification);
 
 /** Optional inspected record and interaction origin, allowing views to distinguish list and example choices. */

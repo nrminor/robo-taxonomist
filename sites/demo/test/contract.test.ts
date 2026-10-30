@@ -1,8 +1,31 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, DateTime, Duration, Option, Schema } from "effect";
+import { Cause, DateTime, Duration, Effect, Option, Schema } from "effect";
 import { AiError } from "effect/ai";
-import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
+import {
+  ClassificationFailure,
+  ClassifyRequest,
+  PanelResponse,
+  PublicModelReason,
+} from "../src/lib/contract.ts";
 import { publicModelFailure, publicCauseFailure } from "../src/lib/failures.ts";
+
+it.effect("accepts legacy classification requests and explicit boolean refresh requests", () =>
+  Effect.gen(function* () {
+    for (const request of [
+      { panelId: "broad" },
+      { panelId: "focused", refresh: false },
+      { panelId: "nested", refresh: true },
+    ]) {
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassifyRequest))(
+        request,
+      );
+      expect(decoded).toEqual(request);
+      expect(yield* Schema.encodeEffect(Schema.toCodecJson(ClassifyRequest))(decoded)).toEqual(
+        request,
+      );
+    }
+  }),
+);
 
 it("round trips safe failures as direct JSON bodies", () => {
   const failure = ClassificationFailure.cases.InvalidPanel.make({});
