@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ThemeProvider } from "next-themes";
 import type { ReactNode } from "react";
 import "./globals.css";
 
@@ -8,22 +9,17 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function RootLayout({ children }: { readonly children: ReactNode }) {
+const RootLayout = ({ children }: { readonly children: ReactNode }) => {
   return (
-    // The head initializer intentionally adds data-theme before React hydrates.
+    // The provider's initializer sets data-theme before React hydrates.
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(() => {
-  let theme;
-  try { theme = localStorage.getItem('taxonomy-theme'); } catch {}
-  document.documentElement.dataset.theme = theme === 'dark' || theme === 'light' ? theme : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-})();`,
-          }}
-        />
-      </head>
-      <body>{children}</body>
+      <body>
+        <ThemeProvider attribute="data-theme" storageKey="taxonomy-theme" defaultTheme="system">
+          {children}
+        </ThemeProvider>
+      </body>
     </html>
   );
-}
+};
+
+export default RootLayout;

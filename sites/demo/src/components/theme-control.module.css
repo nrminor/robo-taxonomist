@@ -16,9 +16,33 @@
   block-size: 18px;
 }
 
-:global(:root[data-theme="light"]) .themeSun,
+.themeLabel {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.themeSun,
 :global(:root[data-theme="dark"]) .themeMoon {
   display: none;
+}
+
+:global(:root[data-theme="dark"]) .themeSun {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(:root:not([data-theme="light"]):not([data-theme="dark"])) .themeMoon {
+    display: none;
+  }
+
+  :global(:root:not([data-theme="light"]):not([data-theme="dark"])) .themeSun {
+    display: block;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {
