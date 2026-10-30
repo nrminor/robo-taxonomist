@@ -14,22 +14,17 @@ const authenticationMessages = {
   Unknown: "Check the API key and its permissions, then try again.",
 } satisfies Record<(typeof PublicModelReason.cases.AuthenticationError.Type)["kind"], string>;
 
-export function RequestFailureView({
-  error,
-  context,
-  pending,
-  onRetry,
-}: {
-  readonly error: RequestFailure;
-  readonly context: string;
-  readonly pending?: string | undefined;
-  readonly onRetry: () => void;
-}) {
-  const details: {
-    readonly message: string;
-    readonly retry: boolean;
-    readonly requestId?: string | undefined;
-  } = RequestFailure.match(error, {
+interface FailureDetails {
+  readonly message: string;
+  readonly retry: boolean;
+  readonly requestId?: string | undefined;
+}
+
+const providerMessage = (message: string, retryable: boolean) =>
+  `${message} ${retryable ? "Try again." : "Contact the site administrator."}`;
+
+const describeFailure = (error: RequestFailure): FailureDetails =>
+  RequestFailure.match<FailureDetails>(error, {
     ModelFailure: ({ reason, retryable, requestId }) => ({
       ...PublicModelReason.match(reason, {
         RateLimitError: ({ retryAfterMs }) => ({
@@ -59,27 +54,22 @@ export function RequestFailureView({
           retry: false,
         }),
         InternalProviderError: () => ({
-          message: retryable
-            ? "The model service could not finish the request. Try again."
-            : "The model service could not finish the request. Contact the site administrator.",
+          message: providerMessage("The model service could not finish the request.", retryable),
           retry: retryable,
         }),
         NetworkError: () => ({
-          message: retryable
-            ? "Could not reach the model service. Try again."
-            : "Could not reach the model service. Contact the site administrator.",
+          message: providerMessage("Could not reach the model service.", retryable),
           retry: retryable,
         }),
         InvalidOutputError: () => ({
-          message: retryable
-            ? "Could not use the model's reply. Try again."
-            : "Could not use the model's reply. Contact the site administrator.",
+          message: providerMessage("Could not use the model's reply.", retryable),
           retry: retryable,
         }),
         StructuredOutputError: () => ({
-          message: retryable
-            ? "The model's reply did not match the required format. Try again."
-            : "The model's reply did not match the required format. Contact the site administrator.",
+          message: providerMessage(
+            "The model's reply did not match the required format.",
+            retryable,
+          ),
           retry: retryable,
         }),
         UnsupportedSchemaError: () => ({
@@ -87,9 +77,7 @@ export function RequestFailureView({
           retry: false,
         }),
         UnknownError: () => ({
-          message: retryable
-            ? "Could not complete the model request. Try again."
-            : "Could not complete the model request. Contact the site administrator.",
+          message: providerMessage("Could not complete the model request.", retryable),
           retry: retryable,
         }),
         ToolNotFoundError: () => ({
@@ -144,6 +132,19 @@ export function RequestFailureView({
     }),
   });
 
+/** Explains safe request failures, retaining the retry control while a retry is pending. */
+export const RequestFailureView = ({
+  error,
+  context,
+  pending,
+  onRetry,
+}: {
+  readonly error: RequestFailure;
+  readonly context: string;
+  readonly pending?: string | undefined;
+  readonly onRetry: (animate: boolean) => void;
+}) => {
+  const details = describeFailure(error);
   return (
     <div className={styles.failure} role={pending === undefined ? "alert" : undefined}>
       <p aria-hidden={pending !== undefined}>{pending ?? context}</p>
@@ -160,8 +161,8 @@ export function RequestFailureView({
             <Button
               className={styles.retry}
               aria-disabled={pending !== undefined}
-              onClick={() => {
-                if (pending === undefined) onRetry();
+              onClick={(event) => {
+                if (pending === undefined) onRetry(event.detail > 0);
               }}
             >
               Try again
@@ -171,4 +172,4 @@ export function RequestFailureView({
       </details>
     </div>
   );
-}
+};

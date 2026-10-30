@@ -2,12 +2,12 @@ import { afterEach, expect, it } from "vitest";
 import { cleanup, render } from "vitest-browser-react";
 import { cdp, userEvent } from "vitest/browser";
 import { StrictMode } from "react";
-import { Effect, Layer, Result, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { RegistryProvider } from "@effect/atom-react";
 import { Demo } from "../src/components/demo.tsx";
-import { ClassificationReply, ClassifyRequest, type PanelResponse } from "../src/lib/contract.ts";
+import { ClassifyRequest, PanelResponse } from "../src/lib/contract.ts";
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
@@ -26,7 +26,7 @@ afterEach(async () => {
 const fixture = (panelId: PanelId) =>
   Effect.runPromise(classifyPanel(panelId).pipe(Effect.provide(PanelResults.layer)));
 const wire = (response: PanelResponse) =>
-  Schema.encodeSync(ClassificationReply)(Result.succeed(response));
+  Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response);
 const renderDemo = async () => {
   await media("no-preference");
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -38,13 +38,15 @@ const renderDemo = async () => {
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
-  return render(
+  const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
-        <Demo initial={Promise.resolve(wire(await fixture("broad")))} />
+        <Demo />
       </RegistryProvider>
     </StrictMode>,
   );
+  await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+  return view;
 };
 
 it("moves a retained target 108px without record selection resetting its native transition", async () => {

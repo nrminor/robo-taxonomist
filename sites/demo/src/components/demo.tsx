@@ -1,56 +1,46 @@
 "use client";
 
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { Option, Result, Schema } from "effect";
-import { Suspense, use, useLayoutEffect, useState } from "react";
-import { initialPanelId, panels, records } from "../lib/catalog.ts";
-import { PanelResponse } from "../lib/contract.ts";
-import { formatSampleShare, replaceDisplayed } from "../lib/display.ts";
+import { useAtomValue } from "@effect/atom-react";
+import { Option } from "effect";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { panels, records } from "../lib/catalog.ts";
+import { Comparison, formatSampleShare } from "../lib/display.ts";
 import { RequestFailureView } from "./request-failure.tsx";
 import { RequestFeedback } from "./request-feedback.tsx";
-import { usePanelPresentation } from "../client/use-panel-presentation.ts";
+import {
+  type PublicationCandidate,
+  usePanelPresentation,
+} from "../client/use-panel-presentation.ts";
 import { AbundanceChart } from "./abundance-chart.tsx";
 import { RecordMatches } from "./record-matches.tsx";
 import { ThemeControl } from "./theme-control.tsx";
 import { PanelControls } from "./panel-controls.tsx";
 import { RecordControls } from "./record-controls.tsx";
 import styles from "./demo.module.css";
-import {
-  decodeReply,
-  displayedAtom,
-  selectionAtom,
-  Selection,
-  recordSelectionAtom,
-  type RequestFailure,
-} from "../client/panel-atoms.ts";
+import { initialQueryAtom, recordSelectionAtom } from "../client/panel-atoms.ts";
 
-function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
-  const [workspaceBoundary, setWorkspaceBoundary] = useState<HTMLElement | null>(null);
+const SuccessfulResults = ({
+  candidate,
+  onCommit,
+}: {
+  readonly candidate: PublicationCandidate;
+  readonly onCommit: (candidate: PublicationCandidate) => void;
+}) => {
+  const { display, animate } = candidate;
+  const { response, findings } = display;
   const selection = useAtomValue(recordSelectionAtom);
   const recordId = Option.getOrUndefined(selection)?.recordId;
   const record = records.find((entry) => entry.id === recordId);
-  const previous = useAtomValue(displayedAtom);
-  const remember = useAtomSet(displayedAtom);
-  const display = replaceDisplayed(Option.getOrUndefined(previous), response);
   useLayoutEffect(() => {
-    remember((current) => {
-      const next = replaceDisplayed(Option.getOrUndefined(current), response);
-      return Option.isSome(current) && current.value === next ? current : Option.some(next);
-    });
-  }, [remember, response]);
+    onCommit(candidate);
+  }, [candidate, onCommit]);
   return (
-    <section
-      ref={setWorkspaceBoundary}
-      className={styles.workspace}
-      aria-label={panels.find((panel) => panel.id === response.panelId)?.name}
-    >
-      <RecordMatches response={response} />
+    <section className={styles.workspace} aria-label={findings.panel.name}>
+      <RecordMatches findings={findings} />
       <section className={styles.chartSection} aria-labelledby="panel-targets">
         <div className={styles.sectionTop}>
           <h2 id="panel-targets">Panel targets</h2>
-          <span className={styles.sectionMeta}>
-            {panels.find((panel) => panel.id === response.panelId)?.targets.length} targets
-          </span>
+          <span className={styles.sectionMeta}>{findings.panel.targets.length} targets</span>
         </div>
         <div className={styles.resultSummary}>
           <p className={styles.chartInspection}>
@@ -62,108 +52,79 @@ function SuccessfulResults({ response }: { readonly response: PanelResponse }) {
             <span>
               {display.matchedRecords} of {response.rows.length} records match a target.
             </span>{" "}
-            {display.changedRecords !== undefined && (
-              <span>
-                Matches changed for {display.changedRecords} records since{" "}
-                {panels.find((panel) => panel.id === display.comparedWith)?.name}.
-              </span>
-            )}
+            {Comparison.match(display.comparison, {
+              FirstDisplay: () => null,
+              Compared: ({ changedRecords, panelName }) => (
+                <span>
+                  Matches changed for {changedRecords} records since {panelName}.
+                </span>
+              ),
+            })}
           </p>
         </div>
-        <AbundanceChart response={response} boundary={workspaceBoundary} />
+        <AbundanceChart findings={findings} revision={candidate.token} animatePanels={animate} />
       </section>
     </section>
   );
-}
+};
 
-function ResolvedResults({
-  initial,
-  selection,
-  response,
-  busy,
+const InitialReader = ({
+  token,
+  awaitingInitial,
   reportInitial,
 }: {
-  readonly initial: Promise<Schema.Json>;
-  readonly selection: typeof Selection.Type;
-  readonly response: PanelResponse | undefined;
-  readonly busy: boolean;
-  readonly reportInitial: (reply: Result.Result<PanelResponse, RequestFailure>) => void;
-}) {
-  const displayed = useAtomValue(displayedAtom);
-  const previousResponse = Option.map(displayed, (display) => display.response);
-  const initialWire = Selection.guards.Initial(selection) ? use(initial) : undefined;
-  const [decodedInitial, setDecodedInitial] = useState(() =>
-    initialWire === undefined ? undefined : { source: initial, reply: decodeReply(initialWire) },
-  );
-  const initialReply =
-    initialWire === undefined || decodedInitial?.source !== initial
+  readonly token: symbol;
+  readonly awaitingInitial: boolean;
+  readonly reportInitial: ReturnType<typeof usePanelPresentation>["reportInitial"];
+}) => {
+  const result = useAtomValue(initialQueryAtom);
+  useLayoutEffect(() => reportInitial(token, result), [token, result, reportInitial]);
+  return awaitingInitial ? <p role="status">Classifying with Broad groups…</p> : null;
+};
+
+const CommittedFeedback = ({
+  token,
+  onCommit,
+  children,
+}: {
+  readonly token: symbol;
+  readonly onCommit: (token: symbol) => void;
+  readonly children: ReactNode;
+}) => {
+  useLayoutEffect(() => onCommit(token), [token, onCommit]);
+  return children;
+};
+
+/** Classifies catalog panels while retaining committed results and record inspection. */
+export const Demo = () => {
+  const selectedPanel = useRef<HTMLInputElement>(null);
+  const {
+    initialActive,
+    awaitingInitial,
+    requested,
+    committed,
+    candidate,
+    pending,
+    visible,
+    failure,
+    token,
+    retrying,
+    start,
+    reportInitial,
+    feedbackCommitted,
+    displayCommitted,
+  } = usePanelPresentation();
+  const response =
+    pending || failure !== undefined || initialActive
       ? undefined
-      : decodedInitial.reply;
-  useLayoutEffect(() => {
-    if (initialReply !== undefined) reportInitial(initialReply);
-  }, [initialReply, reportInitial]);
-  if (initialWire !== undefined && decodedInitial?.source !== initial) {
-    setDecodedInitial({ source: initial, reply: decodeReply(initialWire) });
-    return null;
-  }
-  const candidate =
-    initialReply !== undefined
-      ? Result.match(initialReply, { onFailure: () => Option.none(), onSuccess: Option.some })
-      : busy || response === undefined
-        ? previousResponse
-        : Option.some(response);
-  return (
-    <div className={styles.results} aria-busy={busy}>
-      {Option.match(candidate, {
-        onNone: () => null,
-        onSome: (response) => <SuccessfulResults response={response} />,
-      })}
-    </div>
-  );
-}
-
-function Results({
-  initial,
-  response,
-  busy,
-  reportInitial,
-}: {
-  readonly initial: Promise<Schema.Json>;
-  readonly response: PanelResponse | undefined;
-  readonly busy: boolean;
-  readonly reportInitial: (reply: Result.Result<PanelResponse, RequestFailure>) => void;
-}) {
-  const selection = useAtomValue(selectionAtom);
-  return (
-    <Suspense fallback={<p role="status">Classifying with Broad groups…</p>}>
-      <ResolvedResults
-        initial={initial}
-        selection={selection}
-        response={response}
-        busy={busy}
-        reportInitial={reportInitial}
-      />
-    </Suspense>
-  );
-}
-
-export function Demo({ initial }: { readonly initial: Promise<Schema.Json> }) {
-  const { presentation, start, reportInitial } = usePanelPresentation();
-  const displayed = useAtomValue(displayedAtom);
-  const pending = presentation.kind === "pending" ? presentation : undefined;
-  const response = presentation.kind === "success" ? presentation.response : undefined;
-  const failure = presentation.kind === "failure" ? presentation.error : pending?.retryError;
-  const requested =
-    presentation.kind === "failure" || presentation.kind === "pending"
-      ? presentation.panelId
-      : initialPanelId;
+      : Option.getOrUndefined(candidate)?.display.response;
   const requestedName = panels.find((panel) => panel.id === requested)?.name;
-  const retained = Option.match(displayed, {
+  const retained = Option.match(committed, {
     onNone: () => "No panel results have been displayed yet.",
-    onSome: (display) =>
+    onSome: ({ display }) =>
       `Still showing ${panels.find((panel) => panel.id === display.response.panelId)?.name}.`,
   });
-  const progress = `${pending?.retryError === undefined ? "Updating to" : "Retrying"} ${requestedName}. ${retained}`;
+  const progress = `${retrying ? "Retrying" : "Updating to"} ${requestedName}. ${retained}`;
   return (
     <main className={styles.shell}>
       <header>
@@ -178,29 +139,36 @@ export function Demo({ initial }: { readonly initial: Promise<Schema.Json> }) {
       <div className={styles.layout}>
         <aside className={styles.controls} aria-label="Classification controls">
           <div className={styles.controlOptions}>
-            <PanelControls onSelect={start} />
+            <PanelControls selected={requested} onSelect={start} selectedInputRef={selectedPanel} />
             <RecordControls />
           </div>
           <div className={styles.appearance}>
             <ThemeControl />
           </div>
         </aside>
-        <Results
-          initial={initial}
-          response={response}
-          busy={pending !== undefined}
-          reportInitial={reportInitial}
-        />
+        <div className={styles.results} aria-busy={pending || awaitingInitial}>
+          {initialActive && (
+            <InitialReader
+              token={token}
+              awaitingInitial={awaitingInitial}
+              reportInitial={reportInitial}
+            />
+          )}
+          {Option.match(candidate, {
+            onNone: () => null,
+            onSome: (value) => <SuccessfulResults candidate={value} onCommit={displayCommitted} />,
+          })}
+        </div>
       </div>
       <div role="status" aria-atomic="true" className={styles.announcer}>
-        {pending?.visible && failure === undefined && (
-          <RequestFeedback>
-            <p>{progress}</p>
-          </RequestFeedback>
+        {visible && failure === undefined && (
+          <CommittedFeedback token={token} onCommit={feedbackCommitted}>
+            <RequestFeedback returnFocusRef={selectedPanel}>
+              <p>{progress}</p>
+            </RequestFeedback>
+          </CommittedFeedback>
         )}
-        {pending?.visible && failure !== undefined && (
-          <p className={styles.announcement}>{progress}</p>
-        )}
+        {visible && failure !== undefined && <p className={styles.announcement}>{progress}</p>}
         {response !== undefined && (
           <p className={styles.announcement}>
             {panels.find((panel) => panel.id === response.panelId)?.name} results displayed.
@@ -208,15 +176,17 @@ export function Demo({ initial }: { readonly initial: Promise<Schema.Json> }) {
         )}
       </div>
       {failure !== undefined && (
-        <RequestFeedback>
-          <RequestFailureView
-            error={failure}
-            context={`Could not update ${requestedName}. ${retained}`}
-            pending={pending?.visible ? progress : undefined}
-            onRetry={() => start(requested, failure)}
-          />
-        </RequestFeedback>
+        <CommittedFeedback token={token} onCommit={feedbackCommitted}>
+          <RequestFeedback returnFocusRef={selectedPanel}>
+            <RequestFailureView
+              error={failure}
+              context={`Could not update ${requestedName}. ${retained}`}
+              pending={visible ? progress : undefined}
+              onRetry={(animate) => start(requested, animate, failure)}
+            />
+          </RequestFeedback>
+        </CommittedFeedback>
       )}
     </main>
   );
-}
+};

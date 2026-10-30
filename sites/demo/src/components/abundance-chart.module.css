@@ -107,15 +107,6 @@
   margin-block-start: 3px;
   color: var(--color-text-muted);
 }
-.rank [data-judgment="Matches"] {
-  color: var(--color-matched);
-}
-.rank [data-judgment="No match"] {
-  color: var(--color-unmatched);
-}
-.rank [data-judgment="Uncertain"] {
-  color: var(--color-uncertain);
-}
 .plot {
   block-size: 100%;
   display: flex;

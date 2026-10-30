@@ -46,15 +46,6 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-.matched {
-  color: var(--color-matched);
-}
-.unmatched {
-  color: var(--color-unmatched);
-}
-.uncertain {
-  color: var(--color-uncertain);
-}
 .back {
   border: 0;
   background: none;

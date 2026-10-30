@@ -1,15 +1,11 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
-import { Deferred, Effect, Layer, ManagedRuntime, Result, Schema } from "effect";
+import { Deferred, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
-import {
-  ClassificationFailure,
-  ClassificationReply,
-  PublicModelReason,
-} from "../src/lib/contract.ts";
+import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { POST } from "../src/app/api/classify/route.ts";
-import { initialReply, makeHandlers } from "../src/server/classify.ts";
+import { makeHandlers } from "../src/server/classify.ts";
 import { PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
@@ -53,7 +49,7 @@ it.effect("interrupts provider work when its active HTTP request is cancelled", 
   }),
 );
 
-it.effect("cancels an active HTTP request without cancelling a shared initial render", () =>
+it.effect("cancels one HTTP waiter without cancelling another request for the same panel", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
@@ -95,7 +91,12 @@ it.effect("cancels an active HTTP request without cancelling a shared initial re
       }),
     );
     yield* Effect.promise(() => runtime.runPromise(Deferred.await(started)));
-    const remaining = handlers.initialReply();
+    const remaining = handlers.classifyHttp(
+      new Request("http://localhost/api/classify", {
+        method: "POST",
+        body: JSON.stringify({ panelId: "broad" }),
+      }),
+    );
     yield* Effect.promise(() => runtime.runPromise(Effect.yieldNow));
     expect(calls).toBe(1);
     controller.abort(new Error("SECRET cancellation"));
@@ -104,10 +105,14 @@ it.effect("cancels an active HTTP request without cancelling a shared initial re
     expect(yield* Effect.promise(() => response.text())).toBe("");
     expect(interruptions).toBe(0);
     yield* Deferred.succeed(release, undefined);
-    const reply = Schema.decodeSync(ClassificationReply)(yield* Effect.promise(() => remaining));
-    expect(Result.isSuccess(reply)).toBe(true);
-    if (Result.isSuccess(reply)) expect(reply.success.rows).toHaveLength(24);
-    // Both entry points share the four provider batches for this panel.
+    const remainingResponse = yield* Effect.promise(() => remaining);
+    expect(remainingResponse.status).toBe(200);
+    expect(remainingResponse.headers.get("Cache-Control")).toBe("no-store");
+    const reply = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
+      yield* Effect.promise(() => remainingResponse.json()),
+    );
+    expect(reply.rows).toHaveLength(24);
+    // Both HTTP waiters share the four provider batches for this panel.
     expect(calls).toBe(4);
     expect(interruptions).toBe(0);
   }),
@@ -131,9 +136,20 @@ it("returns only a safe 500 reply for a provider defect", async () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
-    const expected = Result.fail(ClassificationFailure.cases.InternalFailure.make({}));
-    expect(Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(wire))).toEqual(expected);
-    expect(Schema.decodeSync(ClassificationReply)(await handlers.initialReply())).toEqual(expected);
+    const expected = ClassificationFailure.cases.InternalFailure.make({});
+    expect(
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+    ).toEqual(expected);
+    const repeated = await handlers.classifyHttp(
+      new Request("http://localhost/api/classify", {
+        method: "POST",
+        body: JSON.stringify({ panelId: "broad" }),
+      }),
+    );
+    expect(repeated.status).toBe(500);
+    expect(
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(await repeated.json()),
+    ).toEqual(expected);
   } finally {
     await runtime.dispose();
   }
@@ -165,26 +181,33 @@ it("returns a safe 503 reply when classification fails at the provider", async (
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
-    expect(Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(wire))).toEqual(
-      Result.fail(
-        ClassificationFailure.cases.ModelFailure.make({
-          reason: PublicModelReason.cases.RateLimitError.make({}),
-          retryable: true,
-        }),
-      ),
+    expect(
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+    ).toEqual(
+      ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.RateLimitError.make({}),
+        retryable: true,
+      }),
     );
   } finally {
     await runtime.dispose();
   }
 });
 
-it("loads Broad survey directly for initial rendering", async () => {
-  const reply = Schema.decodeSync(ClassificationReply)(await initialReply());
-  expect(Result.isSuccess(reply)).toBe(true);
-  if (Result.isSuccess(reply)) {
-    expect(reply.success.panelId).toBe("broad");
-    expect(reply.success.rows).toHaveLength(24);
-  }
+it("classifies the initial Broad groups panel through the POST wire contract", async () => {
+  const response = await POST(
+    new Request("http://localhost/api/classify", {
+      method: "POST",
+      body: JSON.stringify({ panelId: "broad" }),
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  const wire = await response.json();
+  const reply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(wire);
+  expect(reply.panelId).toBe("broad");
+  expect(reply.rows).toHaveLength(24);
+  expect(() => Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(wire)).toThrow();
 });
 
 it("classifies the nested panel through the POST wire contract", async () => {
@@ -196,12 +219,9 @@ it("classifies the nested panel through the POST wire contract", async () => {
   );
   expect(response.status).toBe(200);
   expect(response.headers.get("Cache-Control")).toBe("no-store");
-  const reply = Schema.decodeUnknownSync(ClassificationReply)(await response.json());
-  expect(Result.isSuccess(reply)).toBe(true);
-  if (Result.isSuccess(reply)) {
-    expect(reply.success.panelId).toBe("nested");
-    expect(reply.success.rows).toHaveLength(24);
-  }
+  const reply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(await response.json());
+  expect(reply.panelId).toBe("nested");
+  expect(reply.rows).toHaveLength(24);
 });
 
 it.each([
@@ -220,9 +240,9 @@ it.each([
   expect(response.headers.get("Cache-Control")).toBe("no-store");
   const wire = await response.text();
   expect(wire).not.toContain("SECRET");
-  expect(Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(wire))).toEqual(
-    Result.fail(ClassificationFailure.cases.InvalidPanel.make({})),
-  );
+  expect(
+    Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+  ).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
 });
 
 it("does not serialize an internal failure for an already cancelled request", async () => {

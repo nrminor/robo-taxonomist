@@ -38,12 +38,17 @@ const publicReason = Match.type<AiError.AiErrorReason>().pipe(
   }),
 );
 
+/** Strip provider details to allowlisted metadata while preserving the model error's retryability. */
 export const publicModelFailure = (error: AiError.AiError): ClassificationFailure =>
   ClassificationFailure.cases.ModelFailure.make({
     reason: publicReason(error.reason),
     retryable: error.isRetryable,
   });
 
+/**
+ * Convert failures to the public contract, hiding defects and unknown errors as InternalFailure.
+ * Defects take precedence; interruption-only causes return None so cancellation is not an error payload.
+ */
 export const publicCauseFailure = (
   cause: Cause.Cause<unknown>,
 ): Option.Option<ClassificationFailure> => {

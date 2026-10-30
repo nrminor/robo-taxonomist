@@ -15,6 +15,10 @@ const credentials = Config.all({
   ),
 });
 
+/**
+ * Select fixtures by default, or live Clef with DEMO_MODEL=clef and validated Cloudflare credentials.
+ * Requires an HTTP client for live mode; configuration errors become public ConfigurationFailure values.
+ */
 export const ConfiguredPanelResults = Layer.unwrap(
   Effect.gen(function* () {
     const mode = yield* Config.Literals(["fixture", "clef"], "DEMO_MODEL").pipe(

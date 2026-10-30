@@ -10,7 +10,7 @@ export default defineConfig({
     projects: [
       { test: { name: "node", environment: "node", include: ["test/**/*.test.ts"] } },
       {
-        optimizeDeps: { include: ["react/jsx-dev-runtime"] },
+        optimizeDeps: { include: ["react/jsx-dev-runtime", "effect/reactivity/AsyncResult"] },
         test: {
           name: "browser",
           include: ["test/**/*.test.tsx"],

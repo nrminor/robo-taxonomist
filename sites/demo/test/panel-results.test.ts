@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Fiber, Layer, Record, Result, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import { panels, records } from "../src/lib/catalog.ts";
-import { ClassificationReply, PanelResponse } from "../src/lib/contract.ts";
+import { PanelResponse } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
@@ -12,11 +12,11 @@ it.effect(
     Effect.gen(function* () {
       const result = yield* classifyPanel("nested");
       expect(Schema.is(PanelResponse)(result)).toBe(true);
-      const encoded = yield* Schema.encodeEffect(ClassificationReply)(Result.succeed(result));
-      const decoded = yield* Schema.decodeUnknownEffect(ClassificationReply)(
+      const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(PanelResponse))(result);
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
         JSON.parse(JSON.stringify(encoded)),
       );
-      expect(decoded).toEqual(Result.succeed(result));
+      expect(decoded).toEqual(result);
       expect(result.rows).toHaveLength(24);
       expect(result.rows.map((row) => row.matches.length)).toEqual(Array(24).fill(10));
       expect(
@@ -133,12 +133,12 @@ it.effect(
     return Effect.gen(function* () {
       const response = yield* classifyPanel("broad");
       expect(response.rows[0]?.matches[0]?.answer).toMatchObject({ confidence: 0.8 });
-      const wire = yield* Schema.encodeEffect(ClassificationReply)(Result.succeed(response));
+      const wire = yield* Schema.encodeEffect(Schema.toCodecJson(PanelResponse))(response);
       expect(JSON.stringify(wire)).toContain('"confidence":0.8');
-      const decoded = yield* Schema.decodeUnknownEffect(ClassificationReply)(
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
         JSON.parse(JSON.stringify(wire)),
       );
-      expect(decoded).toEqual(Result.succeed(response));
+      expect(decoded).toEqual(response);
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   },
 );

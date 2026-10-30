@@ -4,12 +4,16 @@ import { cleanup, render } from "vitest-browser-react";
 import { renderToString } from "react-dom/server";
 import { RegistryProvider } from "@effect/atom-react";
 import { ThemeProvider } from "next-themes";
-import { Effect, Result, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
+import { FetchHttpClient } from "effect/http";
+import * as Atom from "effect/reactivity/Atom";
 import { Demo } from "../src/components/demo.tsx";
 import RootLayout from "../src/app/layout.tsx";
 import globalStyles from "../src/app/globals.css?inline";
-import { ClassificationReply } from "../src/lib/contract.ts";
+import { PanelResponse } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
+import { browserRuntime } from "../src/client/panel-atoms.ts";
+import { initialBroadReplyThenFetch } from "./fixture-fetch.ts";
 import type {} from "@vitest/browser-playwright";
 
 const systemTheme = (theme: "light" | "dark") =>
@@ -21,14 +25,17 @@ const renderDemo = async () => {
   const response = await Effect.runPromise(
     classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
   );
+  const fetch = initialBroadReplyThenFetch(
+    Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response),
+    () => Promise.reject(new Error("Unexpected interactive classification request")),
+  );
+  const layer = FetchHttpClient.layer.pipe(
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
+  );
   return render(
     <ThemeProvider attribute="data-theme" storageKey="taxonomy-theme" defaultTheme="system">
-      <RegistryProvider>
-        <Demo
-          initial={Promise.resolve(
-            Schema.encodeSync(ClassificationReply)(Result.succeed(response)),
-          )}
-        />
+      <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
+        <Demo />
       </RegistryProvider>
     </ThemeProvider>,
   );

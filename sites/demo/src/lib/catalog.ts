@@ -1,9 +1,15 @@
 import { Schema } from "effect";
 
+/** Closed set of panel identifiers accepted by the demo request and response schemas. */
 export const PanelId = Schema.Literals(["broad", "focused", "nested"]);
 export type PanelId = typeof PanelId.Type;
+/** Panel requested when the browser first loads, before an explicit selection. */
 export const initialPanelId: PanelId = "broad";
 
+/**
+ * Authored demo records in response order, not an observed biological sample.
+ * Abundances are synthetic weights totaling 100; kinds distinguish scientific names from vague labels.
+ */
 export const records = [
   { id: "r01", name: "Saccharomyces cerevisiae", abundance: 14, kind: "species" },
   { id: "r02", name: "Kluyveromyces lactis", abundance: 8, kind: "species" },
@@ -49,6 +55,7 @@ const saccharomyces = target("Saccharomyces", "genus");
 const plantarum = target("Lactiplantibacillus plantarum", "species");
 const maripaludis = target("Methanococcus maripaludis", "species");
 
+/** Target sets in display and response order; the nested panel deliberately includes overlapping lineages. */
 export const panels: ReadonlyArray<{
   readonly id: PanelId;
   readonly name: string;

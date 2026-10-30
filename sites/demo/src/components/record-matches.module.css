@@ -107,15 +107,6 @@
   font-weight: 400;
   text-align: end;
 }
-.matched {
-  color: var(--color-matched);
-}
-.unmatched {
-  color: var(--color-unmatched);
-}
-.uncertain {
-  color: var(--color-uncertain);
-}
 @media (hover: hover) and (pointer: fine) {
   .record:hover {
     background: var(--color-surface);

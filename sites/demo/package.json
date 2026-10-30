@@ -10,7 +10,7 @@
     "credentials:token": "varlock keychain set CLOUDFLARE_API_TOKEN --project robo-taxonomist-demo --profile local --write-to .env.local",
     "dev:live": "varlock run --inject vars -- next dev --hostname 127.0.0.1",
     "build": "next build",
-    "typecheck": "next typegen && tsc --noEmit --project tsconfig.json && effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
+    "typecheck": "next typegen && tsc --noEmit --project tsconfig.json && effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "vitest run --config vitest.config.ts",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build"
   },

@@ -2,24 +2,23 @@ import { useLayoutEffect, useRef } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Option } from "effect";
 import { recordSelectionAtom } from "../client/panel-atoms.ts";
-import { records } from "../lib/catalog.ts";
-import { MatchJudgment, type PanelResponse } from "../lib/contract.ts";
-import { formatSampleShare } from "../lib/display.ts";
+import { formatSampleShare, judgmentPresentation, type PanelFindings } from "../lib/display.ts";
 import { RecordInspector } from "./record-inspector.tsx";
 import styles from "./record-matches.module.css";
 
-export function RecordMatches({ response }: { readonly response: PanelResponse }) {
+/** Browse published findings, preserving focus and local scroll when selecting or clearing. */
+export const RecordMatches = ({ findings }: { readonly findings: PanelFindings }) => {
   const selection = useAtomValue(recordSelectionAtom);
   const setSelection = useAtomSet(recordSelectionAtom);
   const selectedId = Option.isSome(selection) ? selection.value.recordId : undefined;
-  const selected = records.find((record) => record.id === selectedId);
+  const selected = findings.records.find((finding) => finding.record.id === selectedId);
   const scroller = useRef<HTMLDivElement>(null);
-  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const selectedButton = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
     if (Option.isNone(selection) || selection.value.origin !== "example") return;
     const container = scroller.current;
-    const button = buttons.current.get(selection.value.recordId);
+    const button = selectedButton.current;
     if (!container || !button) return;
     const bounds = container.getBoundingClientRect();
     const rect = button.getBoundingClientRect();
@@ -28,8 +27,7 @@ export function RecordMatches({ response }: { readonly response: PanelResponse }
   }, [selection]);
 
   const clear = () => {
-    const button = selectedId === undefined ? undefined : buttons.current.get(selectedId);
-    button?.focus({ preventScroll: true });
+    selectedButton.current?.focus({ preventScroll: true });
     setSelection(Option.none());
   };
   return (
@@ -49,15 +47,8 @@ export function RecordMatches({ response }: { readonly response: PanelResponse }
         aria-label="Sample records and selected-record matches"
       >
         <ul className={styles.recordList}>
-          {records.map((record) => {
-            const row = response.rows.find((entry) => entry.recordId === record.id);
-            const matched = row?.matches.some((match) =>
-              MatchJudgment.guards.Matched(match.judgment),
-            );
-            const uncertain = row?.matches.some((match) =>
-              MatchJudgment.guards.Undetermined(match.judgment),
-            );
-            const result = matched ? "Matches" : uncertain ? "Uncertain" : "No match";
+          {findings.records.map(({ record, judgment }) => {
+            const result = judgmentPresentation(judgment);
             const active = record.id === selectedId;
             const share = formatSampleShare(record.abundance);
             return (
@@ -69,11 +60,8 @@ export function RecordMatches({ response }: { readonly response: PanelResponse }
                   type="button"
                   className={styles.record}
                   aria-pressed={active}
-                  ref={(button) => {
-                    if (button) buttons.current.set(record.id, button);
-                    else buttons.current.delete(record.id);
-                  }}
-                  aria-label={`${record.name}, ${share} of sample. ${result}. ${active ? "Clear selection" : "Select record"}`}
+                  ref={active ? selectedButton : undefined}
+                  aria-label={`${record.name}, ${share} of sample. ${result.label}. ${active ? "Clear selection" : "Select record"}`}
                   onClick={() =>
                     active
                       ? clear()
@@ -91,10 +79,8 @@ export function RecordMatches({ response }: { readonly response: PanelResponse }
                     </span>
                   </span>
                   <span className={styles.abundance}>{share}</span>
-                  <span
-                    className={`${styles.badge} ${matched ? styles.matched : uncertain ? styles.uncertain : styles.unmatched}`}
-                  >
-                    {result}
+                  <span className={styles.badge} style={result.style}>
+                    {result.label}
                   </span>
                 </button>
                 {active && (
@@ -119,12 +105,12 @@ export function RecordMatches({ response }: { readonly response: PanelResponse }
         </ul>
         {selected && (
           <RecordInspector
-            key={selected.id}
-            record={selected}
-            response={response}
+            key={selected.record.id}
+            finding={selected}
+            panelName={findings.panel.name}
             headingRef={heading}
             onBack={() => {
-              const button = buttons.current.get(selected.id);
+              const button = selectedButton.current;
               button?.scrollIntoView({ block: "center", behavior: "instant" });
               button?.focus({ preventScroll: true });
             }}
@@ -133,4 +119,4 @@ export function RecordMatches({ response }: { readonly response: PanelResponse }
       </div>
     </section>
   );
-}
+};

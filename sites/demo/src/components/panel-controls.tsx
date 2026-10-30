@@ -1,38 +1,42 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { Ref } from "react";
 import { panels, type PanelId } from "../lib/catalog.ts";
-import { animatePanelsAtom, selectedPanelId, selectionAtom } from "../client/panel-atoms.ts";
 import styles from "./panel-controls.module.css";
 
-export function PanelControls({ onSelect }: { readonly onSelect: (panelId: PanelId) => void }) {
-  const selection = useAtomValue(selectionAtom);
-  const animatePanels = useAtomSet(animatePanelsAtom);
-  return (
-    <>
-      <fieldset
-        className={styles.panelChoices}
-        onPointerDown={() => animatePanels(true)}
-        onKeyDown={() => animatePanels(false)}
-      >
-        <legend>Compare records with</legend>
-        {panels.map((panel) => (
-          <label key={panel.id} className={styles.panelChoice}>
-            <input
-              type="radio"
-              name="target-set"
-              aria-label={panel.name}
-              aria-describedby={`panel-description-${panel.id}`}
-              checked={selectedPanelId(selection) === panel.id}
-              onChange={() => onSelect(panel.id)}
-            />
-            <span>
-              {panel.name}
-              <span id={`panel-description-${panel.id}`} className={styles.choiceDescription}>
-                {panel.description}
-              </span>
-            </span>
-          </label>
-        ))}
-      </fieldset>
-    </>
-  );
-}
+/** Controlled panel choices; exposes the selected input as a focus-return destination. */
+export const PanelControls = ({
+  selected,
+  onSelect,
+  selectedInputRef,
+}: {
+  readonly selected: PanelId;
+  readonly onSelect: (panelId: PanelId, animate: boolean) => void;
+  readonly selectedInputRef: Ref<HTMLInputElement>;
+}) => (
+  <fieldset className={styles.panelChoices}>
+    <legend>Compare records with</legend>
+    {panels.map((panel) => (
+      <label key={panel.id} className={styles.panelChoice}>
+        <input
+          type="radio"
+          name="target-set"
+          aria-label={panel.name}
+          aria-describedby={`panel-description-${panel.id}`}
+          checked={selected === panel.id}
+          ref={selected === panel.id ? selectedInputRef : undefined}
+          onChange={(event) =>
+            onSelect(
+              panel.id,
+              event.nativeEvent instanceof MouseEvent && event.nativeEvent.detail > 0,
+            )
+          }
+        />
+        <span>
+          {panel.name}
+          <span id={`panel-description-${panel.id}`} className={styles.choiceDescription}>
+            {panel.description}
+          </span>
+        </span>
+      </label>
+    ))}
+  </fieldset>
+);

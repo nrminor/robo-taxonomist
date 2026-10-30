@@ -1,70 +1,66 @@
-import { Effect, Option, Result, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { Effect, Option, Schema } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { initialPanelId, PanelId } from "../lib/catalog.ts";
 import {
   ClassificationFailure,
-  ClassificationReply,
+  classificationFailureFields,
   ClassifyRequest,
   PanelResponse,
 } from "../lib/contract.ts";
-import type { Display } from "../lib/display.ts";
 
-export const Selection = Schema.TaggedUnion({ Initial: {}, Panel: { panelId: PanelId } });
-export const selectionAtom = Atom.make<typeof Selection.Type>(Selection.cases.Initial.make({}));
-export const animatePanelsAtom = Atom.make(false);
-export const selectedPanelId = Selection.match({
-  Initial: (): PanelId => initialPanelId,
-  Panel: ({ panelId }): PanelId => panelId,
-});
-
-const ClientFailure = Schema.TaggedUnion({
+/** Server failures plus local transport/decoding failures, whose causes are not server response fields. */
+export const RequestFailure = Schema.TaggedUnion({
+  ...classificationFailureFields,
   TransportFailure: { cause: Schema.Defect() },
   ResponseDecodingFailure: { cause: Schema.Defect() },
 });
-export const RequestFailure = Schema.Union([
-  ClassificationFailure.cases.ModelFailure,
-  ClassificationFailure.cases.InvalidPanel,
-  ClassificationFailure.cases.ConfigurationFailure,
-  ClassificationFailure.cases.InternalFailure,
-  ClientFailure.cases.TransportFailure,
-  ClientFailure.cases.ResponseDecodingFailure,
-]).pipe(Schema.toTaggedUnion("_tag"));
 export type RequestFailure = typeof RequestFailure.Type;
 
-export const decodeReply = (wire: Schema.Json): Result.Result<PanelResponse, RequestFailure> =>
-  Result.match(Schema.decodeResult(ClassificationReply)(wire), {
-    onFailure: (cause) => Result.fail(ClientFailure.cases.ResponseDecodingFailure.make({ cause })),
-    onSuccess: (reply) => reply,
-  });
+const transportFailure = (cause: unknown) => RequestFailure.cases.TransportFailure.make({ cause });
+const responseDecodingFailure = (cause: unknown) =>
+  RequestFailure.cases.ResponseDecodingFailure.make({ cause });
+
+const encodeRequest = (panelId: PanelId) =>
+  HttpClientRequest.schemaBodyJson(ClassifyRequest)(HttpClientRequest.post("/api/classify"), {
+    panelId,
+  }).pipe(Effect.mapError(() => RequestFailure.cases.InternalFailure.make({})));
+
+const readSuccess = (response: HttpClientResponse.HttpClientResponse, panelId: PanelId) =>
+  HttpClientResponse.schemaBodyJson(PanelResponse)(response).pipe(
+    Effect.mapError(responseDecodingFailure),
+    Effect.filterOrFail(
+      (reply) => reply.panelId === panelId,
+      (reply) => responseDecodingFailure({ expectedPanel: panelId, receivedPanel: reply.panelId }),
+    ),
+  );
+
+const readFailure = (response: HttpClientResponse.HttpClientResponse) =>
+  HttpClientResponse.schemaBodyJson(ClassificationFailure)(response).pipe(
+    Effect.mapError(responseDecodingFailure),
+    Effect.flatMap(Effect.fail),
+  );
 
 const postClassification = Effect.fn("postClassification")(function* (panelId: PanelId) {
   const client = yield* HttpClient.HttpClient;
-  const request = yield* HttpClientRequest.schemaBodyJson(ClassifyRequest)(
-    HttpClientRequest.post("/api/classify"),
-    { panelId },
-  ).pipe(Effect.orDie);
-  const response = yield* client
-    .execute(request)
-    .pipe(Effect.mapError((cause) => ClientFailure.cases.TransportFailure.make({ cause })));
-  const wire = yield* response.json.pipe(
-    Effect.mapError((cause) => ClientFailure.cases.ResponseDecodingFailure.make({ cause })),
-  );
-  const result = yield* Effect.fromResult(decodeReply(wire));
-  if (response.status < 200 || response.status >= 300 || result.panelId !== panelId) {
-    return yield* Effect.fail(
-      ClientFailure.cases.ResponseDecodingFailure.make({
-        cause: { status: response.status, expectedPanel: panelId, receivedPanel: result.panelId },
-      }),
-    );
-  }
-  return result;
+  const request = yield* encodeRequest(panelId);
+  const response = yield* client.execute(request).pipe(Effect.mapError(transportFailure));
+  return yield* HttpClientResponse.matchStatus(response, {
+    "2xx": (response) => readSuccess(response, panelId),
+    orElse: readFailure,
+  });
 });
 
+/** Shared atom runtime supplying browser Fetch for classification requests. */
 export const browserRuntime = Atom.runtime(FetchHttpClient.layer);
+/** Initial panel request with a server-renderable initial state and no idle retention. */
+export const initialQueryAtom = browserRuntime
+  .atom(postClassification(initialPanelId))
+  .pipe(Atom.setIdleTTL(0), Atom.withServerValueInitial);
+/** Run a selected-panel request, validating response structure and that its panel ID matches the request. */
 export const selectPanelAtom = browserRuntime.fn(postClassification);
-export const displayedAtom = Atom.make<Option.Option<Display>>(Option.none());
 
+/** Optional inspected record and interaction origin, allowing views to distinguish list and example choices. */
 export const recordSelectionAtom = Atom.make<
   Option.Option<{ readonly recordId: string; readonly origin: "record" | "example" }>
 >(Option.none());

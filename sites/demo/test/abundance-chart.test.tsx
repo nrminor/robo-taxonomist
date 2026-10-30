@@ -2,17 +2,12 @@ import { afterEach, expect, it } from "vitest";
 import { cleanup, render } from "vitest-browser-react";
 import { page, userEvent } from "vitest/browser";
 import { StrictMode } from "react";
-import { Effect, Layer, Result, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { RegistryProvider } from "@effect/atom-react";
 import { Demo } from "../src/components/demo.tsx";
-import {
-  ClassificationReply,
-  ClassifyRequest,
-  MatchJudgment,
-  PanelResponse,
-} from "../src/lib/contract.ts";
+import { ClassifyRequest, MatchJudgment, PanelResponse } from "../src/lib/contract.ts";
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
@@ -26,24 +21,36 @@ afterEach(async () => {
 const fixture = (panelId: PanelId) =>
   Effect.runPromise(classifyPanel(panelId).pipe(Effect.provide(PanelResults.layer)));
 const wire = (response: PanelResponse) =>
-  Schema.encodeSync(ClassificationReply)(Result.succeed(response));
+  Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response);
 const renderDemo = async (response: PanelResponse) => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const request = Schema.decodeUnknownSync(ClassifyRequest)(
       await new Request(input, init).json(),
     );
-    return Response.json(wire(await fixture(request.panelId)));
+    return Response.json(
+      wire(request.panelId === response.panelId ? response : await fixture(request.panelId)),
+    );
   };
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
-  return render(
+  const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
-        <Demo initial={Promise.resolve(wire(response))} />
+        <Demo />
       </RegistryProvider>
     </StrictMode>,
   );
+  await expect
+    .element(view.getByRole("region", { name: "Broad groups", exact: true }))
+    .toBeVisible();
+  if (response.panelId !== "broad") {
+    const name =
+      response.panelId === "nested" ? "Groups and subgroups" : "Families, genera and species";
+    await view.getByRole("radio", { name, exact: true }).click();
+    await expect.element(view.getByRole("region", { name, exact: true })).toBeVisible();
+  }
+  return view;
 };
 
 it("paints full record shares in catalog order and selects only actual contributions", async () => {

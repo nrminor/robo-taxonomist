@@ -3,34 +3,50 @@ import { render } from "vitest-browser-react";
 import { page } from "vitest/browser";
 import { RegistryProvider } from "@effect/atom-react";
 import { StrictMode } from "react";
-import { DateTime, Effect, Layer, Result, Schema } from "effect";
+import { DateTime, Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { Demo } from "../src/components/demo.tsx";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
 import {
   ClassificationFailure,
-  ClassificationReply,
+  PanelResponse,
   ClassifyRequest,
   PublicModelReason,
 } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
+import { initialBroadReplyThenFetch } from "./fixture-fetch.ts";
 
-const renderDemo = async (initial: Schema.Json, mockFetch: typeof globalThis.fetch) => {
+const renderHttpDemo = async (fetch: typeof globalThis.fetch) => {
   const layer = FetchHttpClient.layer.pipe(
-    Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, mockFetch)),
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
-  return render(
+  const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
-        <Demo initial={Promise.resolve(initial)} />
+        <Demo />
       </RegistryProvider>
     </StrictMode>,
   );
+  await expect
+    .poll(
+      () =>
+        view.getByRole("alert").elements().length +
+        view.getByRole("region", { name: "Panel targets" }).elements().length,
+    )
+    .toBe(1);
+  return view;
 };
 
+// mockFetch arguments in these tests count only explicit panel/retry requests.
+const renderDemo = (
+  initial: Schema.Json,
+  interactiveFetch: typeof globalThis.fetch,
+  initialStatus = 200,
+) => renderHttpDemo(initialBroadReplyThenFetch(initial, interactiveFetch, initialStatus));
+
 const failedReply = (failure: ClassificationFailure) =>
-  Schema.encodeSync(ClassificationReply)(Result.fail(failure));
+  Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
 
 it("waits for an explicit retry after showing the initial rate limit and sends the selected panel", async () => {
   const initial = failedReply(
@@ -40,8 +56,10 @@ it("waits for an explicit retry after showing the initial rate limit and sends t
       requestId: "req-rate-limit",
     }),
   );
-  const mockFetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(initial)));
-  await renderDemo(initial, mockFetch);
+  const mockFetch = vi.fn<typeof globalThis.fetch>(() =>
+    Promise.resolve(Response.json(initial, { status: 503 })),
+  );
+  await renderDemo(initial, mockFetch, 503);
 
   await expect
     .element(page.getByRole("alert"))
@@ -78,7 +96,7 @@ it.each([
     }),
   );
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
-  await renderDemo(initial, mockFetch);
+  await renderDemo(initial, mockFetch, 503);
 
   await expect.element(page.getByRole("alert")).toMatchTextContent(message);
   await expect.element(page.getByText("Request ID: req-auth")).toBeVisible();
@@ -96,7 +114,7 @@ it("shows the quota reset time without offering a request that cannot succeed ye
     }),
   );
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
-  await renderDemo(initial, mockFetch);
+  await renderDemo(initial, mockFetch, 503);
 
   await expect
     .element(page.getByRole("alert"))
@@ -136,9 +154,9 @@ it.each([
     const broad = await Effect.runPromise(
       classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
     );
-    const success = Schema.encodeSync(ClassificationReply)(Result.succeed(broad));
+    const success = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(broad);
     const mockFetch = vi.fn(() => Promise.resolve(Response.json(success)));
-    await renderDemo(initial, mockFetch);
+    await renderDemo(initial, mockFetch, 503);
 
     await expect.element(page.getByRole("alert")).toMatchTextContent(message);
     expect(mockFetch).not.toHaveBeenCalled();
@@ -176,7 +194,7 @@ it("does not display an invalid authentication kind from a malformed reply", asy
     JSON.stringify(valid).replace('"InvalidKey"', '"SECRET invalid authentication kind"'),
   );
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
-  await renderDemo(invalid, mockFetch);
+  await renderDemo(invalid, mockFetch, 503);
 
   await expect
     .element(page.getByRole("alert"))
@@ -207,7 +225,7 @@ it.each([
     const broad = await Effect.runPromise(
       classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
     );
-    const initial = Schema.encodeSync(ClassificationReply)(Result.succeed(broad));
+    const initial = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(broad);
     const mockFetch = vi.fn<typeof globalThis.fetch>(response);
     await renderDemo(initial, mockFetch);
 
@@ -225,5 +243,29 @@ it.each([
         await new Response(retry[1]?.body).text(),
       ),
     ).toEqual({ panelId: "nested" });
+  },
+);
+
+it.each([
+  [
+    "transport",
+    () => Promise.reject(new Error("SECRET network cause")),
+    "Could not complete the request. Check your connection, then try again.",
+  ],
+  [
+    "malformed JSON",
+    () => Promise.resolve(new Response("SECRET invalid JSON")),
+    "Could not read the reply. Try again.",
+  ],
+] as const)(
+  "shows safe guidance when the initial POST fails with %s",
+  async (_kind, response, message) => {
+    const fetch = vi.fn<typeof globalThis.fetch>(response);
+    await renderHttpDemo(fetch);
+    await expect.element(page.getByRole("alert")).toMatchTextContent(message);
+    await expect.element(page.getByText(/SECRET/)).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]?.[1]?.method).toBe("POST");
   },
 );

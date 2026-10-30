@@ -1,13 +1,9 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { ConfigProvider, Layer, ManagedRuntime, Result, Schema } from "effect";
+import { ConfigProvider, Layer, ManagedRuntime, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
-import {
-  ClassificationFailure,
-  ClassificationReply,
-  PublicModelReason,
-} from "../src/lib/contract.ts";
+import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 
@@ -76,14 +72,19 @@ it.each(invalidConfigurations)(
       const handlers = makeHandlers(runtime);
       const response = await handlers.classifyHttp(requestPanel());
       expect(response.status).toBe(503);
-      const expected = Result.fail(ClassificationFailure.cases.ConfigurationFailure.make({}));
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      const expected = ClassificationFailure.cases.ConfigurationFailure.make({});
       const wire = await response.text();
       expect(wire).not.toContain(token);
       expect(wire).not.toContain("SECRET");
-      expect(Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(wire))).toEqual(expected);
-      expect(Schema.decodeSync(ClassificationReply)(await handlers.initialReply())).toEqual(
-        expected,
-      );
+      expect(
+        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+      ).toEqual(expected);
+      const repeated = await handlers.classifyHttp(requestPanel());
+      expect(repeated.status).toBe(503);
+      expect(
+        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(await repeated.json()),
+      ).toEqual(expected);
       expect(fetch).not.toHaveBeenCalled();
     } finally {
       await runtime.dispose();
@@ -152,19 +153,23 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
     const handlers = makeHandlers(runtime);
     const response = await handlers.classifyHttp(requestPanel());
     expect(response.status).toBe(200);
-    const reply = Schema.decodeUnknownSync(ClassificationReply)(await response.json());
-    expect(Result.isSuccess(reply)).toBe(true);
-    if (Result.isSuccess(reply)) {
-      expect(reply.success.rows).toHaveLength(24);
-      expect(reply.success.rows[0]?.matches[0]).toMatchObject({
-        targetId: "fungi",
-        judgment: { _tag: "NotMatched" },
-        support: 0.02,
-        answer: { label: "noMatch", confidence: 0.8 },
-      });
-    }
+    const reply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(
+      await response.json(),
+    );
+    expect(reply.rows).toHaveLength(24);
+    expect(reply.rows[0]?.matches[0]).toMatchObject({
+      targetId: "fungi",
+      judgment: { _tag: "NotMatched" },
+      support: 0.02,
+      answer: { label: "noMatch", confidence: 0.8 },
+    });
     expect(questionCounts).toEqual([36, 36, 36, 36]);
-    expect(Schema.decodeSync(ClassificationReply)(await handlers.initialReply())).toEqual(reply);
+    const cached = await handlers.classifyHttp(requestPanel());
+    expect(cached.status).toBe(200);
+    expect(cached.headers.get("Cache-Control")).toBe("no-store");
+    expect(
+      Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(await cached.json()),
+    ).toEqual(reply);
     expect(fetch).toHaveBeenCalledTimes(4);
     expect((await handlers.classifyHttp(requestPanel("focused"))).status).toBe(200);
     expect(questionCounts).toEqual([36, 36, 36, 36, 60, 60, 60, 60]);
@@ -221,9 +226,9 @@ it.each([
       const wire = await response.text();
       expect(wire).not.toContain("SECRET");
       expect(wire).not.toContain(token);
-      expect(Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(wire))).toEqual(
-        Result.fail(ClassificationFailure.cases.ModelFailure.make({ reason, retryable })),
-      );
+      expect(
+        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+      ).toEqual(ClassificationFailure.cases.ModelFailure.make({ reason, retryable }));
       expect(fetch).toHaveBeenCalledTimes(1);
     } finally {
       await runtime.dispose();
@@ -240,13 +245,13 @@ it("sanitizes transport failures without retrying", async () => {
     const wire = await response.text();
     expect(wire).not.toContain(token);
     expect(wire).not.toContain("SECRET");
-    expect(Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(wire))).toEqual(
-      Result.fail(
-        ClassificationFailure.cases.ModelFailure.make({
-          reason: PublicModelReason.cases.NetworkError.make({}),
-          retryable: true,
-        }),
-      ),
+    expect(
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+    ).toEqual(
+      ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.NetworkError.make({}),
+        retryable: true,
+      }),
     );
     expect(fetch).toHaveBeenCalledTimes(1);
   } finally {
@@ -331,13 +336,13 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
     try {
       const response = await makeHandlers(runtime).classifyHttp(requestPanel());
       expect(response.status).toBe(503);
-      expect(Schema.decodeUnknownSync(ClassificationReply)(await response.json())).toEqual(
-        Result.fail(
-          ClassificationFailure.cases.ModelFailure.make({
-            reason: PublicModelReason.cases.InvalidOutputError.make({}),
-            retryable: true,
-          }),
-        ),
+      expect(
+        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(await response.json()),
+      ).toEqual(
+        ClassificationFailure.cases.ModelFailure.make({
+          reason: PublicModelReason.cases.InvalidOutputError.make({}),
+          retryable: true,
+        }),
       );
       expect(fetch).toHaveBeenCalledTimes(1);
     } finally {

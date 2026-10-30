@@ -1,18 +1,15 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, DateTime, Duration, Option, Result, Schema } from "effect";
+import { Cause, DateTime, Duration, Option, Schema } from "effect";
 import { AiError } from "effect/ai";
-import {
-  ClassificationFailure,
-  ClassificationReply,
-  PublicModelReason,
-} from "../src/lib/contract.ts";
+import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { publicModelFailure, publicCauseFailure } from "../src/lib/failures.ts";
 
-it("round trips safe failures through the JSON result contract", () => {
+it("round trips safe failures as direct JSON bodies", () => {
   const failure = ClassificationFailure.cases.InvalidPanel.make({});
-  const encoded = Schema.encodeSync(ClassificationReply)(Result.fail(failure));
+  const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
+  expect(encoded).toEqual({ _tag: "InvalidPanel" });
   expect(JSON.parse(JSON.stringify(encoded))).toEqual(encoded);
-  expect(Schema.decodeSync(ClassificationReply)(encoded)).toEqual(Result.fail(failure));
+  expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
 });
 
 it("retains all 18 upstream failure categories while allowlisting their fields", () => {
@@ -73,17 +70,26 @@ it("retains all 18 upstream failure categories while allowlisting their fields",
     if (failure.reason._tag === "QuotaExhaustedError") {
       expect(failure.reason.resetAt).toEqual(DateTime.makeUnsafe("2026-10-29T00:00:00Z"));
     }
-    const encoded = Schema.encodeSync(ClassificationReply)(Result.fail(failure));
+    const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
+    if (failure.reason._tag === "QuotaExhaustedError") {
+      expect(encoded).toMatchObject({
+        reason: { _tag: "QuotaExhaustedError", resetAt: "2026-10-29T00:00:00.000Z" },
+      });
+    }
     expect(JSON.stringify(failure)).not.toContain("SECRET");
     expect(JSON.stringify(encoded)).not.toContain("SECRET");
     expect(
-      Schema.decodeUnknownSync(ClassificationReply)(JSON.parse(JSON.stringify(encoded))),
-    ).toEqual(Result.fail(failure));
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+        JSON.parse(JSON.stringify(encoded)),
+      ),
+    ).toEqual(failure);
   }
 });
 
-it("rejects invalid retry delays and malformed replies at the boundary", () => {
-  expect(() => Schema.decodeSync(ClassificationReply)({ unexpected: true })).toThrow();
+it("rejects invalid retry delays and malformed failure bodies at the boundary", () => {
+  expect(() =>
+    Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))({ unexpected: true }),
+  ).toThrow();
   expect(() =>
     Schema.decodeSync(PublicModelReason)({ _tag: "RateLimitError", retryAfterMs: -1 }),
   ).toThrow();
@@ -109,12 +115,27 @@ it("projects retry guidance without leaking provider descriptions or causes", ()
     }),
   );
   expect(
-    JSON.stringify(Schema.encodeSync(ClassificationReply)(Result.fail(failure))),
+    JSON.stringify(Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure)),
   ).not.toContain("SECRET");
   expect(publicCauseFailure(Cause.interrupt(1))).toEqual(Option.none());
   expect(publicCauseFailure(Cause.die("SECRET"))).toEqual(
     Option.some(ClassificationFailure.cases.InternalFailure.make({})),
   );
+});
+
+it.each([
+  ClassificationFailure.cases.InvalidPanel.make({}),
+  ClassificationFailure.cases.ConfigurationFailure.make({ requestId: "demo-42" }),
+  ClassificationFailure.cases.InternalFailure.make({ requestId: "demo-42" }),
+  ClassificationFailure.cases.ModelFailure.make({
+    reason: PublicModelReason.cases.RateLimitError.make({ retryAfterMs: 0 }),
+    retryable: true,
+    requestId: "demo-42",
+  }),
+])("keeps failure $_tag bodies out of the success protocol", (failure) => {
+  const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
+  expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
+  expect(() => Schema.decodeSync(Schema.toCodecJson(PanelResponse))(encoded)).toThrow();
 });
 
 it("does not disguise a mixed defect as a retryable model failure", () => {

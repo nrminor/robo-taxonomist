@@ -3,6 +3,7 @@ import { AiError } from "effect/ai";
 import { PanelId, panels, records } from "./catalog.ts";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+/** Public match outcome, separate from the model's finer-grained answer label and probabilities. */
 export const MatchJudgment = Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} });
 export type MatchJudgment = typeof MatchJudgment.Type;
 const Match = Schema.Struct({
@@ -24,6 +25,11 @@ const Match = Schema.Struct({
 const matchFor = (targetId: string) =>
   Schema.Struct({ ...Match.fields, targetId: Schema.Literal(targetId) });
 
+/**
+ * Validated panel result: the codec enforces every catalog record and selected target in order,
+ * with exact tuple lengths. Support, confidence and probabilities must be finite values in [0, 1];
+ * the codec does not enforce that probabilities sum to one or agree with the label.
+ */
 export type PanelResponse = {
   readonly panelId: PanelId;
   readonly rows: ReadonlyArray<{
@@ -50,6 +56,10 @@ export const PanelResponse: Schema.Codec<PanelResponse> = Schema.Union(
   ),
 );
 
+/**
+ * Allowlisted model-error metadata for browser responses, excluding provider messages and requests.
+ * Retry delays are nonnegative milliseconds; quota reset times are UTC instants.
+ */
 export const PublicModelReason = Schema.TaggedUnion({
   RateLimitError: {
     retryAfterMs: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -73,7 +83,8 @@ export const PublicModelReason = Schema.TaggedUnion({
   InvalidUserInputError: {},
 });
 export type PublicModelReason = typeof PublicModelReason.Type;
-export const ClassificationFailure = Schema.TaggedUnion({
+/** Shared failure variants used by the server contract and the client's extended error schema. */
+export const classificationFailureFields = {
   ModelFailure: {
     reason: PublicModelReason,
     retryable: Schema.Boolean,
@@ -82,9 +93,9 @@ export const ClassificationFailure = Schema.TaggedUnion({
   InvalidPanel: {},
   ConfigurationFailure: { requestId: Schema.optional(Schema.String) },
   InternalFailure: { requestId: Schema.optional(Schema.String) },
-});
+};
+/** Browser-facing failures with optional correlation IDs, rather than raw server or provider errors. */
+export const ClassificationFailure = Schema.TaggedUnion(classificationFailureFields);
 export type ClassificationFailure = typeof ClassificationFailure.Type;
-export const ClassificationReply = Schema.toCodecJson(
-  Schema.Result(PanelResponse, ClassificationFailure),
-);
+/** Request body limited to a known panel ID; the HTTP handler additionally rejects excess properties. */
 export const ClassifyRequest = Schema.Struct({ panelId: PanelId });

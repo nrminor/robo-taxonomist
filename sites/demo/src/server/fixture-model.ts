@@ -63,6 +63,11 @@ const authoredAnswer = (
   });
 };
 
+/**
+ * Deterministic, offline teaching model using authored placements and illustrative probabilities.
+ * It expects the demo's serialized records and indexed decision keys; unexpected input is a defect,
+ * not a live taxonomy inference or evidence of natural co-occurrence.
+ */
 export const FixtureModel = Layer.effect(
   DecisionModel.DecisionModel,
   DecisionModel.make({

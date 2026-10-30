@@ -1,18 +1,13 @@
 import "server-only";
-import { Effect, Exit, Layer, ManagedRuntime, Option, Result, Schema } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
-import { initialPanelId } from "../lib/catalog.ts";
-import {
-  ClassificationFailure,
-  ClassificationReply,
-  ClassifyRequest,
-  PanelResponse,
-} from "../lib/contract.ts";
+import { ClassificationFailure, ClassifyRequest, PanelResponse } from "../lib/contract.ts";
 import { publicCauseFailure } from "../lib/failures.ts";
 import { classifyPanel, PanelResults } from "./panel-results.ts";
 import { ConfiguredPanelResults } from "./configured-model.ts";
 
-const encodeReply = Schema.encodeSync(ClassificationReply);
+const encodeSuccess = Schema.encodeSync(Schema.toCodecJson(PanelResponse));
+const encodeFailure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure));
 
 const failureStatus = (failure: ClassificationFailure): number =>
   ClassificationFailure.match(failure, {
@@ -33,25 +28,10 @@ const classifyRequest = Effect.fn("classifyRequest")(function* (request: Request
   return yield* classifyPanel(input.panelId);
 });
 
-const toInitialReply = (exit: Exit.Exit<PanelResponse, ClassificationFailure>): Schema.Json =>
-  Exit.match(exit, {
-    onSuccess: (value) => encodeReply(Result.succeed(value)),
-    // There is no user signal here. An internal interruption resolves to a safe
-    // failure instead of rejecting an RSC promise with an Effect cause.
-    onFailure: (cause) =>
-      encodeReply(
-        Result.fail(
-          Option.getOrElse(publicCauseFailure(cause), () =>
-            ClassificationFailure.cases.InternalFailure.make({}),
-          ),
-        ),
-      ),
-  });
-
 const toHttpResponse = (exit: Exit.Exit<PanelResponse, ClassificationFailure>): Response =>
   Exit.match(exit, {
     onSuccess: (value) =>
-      Response.json(encodeReply(Result.succeed(value)), {
+      Response.json(encodeSuccess(value), {
         status: 200,
         headers: { "Cache-Control": "no-store" },
       }),
@@ -59,18 +39,21 @@ const toHttpResponse = (exit: Exit.Exit<PanelResponse, ClassificationFailure>): 
       Option.match(publicCauseFailure(cause), {
         onNone: () => new Response(null, { status: 499, headers: { "Cache-Control": "no-store" } }),
         onSome: (failure) =>
-          Response.json(encodeReply(Result.fail(failure)), {
+          Response.json(encodeFailure(failure), {
             status: failureStatus(failure),
             headers: { "Cache-Control": "no-store" },
           }),
       }),
   });
 
+/**
+ * Bind HTTP classification to a supplied runtime. Reject malformed or excess request fields,
+ * propagate request cancellation, and encode public success/failure payloads with no-store headers.
+ * Interruption-only exits produce an empty 499 response.
+ */
 export const makeHandlers = (
   runtime: ManagedRuntime.ManagedRuntime<PanelResults, ClassificationFailure>,
 ) => ({
-  initialReply: async (): Promise<Schema.Json> =>
-    toInitialReply(await runtime.runPromiseExit(classifyPanel(initialPanelId))),
   classifyHttp: async (request: Request): Promise<Response> =>
     toHttpResponse(
       await runtime.runPromiseExit(classifyRequest(request), { signal: request.signal }),
@@ -80,4 +63,5 @@ export const makeHandlers = (
 const runtime = ManagedRuntime.make(
   ConfiguredPanelResults.pipe(Layer.provide(FetchHttpClient.layer)),
 );
-export const { initialReply, classifyHttp } = makeHandlers(runtime);
+/** Configured classification handler; fixture/live selection and the cache belong to the module runtime. */
+export const { classifyHttp } = makeHandlers(runtime);

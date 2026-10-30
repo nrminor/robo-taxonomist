@@ -63,6 +63,11 @@ const httpError = (error: HttpClientError.HttpClientError): AiError.AiError => {
   }
 };
 
+/**
+ * Live Cloudflare Clef adapter requiring an HTTP client and server-side credentials.
+ * Accepts 1–64 Classify decisions per call; validates response shape, [0, 1] probabilities and
+ * nonnegative integer token counts. Response decoding alone does not enforce probability normalization.
+ */
 export const clefModelLayer = (options: {
   readonly accountId: string;
   readonly apiToken: Redacted.Redacted<string>;

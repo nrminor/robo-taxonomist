@@ -1,42 +1,90 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { page, userEvent } from "vitest/browser";
-import { StrictMode } from "react";
-import { Effect, Layer, Result, Schema } from "effect";
+import { cdp, page, userEvent } from "vitest/browser";
+import { Profiler, StrictMode, type ProfilerOnRenderCallback } from "react";
+import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { RegistryProvider } from "@effect/atom-react";
 import { Demo } from "../src/components/demo.tsx";
-import {
-  ClassificationFailure,
-  ClassificationReply,
-  PublicModelReason,
-} from "../src/lib/contract.ts";
+import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
+import { initialBroadReplyThenFetch } from "./fixture-fetch.ts";
 
-afterEach(() => page.viewport(1440, 1000));
+afterEach(async () => {
+  await page.viewport(1440, 1000);
+  await cdp().send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+  });
+});
+
+it("uses the keyboard retry's motion policy after a pointer-initiated failure", async () => {
+  await cdp().send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+  });
+  const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
+    ClassificationFailure.cases.ModelFailure.make({
+      reason: PublicModelReason.cases.RateLimitError.make({}),
+      retryable: true,
+    }),
+  );
+  const focused = await replyFor("focused");
+  const interactiveFetch = vi
+    .fn<() => Promise<Response>>()
+    .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
+    .mockResolvedValueOnce(Response.json(focused));
+  const view = await renderDemo(interactiveFetch);
+  await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+  await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
+  await expect.element(view.getByRole("alert")).toBeVisible();
+  view.getByRole("button", { name: "Try again", exact: true }).element().focus();
+  await userEvent.keyboard("{Enter}");
+  await expect
+    .element(
+      view.getByRole("region", {
+        name: "Families, genera and species",
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  expect(document.querySelector("[data-animate]")).toHaveAttribute("data-animate", "false");
+  expect(document.querySelector('[data-phase="exiting"], [data-phase="entering"]')).toBeNull();
+  expect(interactiveFetch).toHaveBeenCalledTimes(2);
+});
 
 const replyFor = (panelId: PanelId) =>
   Effect.runPromise(
     classifyPanel(panelId).pipe(
       Effect.provide(PanelResults.layer),
-      Effect.map((response) => Schema.encodeSync(ClassificationReply)(Result.succeed(response))),
+      Effect.map((response) => Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response)),
     ),
   );
 
-const renderDemo = async (fetch: typeof globalThis.fetch) => {
+const renderDemo = async (
+  interactiveFetch: typeof globalThis.fetch,
+  onRender?: ProfilerOnRenderCallback,
+) => {
+  const fetch = initialBroadReplyThenFetch(await replyFor("broad"), interactiveFetch);
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
-  return render(
+  const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
-        <Demo initial={Promise.resolve(await replyFor("broad"))} />
+        {onRender === undefined ? (
+          <Demo />
+        ) : (
+          <Profiler id="demo" onRender={onRender}>
+            <Demo />
+          </Profiler>
+        )}
       </RegistryProvider>
     </StrictMode>,
   );
+  await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+  return view;
 };
 
 it("keeps Current record and the mobile workspace in place throughout a pending panel change", async () => {
@@ -67,40 +115,37 @@ it("keeps Current record and the mobile workspace in place throughout a pending 
 it("keeps the old results busy for a full visible update before publishing a ready reply", async () => {
   const focused = await replyFor("focused");
   const pending = Promise.withResolvers<Response>();
-  const view = await renderDemo(() => pending.promise);
   const shown = Promise.withResolvers<number>();
   const published = Promise.withResolvers<number>();
-  const observer = new MutationObserver(() => {
+  const observeCommit: ProfilerOnRenderCallback = (
+    _id,
+    _phase,
+    _actual,
+    _base,
+    _started,
+    committedAt,
+  ) => {
     const status = document.querySelector('main [role="status"]');
-    if (status?.textContent?.startsWith("Updating to")) shown.resolve(performance.now());
+    if (status?.textContent?.startsWith("Updating to")) shown.resolve(committedAt);
     if (document.querySelector('section[aria-label="Families, genera and species"]'))
-      published.resolve(performance.now());
-  });
-  observer.observe(document.body, {
-    childList: true,
-    characterData: true,
-    attributes: true,
-    subtree: true,
-  });
-  try {
-    const broad = view.getByRole("region", { name: "Broad groups", exact: true });
-    await expect.element(broad).toBeVisible();
-    const workspace = broad.element().parentElement;
-    if (workspace === null) throw new Error("Results workspace missing");
-    await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
-    const shownAt = await shown.promise;
-    pending.resolve(Response.json(focused));
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    await expect.element(broad).toBeVisible();
-    expect(workspace).toHaveAttribute("aria-busy", "true");
-    expect((await published.promise) - shownAt).toBeGreaterThanOrEqual(245);
-    await expect
-      .element(view.getByRole("status"))
-      .toMatchTextContent("Families, genera and species results displayed.");
-    expect(workspace).toHaveAttribute("aria-busy", "false");
-  } finally {
-    observer.disconnect();
-  }
+      published.resolve(committedAt);
+  };
+  const view = await renderDemo(() => pending.promise, observeCommit);
+  const broad = view.getByRole("region", { name: "Broad groups", exact: true });
+  await expect.element(broad).toBeVisible();
+  const workspace = broad.element().parentElement;
+  if (workspace === null) throw new Error("Results workspace missing");
+  await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
+  const shownAt = await shown.promise;
+  pending.resolve(Response.json(focused));
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await expect.element(broad).toBeVisible();
+  expect(workspace).toHaveAttribute("aria-busy", "true");
+  expect((await published.promise) - shownAt).toBeGreaterThanOrEqual(245);
+  await expect
+    .element(view.getByRole("status"))
+    .toMatchTextContent("Families, genera and species results displayed.");
+  expect(workspace).toHaveAttribute("aria-busy", "false");
 });
 
 it("publishes a fast reply without briefly announcing an update", async () => {
@@ -126,16 +171,60 @@ it("publishes a fast reply without briefly announcing an update", async () => {
   }
 });
 
+it("holds an immediately successful retry for a full committed update and restores panel focus", async () => {
+  const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
+    ClassificationFailure.cases.ModelFailure.make({
+      reason: PublicModelReason.cases.RateLimitError.make({}),
+      retryable: true,
+    }),
+  );
+  const focused = await replyFor("focused");
+  const interactiveFetch = vi
+    .fn<() => Promise<Response>>()
+    .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
+    .mockResolvedValueOnce(Response.json(focused));
+  const shown = Promise.withResolvers<number>();
+  const published = Promise.withResolvers<number>();
+  const observeCommit: ProfilerOnRenderCallback = (
+    _id,
+    _phase,
+    _actual,
+    _base,
+    _started,
+    committedAt,
+  ) => {
+    const status = document.querySelector('main [role="status"]');
+    if (status?.textContent?.startsWith("Retrying")) shown.resolve(committedAt);
+    if (document.querySelector('section[aria-label="Families, genera and species"]'))
+      published.resolve(committedAt);
+  };
+  const view = await renderDemo(interactiveFetch, observeCommit);
+  const panel = view.getByRole("radio", { name: "Families, genera and species", exact: true });
+  await panel.click();
+  await expect.element(view.getByRole("alert")).toBeVisible();
+  await view.getByRole("button", { name: "Try again", exact: true }).click();
+  // Retry feedback must commit even when the response is already available.
+  expect((await published.promise) - (await shown.promise)).toBeGreaterThanOrEqual(245);
+  await expect
+    .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
+    .toBeVisible();
+  await expect
+    .element(view.getByRole("region", { name: "Panel update", exact: true }))
+    .not.toBeInTheDocument();
+  await expect.element(panel).toHaveFocus();
+  expect(interactiveFetch).toHaveBeenCalledTimes(2);
+});
+
 it("discards a held success when another panel replaces it, preserving the committed comparison", async () => {
   const focused = await replyFor("focused");
   const nested = await replyFor("nested");
   const first = Promise.withResolvers<Response>();
   const second = Promise.withResolvers<Response>();
-  const fetch = vi
+  const interactiveFetch = vi
     .fn<() => Promise<Response>>()
     .mockImplementationOnce(() => first.promise)
     .mockImplementationOnce(() => second.promise);
-  const view = await renderDemo(fetch);
+  const view = await renderDemo(interactiveFetch);
   const broad = view.getByRole("region", { name: "Broad groups", exact: true });
   await expect.element(broad).toBeVisible();
   const published: string[] = [];
@@ -168,7 +257,7 @@ it("discards a held success when another panel replaces it, preserving the commi
       .element(view.getByText("Matches changed for 19 records since Broad groups."))
       .toBeVisible();
     expect(published).not.toContain("Families, genera and species");
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(interactiveFetch).toHaveBeenCalledTimes(2);
   } finally {
     observer.disconnect();
   }
@@ -181,22 +270,20 @@ it.each([
   "keeps long failures bounded and preserves retry focus at $width px ($focus)",
   async ({ width, focus }) => {
     await page.viewport(width, 1000);
-    const failure = Schema.encodeSync(ClassificationReply)(
-      Result.fail(
-        ClassificationFailure.cases.ModelFailure.make({
-          reason: PublicModelReason.cases.RateLimitError.make({}),
-          retryable: true,
-          requestId: `req-${"x".repeat(2000)}`,
-        }),
-      ),
+    const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
+      ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.RateLimitError.make({}),
+        retryable: true,
+        requestId: `req-${"x".repeat(2000)}`,
+      }),
     );
     const focused = await replyFor("focused");
     const retried = Promise.withResolvers<Response>();
-    const fetch = vi
+    const interactiveFetch = vi
       .fn<() => Promise<Response>>()
       .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
       .mockImplementationOnce(() => retried.promise);
-    const view = await renderDemo(fetch);
+    const view = await renderDemo(interactiveFetch);
     const current = view.getByRole("region", { name: "Current record" });
     await expect.element(current).toBeVisible();
     const top = current.element().getBoundingClientRect().top;
@@ -219,7 +306,7 @@ it.each([
     await expect.element(retry).toHaveFocus();
     await expect.element(retry).toHaveAttribute("aria-disabled", "true");
     await userEvent.keyboard("{Enter}");
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(interactiveFetch).toHaveBeenCalledTimes(2);
     const record = view.getByRole("button", { name: /^Saccharomyces cerevisiae, / });
     if (focus === "record") {
       record.element().focus({ preventScroll: true });
@@ -241,20 +328,18 @@ it.each([
 );
 
 it("announces a new retry failure even when its request details were collapsed", async () => {
-  const failure = Schema.encodeSync(ClassificationReply)(
-    Result.fail(
-      ClassificationFailure.cases.ModelFailure.make({
-        reason: PublicModelReason.cases.RateLimitError.make({}),
-        retryable: true,
-      }),
-    ),
+  const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
+    ClassificationFailure.cases.ModelFailure.make({
+      reason: PublicModelReason.cases.RateLimitError.make({}),
+      retryable: true,
+    }),
   );
   const pending = Promise.withResolvers<Response>();
-  const fetch = vi
+  const interactiveFetch = vi
     .fn<() => Promise<Response>>()
     .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
     .mockImplementationOnce(() => pending.promise);
-  const view = await renderDemo(fetch);
+  const view = await renderDemo(interactiveFetch);
   await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
   await expect.element(view.getByRole("alert")).toBeVisible();
   await view.getByRole("button", { name: "Try again", exact: true }).click();

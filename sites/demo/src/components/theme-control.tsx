@@ -10,6 +10,7 @@ const themeAfterToggle = (resolvedTheme: string | undefined) =>
     ? "light"
     : "dark";
 
+/** Toggle an explicit light/dark preference, consulting system appearance only on click if unresolved. */
 export const ThemeControl = () => {
   const { resolvedTheme, setTheme } = useTheme();
   return (

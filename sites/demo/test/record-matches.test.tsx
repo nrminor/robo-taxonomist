@@ -2,14 +2,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { page, userEvent } from "vitest/browser";
 import { RegistryProvider } from "@effect/atom-react";
-import { Effect, Layer, Result, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { Demo } from "../src/components/demo.tsx";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
-import { ClassificationReply, ClassifyRequest } from "../src/lib/contract.ts";
+import { PanelResponse, ClassifyRequest } from "../src/lib/contract.ts";
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
+import { initialBroadReplyThenFetch } from "./fixture-fetch.ts";
 
 afterEach(async () => {
   await page.viewport(1440, 1000);
@@ -19,20 +20,22 @@ const classifyFixture = (panelId: PanelId) =>
   Effect.runPromise(
     classifyPanel(panelId).pipe(
       Effect.provide(PanelResults.layer),
-      Effect.map((response) => Schema.encodeSync(ClassificationReply)(Result.succeed(response))),
+      Effect.map((response) => Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response)),
     ),
   );
 
-const renderDemo = async (fetch: typeof globalThis.fetch) => {
+const renderDemo = async (interactiveFetch: typeof globalThis.fetch) => {
+  const fetch = initialBroadReplyThenFetch(await classifyFixture("broad"), interactiveFetch);
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
-  const initial = Promise.resolve(await classifyFixture("broad"));
-  return render(
+  const view = await render(
     <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
-      <Demo initial={initial} />
+      <Demo />
     </RegistryProvider>,
   );
+  await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+  return view;
 };
 
 const unexpectedFetch = () =>
@@ -75,10 +78,10 @@ const examples = [
 }>;
 
 it.each(examples)(
-  "selects $name through its real example and toggles its row without a POST",
+  "selects $name through its real example and toggles its row without another POST",
   async ({ example, name, kind, metadata, share, result }) => {
-    const fetch = unexpectedFetch();
-    const view = await renderDemo(fetch);
+    const interactiveFetch = unexpectedFetch();
+    const view = await renderDemo(interactiveFetch);
     const row = view.getByRole("button", { name: new RegExp(`^${name}, `) });
     await expect.element(view.getByRole("button", { name: /Select record$/ })).toHaveLength(24);
     await expect
@@ -102,7 +105,7 @@ it.each(examples)(
     await expect
       .element(view.getByRole("button", { name: "Clear selection", exact: true }))
       .not.toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(interactiveFetch).not.toHaveBeenCalled();
   },
 );
 
@@ -187,13 +190,13 @@ it("scrolls only the real record list for examples on mobile and supports native
 });
 
 it("shows a focused genus record ruling out the species target after a real panel request", async () => {
-  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+  const interactiveFetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
     const request = Schema.decodeSync(Schema.fromJsonString(ClassifyRequest))(
       await new Response(init?.body).text(),
     );
     return Response.json(await classifyFixture(request.panelId));
   });
-  const view = await renderDemo(fetch);
+  const view = await renderDemo(interactiveFetch);
   await view.getByRole("radio", { name: "Families, genera and species" }).click();
   await expect
     .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
@@ -214,6 +217,6 @@ it("shows a focused genus record ruling out the species target after a real pane
   await expect
     .element(view.getByRole("region", { name: "Current record" }))
     .toMatchTextContent("Genus · 3%");
-  expect(fetch).toHaveBeenCalledTimes(1);
-  expect(fetch.mock.calls[0]?.[1]?.method).toBe("POST");
+  expect(interactiveFetch).toHaveBeenCalledTimes(1);
+  expect(interactiveFetch.mock.calls[0]?.[1]?.method).toBe("POST");
 });

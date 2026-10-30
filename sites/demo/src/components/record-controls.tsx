@@ -13,7 +13,8 @@ const examples = [
 
 const kinds = { species: "Species", genus: "Genus", vague: "Unclassified" };
 
-export function RecordControls() {
+/** Announce the inspected record and offer authored species, genus-only and unclassified examples. */
+export const RecordControls = () => {
   const selection = useAtomValue(recordSelectionAtom);
   const choose = useAtomSet(recordSelectionAtom);
   const recordId = Option.getOrUndefined(selection)?.recordId;
@@ -56,4 +57,4 @@ export function RecordControls() {
       </section>
     </>
   );
-}
+};

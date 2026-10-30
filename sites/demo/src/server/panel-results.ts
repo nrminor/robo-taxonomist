@@ -42,12 +42,17 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
   }).pipe(Effect.mapError(() => ClassificationFailure.cases.InternalFailure.make({})));
 });
 
+/**
+ * Panel classification service caching successful, schema-validated results indefinitely per layer instance.
+ * Failed lookups expire immediately; collection execution uses batch size six and concurrency one.
+ */
 export class PanelResults extends Context.Service<
   PanelResults,
   {
     readonly classify: (panelId: PanelId) => Effect.Effect<PanelResponse, ClassificationFailure>;
   }
 >()("@robo-taxonomist/demo/PanelResults") {
+  /** Build the cache using the caller-supplied decision model, including live adapters. */
   static readonly layerNoDeps = Layer.effect(
     PanelResults,
     Effect.gen(function* () {
@@ -58,9 +63,11 @@ export class PanelResults extends Context.Service<
       return PanelResults.of({ classify: (panelId) => Cache.get(cache, panelId) });
     }),
   );
+  /** Self-contained teaching-fixture layer; does not make provider requests. */
   static readonly layer = PanelResults.layerNoDeps.pipe(Layer.provide(FixtureModel));
 }
 
+/** Classify through the supplied PanelResults service, preserving its cache and public failure contract. */
 export const classifyPanel = Effect.fn("classifyPanel")(function* (panelId: PanelId) {
   return yield* (yield* PanelResults).classify(panelId);
 });
