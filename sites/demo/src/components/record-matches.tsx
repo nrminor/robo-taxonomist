@@ -2,7 +2,12 @@ import { useLayoutEffect, useRef } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Option } from "effect";
 import { recordSelectionAtom } from "../client/panel-atoms.ts";
-import { formatSampleShare, judgmentPresentation, type PanelFindings } from "../lib/display.ts";
+import {
+  formatSampleShare,
+  judgmentPresentation,
+  recordKindLabel,
+  type PanelFindings,
+} from "../lib/display.ts";
 import { RecordInspector } from "./record-inspector.tsx";
 import styles from "./record-matches.module.css";
 
@@ -70,13 +75,7 @@ export const RecordMatches = ({ findings }: { readonly findings: PanelFindings }
                 >
                   <span className={styles.recordName}>
                     {record.name}
-                    <span className={styles.recordKind}>
-                      {record.kind === "vague"
-                        ? "Unresolved name"
-                        : record.kind === "genus"
-                          ? "Genus-only record"
-                          : "Species record"}
-                    </span>
+                    <span className={styles.recordKind}>{recordKindLabel(record.kind)}</span>
                   </span>
                   <span className={styles.abundance}>{share}</span>
                   <span className={styles.badge} style={result.style}>

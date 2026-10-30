@@ -1,4 +1,4 @@
-import { Array, Option, Schema } from "effect";
+import { Array, Match, Option, Schema } from "effect";
 import { panels, records } from "./catalog.ts";
 import { MatchJudgment, type PanelResponse } from "./contract.ts";
 
@@ -9,6 +9,14 @@ const sampleWeight = records.reduce((sum, record) => sum + record.abundance, 0);
 export const formatPercent = (fraction: number): string => percent.format(fraction);
 /** Format a record's weight as a share of the fixed sample's total weight. */
 export const formatSampleShare = (weight: number): string => formatPercent(weight / sampleWeight);
+
+/** Describe the catalog input's resolution, independently of any model judgment. */
+export const recordKindLabel = Match.type<(typeof records)[number]["kind"]>().pipe(
+  Match.when("vague", () => "Unresolved name"),
+  Match.when("genus", () => "Genus-only record"),
+  Match.when("species", () => "Species record"),
+  Match.exhaustive,
+);
 
 /** Compare accepted target sets, not support probabilities or answer wording. */
 export const Comparison = Schema.TaggedUnion({

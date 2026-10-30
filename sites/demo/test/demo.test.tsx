@@ -58,6 +58,41 @@ it("presents native panel choices beside a records-first workspace", async () =>
   expect(interactiveFetch).not.toHaveBeenCalled();
 });
 
+it.each([320, 1440])("shows a results skeleton during the initial POST at %i px", async (width) => {
+  await page.viewport(width, 1000);
+  const pending = Promise.withResolvers<Response>();
+  const fetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);
+  const view = await renderHttpDemo(fetch);
+  try {
+    const loading = view.getByRole("region", { name: "Loading panel results", exact: true });
+    await expect.element(loading).toBeVisible();
+    await expect
+      .element(loading.getByRole("region", { name: "Loading input records" }))
+      .toBeVisible();
+    const chart = loading.getByRole("region", { name: "Loading panel targets" });
+    await expect
+      .element(chart.getByText("Classifying with Broad groups…", { exact: true }))
+      .toBeVisible();
+    await expect.element(chart.getByText(/^Fungi/)).toBeVisible();
+    const status = view.getByRole("status");
+    await expect.element(status).toMatchTextContent("Classifying with Broad groups…");
+    expect(status.element().closest('[aria-busy="true"]')).toBeNull();
+    expect(loading.element().parentElement).toHaveAttribute("aria-busy", "true");
+    expect(loading.element().getBoundingClientRect().right).toBeLessThanOrEqual(width);
+    await expect
+      .element(view.getByRole("region", { name: "Panel targets", exact: true }))
+      .not.toBeInTheDocument();
+    pending.resolve(Response.json(await replyFor("broad")));
+    await expect
+      .element(view.getByRole("region", { name: "Broad groups", exact: true }))
+      .toBeVisible();
+    await expect.element(loading).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally {
+    await page.viewport(1440, 1000);
+  }
+});
+
 it("accepts a panel selection while the initial result is pending and ignores its late reply", async () => {
   const initial = Promise.withResolvers<Response>();
   const pending = Promise.withResolvers<Response>();
@@ -67,7 +102,13 @@ it("accepts a panel selection while the initial result is pending and ignores it
     .mockReturnValueOnce(pending.promise);
   await renderHttpDemo(fetch);
   await expect.poll(() => fetch.mock.calls.length).toBe(1);
-  await expect.element(page.getByText("Classifying with Broad groups…")).toBeVisible();
+  await expect
+    .element(
+      page
+        .getByRole("region", { name: "Loading panel targets" })
+        .getByText("Classifying with Broad groups…"),
+    )
+    .toBeVisible();
   await expect.element(page.getByRole("region", { name: "Panel targets" })).not.toBeInTheDocument();
 
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();

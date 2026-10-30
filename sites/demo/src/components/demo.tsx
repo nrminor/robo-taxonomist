@@ -1,7 +1,7 @@
 "use client";
 
 import { useAtomValue } from "@effect/atom-react";
-import { Option } from "effect";
+import { Array, Option } from "effect";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { panels, records } from "../lib/catalog.ts";
 import { Comparison, formatSampleShare } from "../lib/display.ts";
@@ -15,6 +15,7 @@ import { AbundanceChart } from "./abundance-chart.tsx";
 import { RecordMatches } from "./record-matches.tsx";
 import { ThemeControl } from "./theme-control.tsx";
 import { PanelControls } from "./panel-controls.tsx";
+import { LoadingResults } from "./loading-results.tsx";
 import { RecordControls } from "./record-controls.tsx";
 import styles from "./demo.module.css";
 import { initialQueryAtom, recordSelectionAtom } from "../client/panel-atoms.ts";
@@ -22,9 +23,11 @@ import { initialQueryAtom, recordSelectionAtom } from "../client/panel-atoms.ts"
 const SuccessfulResults = ({
   candidate,
   onCommit,
+  feedback,
 }: {
   readonly candidate: PublicationCandidate;
   readonly onCommit: (candidate: PublicationCandidate) => void;
+  readonly feedback?: ReactNode;
 }) => {
   const { display, animate } = candidate;
   const { response, findings } = display;
@@ -40,14 +43,17 @@ const SuccessfulResults = ({
       <section className={styles.chartSection} aria-labelledby="panel-targets">
         <div className={styles.sectionTop}>
           <h2 id="panel-targets">Panel targets</h2>
-          <span className={styles.sectionMeta}>{findings.panel.targets.length} targets</span>
+          <span className={styles.sectionMeta}>
+            {findings.panel.targets.length} targets{feedback !== undefined && " · Updating…"}
+          </span>
         </div>
         <div className={styles.resultSummary}>
-          <p className={styles.chartInspection}>
-            {record === undefined
-              ? "Select an input record to inspect its matches."
-              : `Selected record: ${record.name} · ${formatSampleShare(record.abundance)} of sample`}
-          </p>
+          <div className={styles.chartInspection}>
+            {feedback ??
+              (record === undefined
+                ? "Select an input record to inspect its matches."
+                : `Selected record: ${record.name} · ${formatSampleShare(record.abundance)} of sample`)}
+          </div>
           <p>
             <span>
               {display.matchedRecords} of {response.rows.length} records match a target.
@@ -62,7 +68,9 @@ const SuccessfulResults = ({
             })}
           </p>
         </div>
-        <AbundanceChart findings={findings} revision={candidate.token} animatePanels={animate} />
+        <div className={styles.retainedChart} data-updating={feedback !== undefined}>
+          <AbundanceChart findings={findings} revision={candidate.token} animatePanels={animate} />
+        </div>
       </section>
     </section>
   );
@@ -70,16 +78,14 @@ const SuccessfulResults = ({
 
 const InitialReader = ({
   token,
-  awaitingInitial,
   reportInitial,
 }: {
   readonly token: symbol;
-  readonly awaitingInitial: boolean;
   readonly reportInitial: ReturnType<typeof usePanelPresentation>["reportInitial"];
 }) => {
   const result = useAtomValue(initialQueryAtom);
   useLayoutEffect(() => reportInitial(token, result), [token, result, reportInitial]);
-  return awaitingInitial ? <p role="status">Classifying with Broad groups…</p> : null;
+  return null;
 };
 
 const CommittedFeedback = ({
@@ -118,13 +124,20 @@ export const Demo = () => {
     pending || failure !== undefined || initialActive
       ? undefined
       : Option.getOrUndefined(candidate)?.display.response;
-  const requestedName = panels.find((panel) => panel.id === requested)?.name;
+  const requestedPanel = Option.getOrThrow(
+    Array.findFirst(panels, (panel) => panel.id === requested),
+  );
+  const requestedName = requestedPanel.name;
   const retained = Option.match(committed, {
     onNone: () => "No panel results have been displayed yet.",
-    onSome: ({ display }) =>
-      `Still showing ${panels.find((panel) => panel.id === display.response.panelId)?.name}.`,
+    onSome: ({ display }) => `Still showing ${display.findings.panel.name}.`,
   });
   const progress = `${retrying ? "Retrying" : "Updating to"} ${requestedName}. ${retained}`;
+  const feedback = visible ? (
+    <CommittedFeedback token={token} onCommit={feedbackCommitted}>
+      <p>{progress}</p>
+    </CommittedFeedback>
+  ) : undefined;
   return (
     <main className={styles.shell}>
       <header>
@@ -147,28 +160,27 @@ export const Demo = () => {
           </div>
         </aside>
         <div className={styles.results} aria-busy={pending || awaitingInitial}>
-          {initialActive && (
-            <InitialReader
-              token={token}
-              awaitingInitial={awaitingInitial}
-              reportInitial={reportInitial}
-            />
-          )}
+          {initialActive && <InitialReader token={token} reportInitial={reportInitial} />}
           {Option.match(candidate, {
-            onNone: () => null,
-            onSome: (value) => <SuccessfulResults candidate={value} onCommit={displayCommitted} />,
+            onNone: () =>
+              awaitingInitial || pending ? (
+                <LoadingResults panel={requestedPanel} feedback={feedback} />
+              ) : null,
+            onSome: (value) => (
+              <SuccessfulResults
+                candidate={value}
+                onCommit={displayCommitted}
+                feedback={feedback}
+              />
+            ),
           })}
         </div>
       </div>
       <div role="status" aria-atomic="true" className={styles.announcer}>
-        {visible && failure === undefined && (
-          <CommittedFeedback token={token} onCommit={feedbackCommitted}>
-            <RequestFeedback returnFocusRef={selectedPanel}>
-              <p>{progress}</p>
-            </RequestFeedback>
-          </CommittedFeedback>
+        {awaitingInitial && (
+          <p className={styles.announcement}>Classifying with {requestedName}…</p>
         )}
-        {visible && failure !== undefined && <p className={styles.announcement}>{progress}</p>}
+        {visible && <p className={styles.announcement}>{progress}</p>}
         {response !== undefined && (
           <p className={styles.announcement}>
             {panels.find((panel) => panel.id === response.panelId)?.name} results displayed.
@@ -176,16 +188,14 @@ export const Demo = () => {
         )}
       </div>
       {failure !== undefined && (
-        <CommittedFeedback token={token} onCommit={feedbackCommitted}>
-          <RequestFeedback returnFocusRef={selectedPanel}>
-            <RequestFailureView
-              error={failure}
-              context={`Could not update ${requestedName}. ${retained}`}
-              pending={visible ? progress : undefined}
-              onRetry={(animate) => start(requested, animate, failure)}
-            />
-          </RequestFeedback>
-        </CommittedFeedback>
+        <RequestFeedback returnFocusRef={selectedPanel}>
+          <RequestFailureView
+            error={failure}
+            context={`Could not update ${requestedName}. ${retained}`}
+            pending={visible ? progress : undefined}
+            onRetry={(animate) => start(requested, animate, failure)}
+          />
+        </RequestFeedback>
       )}
     </main>
   );

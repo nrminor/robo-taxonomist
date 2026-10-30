@@ -112,6 +112,118 @@ it("keeps Current record and the mobile workspace in place throughout a pending 
   expect(targets.element().getBoundingClientRect().top).toBe(targetsTop);
 });
 
+const chartValues = (figure: Element) =>
+  Array.from(figure.querySelectorAll('[role="img"]:not([aria-hidden="true"])'), (row) =>
+    row.getAttribute("aria-label"),
+  );
+
+it.each([320, 390, 1000, 1440])(
+  "shows an inline update on the retained chart without replacing its values at %i px",
+  async (width) => {
+    await page.viewport(width, 1000);
+    const focused = await replyFor("focused");
+    const pending = Promise.withResolvers<Response>();
+    const view = await renderDemo(() => pending.promise);
+    const targets = view.getByRole("region", { name: "Panel targets" });
+    const figure = targets.getByRole("figure", { name: "Count abundance for each target" });
+    const originalFigure = figure.element();
+    const originalValues = chartValues(originalFigure);
+    expect(originalValues).toHaveLength(6);
+    const top = targets.element().getBoundingClientRect().top;
+    const broad = view.getByRole("region", { name: "Broad groups", exact: true });
+    const workspace = broad.element().parentElement;
+    if (workspace === null) throw new Error("Results workspace missing");
+    const message = targets.getByText(
+      "Updating to Families, genera and species. Still showing Broad groups.",
+      { exact: true },
+    );
+
+    await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
+
+    await expect.element(message).toBeVisible();
+    expect(figure.element()).toBe(originalFigure);
+    expect(chartValues(originalFigure)).toEqual(originalValues);
+    await expect.element(broad).toBeVisible();
+    expect(workspace).toHaveAttribute("aria-busy", "true");
+    expect(targets.element().getBoundingClientRect().top).toBe(top);
+    const bounds = message.element().getBoundingClientRect();
+    const region = targets.element().getBoundingClientRect();
+    expect(bounds.left).toBeGreaterThanOrEqual(region.left);
+    expect(bounds.right).toBeLessThanOrEqual(region.right);
+    expect(bounds.top).toBeGreaterThanOrEqual(region.top);
+    expect(bounds.bottom).toBeLessThanOrEqual(originalFigure.getBoundingClientRect().top);
+    for (
+      let node: Element | null = message.element();
+      node !== targets.element();
+      node = node.parentElement
+    ) {
+      if (node === null) throw new Error("Update message must be inside Panel targets");
+      expect(["absolute", "fixed"]).not.toContain(getComputedStyle(node).position);
+    }
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    await expect
+      .element(view.getByRole("status"))
+      .toMatchTextContent("Updating to Families, genera and species. Still showing Broad groups.");
+
+    pending.resolve(Response.json(focused));
+
+    await expect
+      .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
+      .toBeVisible();
+    await expect.element(message).not.toBeInTheDocument();
+    expect(figure.element()).toBe(originalFigure);
+    await expect
+      .element(figure.getByRole("img", { name: /^Saccharomyces · genus/ }))
+      .toHaveAttribute("aria-label", expect.stringContaining("18% of sample"));
+    await expect
+      .element(figure.getByRole("img", { name: /^Lactiplantibacillus plantarum · species/ }))
+      .toHaveAttribute("aria-label", expect.stringContaining("12% of sample"));
+    await expect.element(broad).not.toBeInTheDocument();
+    expect(workspace).toHaveAttribute("aria-busy", "false");
+    expect(targets.element().getBoundingClientRect().top).toBe(top);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  },
+);
+
+it("clears the inline chart update on failure while retaining Broad groups and offering retry", async () => {
+  const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
+    ClassificationFailure.cases.ModelFailure.make({
+      reason: PublicModelReason.cases.RateLimitError.make({}),
+      retryable: true,
+    }),
+  );
+  const pending = Promise.withResolvers<Response>();
+  const view = await renderDemo(() => pending.promise);
+  const targets = view.getByRole("region", { name: "Panel targets" });
+  const figure = targets.getByRole("figure", { name: "Count abundance for each target" });
+  const originalFigure = figure.element();
+  const broad = view.getByRole("region", { name: "Broad groups", exact: true });
+  const workspace = broad.element().parentElement;
+  if (workspace === null) throw new Error("Results workspace missing");
+  const message = targets.getByText(
+    "Updating to Families, genera and species. Still showing Broad groups.",
+    { exact: true },
+  );
+  await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
+  await expect.element(message).toBeVisible();
+
+  pending.resolve(Response.json(failure, { status: 503 }));
+
+  await expect
+    .element(view.getByRole("alert"))
+    .toMatchTextContent(
+      "Could not update Families, genera and species. Still showing Broad groups.",
+    );
+  await expect.element(message).not.toBeInTheDocument();
+  await expect.element(broad).toBeVisible();
+  expect(figure.element()).toBe(originalFigure);
+  await expect
+    .element(figure.getByRole("img", { name: /^Fungi · kingdom/ }))
+    .toHaveAttribute("aria-label", expect.stringContaining("31% of sample"));
+  expect(workspace).toHaveAttribute("aria-busy", "false");
+  await expect.element(view.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+});
+
 it("keeps the old results busy for a full visible update before publishing a ready reply", async () => {
   const focused = await replyFor("focused");
   const pending = Promise.withResolvers<Response>();
