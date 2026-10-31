@@ -184,8 +184,8 @@ const isPending = Phase.match({
   WaitingVisibly: () => true,
   HoldingReply: () => true,
 });
-const requestedRequest = Intent.match<typeof ClassifyRequest.Type>({
-  Initial: () => ({ panelId: initialPanelId }),
+const requestedRequest = Intent.match({
+  Initial: (): typeof ClassifyRequest.Type => ({ panelId: initialPanelId }),
   Panel: ({ request }) => request,
   Retry: ({ request }) => request,
 });

@@ -88,11 +88,14 @@
               "test/collection-membership.test.ts",
               "test/classify-records.test.ts",
               "test/structured-inputs.test.ts",
+              "test/taxonomic-values.test.ts",
+              "test/text-values.test.ts",
               "test/taxon-set.test.ts",
               "test/taxon-set.property.test.ts",
               "test/taxon-judgments.property.test.ts",
               "**/apps/demo/**/*.ts",
-              "**/apps/demo/**/*.tsx"
+              "**/apps/demo/**/*.tsx",
+              "**/apps/cli/**/*.ts"
             ],
             "options": {
               "diagnosticSeverity": {

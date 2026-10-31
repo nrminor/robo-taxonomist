@@ -1,5 +1,6 @@
 packages:
   - apps/demo
+  - apps/cli
 
 allowBuilds:
   esbuild@0.28.2: true
@@ -14,5 +15,3 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-arm64@0.54.1"
   - "@effect/tsgo-win32-x64@0.54.1"
   - "@effect/tsgo@0.54.1"
-  - "@effect/vitest@4.0.0"
-  - effect@4.0.0

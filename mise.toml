@@ -29,3 +29,5 @@ knip = { description = "Check unused code and dependencies", run = "pnpm run kni
 "demo:credentials:account" = { description = "Store the live-demo account ID using a prompt", run = "pnpm --filter @robo-taxonomist/demo credentials:account", interactive = true }
 "demo:credentials:token" = { description = "Store the live-demo token using a masked prompt", run = "pnpm --filter @robo-taxonomist/demo credentials:token", interactive = true }
 "demo:dev:live" = { description = "Build the public library, then run the live provider demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo dev:live" }
+"cli:dev" = { description = "Run the CLI from source", run = "pnpm run build && pnpm --filter @robo-taxonomist/cli dev" }
+"cli:check" = { description = "Build and check the CLI", run = "pnpm run build && pnpm --filter @robo-taxonomist/cli check" }

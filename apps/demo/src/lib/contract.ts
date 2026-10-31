@@ -69,6 +69,7 @@ export const PublicModelReason = Schema.TaggedUnion({
   ContentPolicyError: {},
   InvalidRequestError: {},
   InternalProviderError: {},
+  InvalidResponseError: {},
   NetworkError: {},
   InvalidOutputError: {},
   StructuredOutputError: {},

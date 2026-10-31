@@ -32,19 +32,17 @@ it("round trips safe failures as direct JSON bodies", () => {
   expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
 });
 
-it("retains all 18 upstream failure categories while allowlisting their fields", () => {
+it("retains all 19 upstream failure categories while allowlisting their fields", () => {
   const secret = "SECRET provider content";
-  const request = {
-    method: "POST" as const,
-    url: secret,
-    urlParams: [],
+  const response = {
+    status: 500,
     headers: { authorization: secret },
   };
   const reasons: readonly AiError.AiErrorReason[] = [
     new AiError.RateLimitError({
       retryAfter: Duration.millis(1200),
       metadata: { secret },
-      http: { request, body: secret },
+      http: { response, body: secret },
     }),
     new AiError.QuotaExhaustedError({
       resetAt: DateTime.makeUnsafe("2026-10-29T00:00:00Z"),
@@ -54,12 +52,22 @@ it("retains all 18 upstream failure categories while allowlisting their fields",
       kind: "InvalidKey",
       description: secret,
       metadata: { secret },
-      http: { request },
+      http: { response },
     }),
     new AiError.ContentPolicyError({ description: secret }),
     new AiError.InvalidRequestError({ description: secret, parameter: secret, constraint: secret }),
     new AiError.InternalProviderError({ description: secret }),
-    new AiError.NetworkError({ reason: "TransportError", request, description: secret }),
+    new AiError.InvalidResponseError({
+      description: secret,
+      metadata: { secret },
+      http: { response, body: secret },
+    }),
+    new AiError.NetworkError({
+      reason: "TransportError",
+      method: "POST",
+      url: secret,
+      description: secret,
+    }),
     new AiError.InvalidOutputError({ description: secret }),
     new AiError.StructuredOutputError({ description: secret, responseText: secret }),
     new AiError.UnsupportedSchemaError({ description: secret }),
@@ -76,7 +84,7 @@ it("retains all 18 upstream failure categories while allowlisting their fields",
     new AiError.ToolkitRequiredError({ pendingApprovals: [secret], description: secret }),
     new AiError.InvalidUserInputError({ description: secret }),
   ];
-  expect(new Set(reasons.map((reason) => reason._tag)).size).toBe(18);
+  expect(new Set(reasons.map((reason) => reason._tag)).size).toBe(19);
   for (const reason of reasons) {
     const failure = publicModelFailure(
       new AiError.AiError({ module: secret, method: secret, reason }),
@@ -104,6 +112,30 @@ it("retains all 18 upstream failure categories while allowlisting their fields",
       ),
     ).toEqual(failure);
   }
+});
+
+it("redacts invalid provider responses while preserving their category and non-retryability", () => {
+  const secret = "SECRET provider response";
+  const failure = publicModelFailure(
+    AiError.make({
+      module: secret,
+      method: secret,
+      reason: new AiError.InvalidResponseError({
+        description: secret,
+        metadata: { secret },
+        http: { response: { status: 200, headers: { secret } }, body: secret },
+      }),
+    }),
+  );
+  const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
+  expect(encoded).toEqual({
+    _tag: "ModelFailure",
+    reason: { _tag: "InvalidResponseError" },
+    retryable: false,
+  });
+  expect(JSON.stringify(failure)).not.toContain("SECRET");
+  expect(JSON.stringify(encoded)).not.toContain("SECRET");
+  expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
 });
 
 it("rejects invalid retry delays and malformed failure bodies at the boundary", () => {

@@ -24,7 +24,7 @@ const providerMessage = (message: string, retryable: boolean) =>
   `${message} ${retryable ? "Try again." : "Contact the site administrator."}`;
 
 const describeFailure = (error: RequestFailure): FailureDetails =>
-  RequestFailure.match<FailureDetails>(error, {
+  RequestFailure.match(error, {
     ModelFailure: ({ reason, retryable, requestId }) => ({
       ...PublicModelReason.match(reason, {
         RateLimitError: ({ retryAfterMs }) => ({
@@ -62,6 +62,10 @@ const describeFailure = (error: RequestFailure): FailureDetails =>
           retry: retryable,
         }),
         InvalidOutputError: () => ({
+          message: providerMessage("Could not use the model's reply.", retryable),
+          retry: retryable,
+        }),
+        InvalidResponseError: () => ({
           message: providerMessage("Could not use the model's reply.", retryable),
           retry: retryable,
         }),

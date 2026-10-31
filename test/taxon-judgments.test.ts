@@ -794,7 +794,7 @@ it.effect("provides shared target once and record facts once in singleton member
         });
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
-        const instructions = question.instructions;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
         for (const field of [
           "Record label",
           "Scientific name",

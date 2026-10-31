@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Data, Effect, Layer, Option, Predicate, Record } from "effect";
+import { Array, Data, Effect, Layer, Option, Predicate, Record, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
@@ -73,7 +73,7 @@ it.effect("compares the original record descriptions at the requested rank", () 
         });
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
-        const instructions = question.instructions;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
         expect(instructions).toContain("species rank");
         expect(instructions).toContain('Left record:\nRecord label: "Voucher A17 | Quercus robur"');
         expect(instructions).toContain(
@@ -147,7 +147,7 @@ it.effect(
           const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
           if (!Predicate.isTagged(question, "Classify"))
             return Effect.die("Expected classification");
-          const instructions = question.instructions;
+          const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
           expect(instructions).not.toContain("caller-only");
           for (const field of [
             "Record label",
@@ -241,7 +241,7 @@ it.effect("builds fresh direct context for repeated and interleaved executions",
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify"))
           return Effect.die("Expected a classification");
-        const instructions = question.instructions;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
         seen.push(instructions);
         return Effect.succeed({
           answers: {
@@ -687,7 +687,7 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
         });
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
-        const instructions = question.instructions;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
         expect(instructions).toContain("family rank");
         expect(instructions.split("Taxonomy release:")).toHaveLength(2);
         expect(instructions.split("Record label:")).toHaveLength(2);

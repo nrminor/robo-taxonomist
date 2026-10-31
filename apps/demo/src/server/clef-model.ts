@@ -5,6 +5,10 @@ import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 const tokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const classifyQuestionSchema = Schema.Struct({
+  instructions: Schema.String,
+  criteria: Schema.Record(Schema.String, Schema.String),
+});
 const responseSchema = Schema.Struct({
   success: Schema.Literal(true),
   result: Schema.Struct({
@@ -47,7 +51,8 @@ const httpError = (error: HttpClientError.HttpClientError): AiError.AiError => {
         method: "decide",
         reason: new AiError.NetworkError({
           reason: network.reason,
-          request: { ...network.request, headers: {} },
+          method: network.method,
+          url: network.url,
           description: "Clef HTTP request failed",
         }),
       });
@@ -112,10 +117,21 @@ export const clefModelLayer = (options: {
               }),
             });
           }
+          const question = yield* Schema.decodeUnknownEffect(classifyQuestionSchema)(decision).pipe(
+            Effect.mapError(() =>
+              AiError.make({
+                module: "ClefModel",
+                method: "decide",
+                reason: new AiError.InvalidRequestError({
+                  description: "This Clef adapter requires string instructions and criteria",
+                }),
+              }),
+            ),
+          );
           questions[key] = {
             type: "choice",
-            instructions: decision.instructions,
-            criteria: decision.criteria,
+            instructions: question.instructions,
+            criteria: question.criteria,
           };
         }
         const request = yield* HttpClientRequest.post(url).pipe(
