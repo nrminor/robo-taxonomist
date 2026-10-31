@@ -1,10 +1,10 @@
-import { Data, Effect, Layer, Schema } from "effect";
+import { Data, Effect, Layer, Record, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import { records } from "../lib/catalog.ts";
 
 const inputSchema = Schema.Struct({
   records: Schema.Array(Schema.String),
-  taxa: Schema.Array(Schema.String),
+  taxa: Schema.Array(Schema.Struct({ scientificName: Schema.String })),
 });
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
@@ -75,13 +75,13 @@ export const FixtureModel = Layer.effect(
       Effect.gen(function* () {
         const input = yield* Schema.decodeUnknownEffect(inputSchema)(state).pipe(Effect.orDie);
         const answers: Record<string, DecisionModel.ProviderClassifyAnswer> = {};
-        for (const key of Object.keys(decisions)) {
+        for (const key of Record.keys(decisions)) {
           const indices = /^r(\d+)t(\d+)$/.exec(key);
           const record = indices === null ? undefined : input.records[Number(indices[1])];
           const taxon = indices === null ? undefined : input.taxa[Number(indices[2])];
           if (record === undefined || taxon === undefined)
             throw new Error("Unexpected fixture decision");
-          answers[key] = authoredAnswer(record, taxon);
+          answers[key] = authoredAnswer(record, taxon.scientificName);
         }
         return { answers, usage: { inputTokens: undefined, outputTokens: undefined } };
       }),

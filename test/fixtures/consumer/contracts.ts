@@ -5,6 +5,7 @@ import * as RoboTaxonomist from "robo-taxonomist";
 import {
   AcceptancePolicy,
   RecordLabel,
+  TaxonId,
   TaxonName,
   Taxonomy,
   TaxonSet,
@@ -57,15 +58,20 @@ type ExpectedRankComparison =
 const label = RecordLabel.make("Voucher A17 | Quercus robur");
 const name = TaxonName.make("Quercus");
 const oaks = TaxonSet.of(name);
-if (oaks._tag === "Union") {
+type NamedTarget = { readonly scientificName: TaxonName };
+// Membership APIs also account for the record created by name shorthand.
+type ShorthandTarget = { readonly scientificName: TaxonName };
+const trees = TaxonSet.union(oaks, TaxonSet.empty());
+if (trees._tag === "Union") {
   // @ts-expect-error Inspectable expression tags remain readonly after narrowing.
-  oaks._tag = "Union";
+  trees._tag = "Union";
   // @ts-expect-error Nonempty expression operands remain readonly after narrowing.
-  oaks.operands.push(oaks);
+  trees.operands.push(oaks);
 }
-if (oaks._tag === "Intersection") {
+const shared = TaxonSet.intersection(oaks, oaks);
+if (shared._tag === "Intersection") {
   // @ts-expect-error Intersection operands remain readonly after narrowing too.
-  oaks.operands.push(oaks);
+  shared.operands.push(oaks);
 }
 const specimen: { readonly label: RecordLabel; readonly voucher: "A17" } = {
   label,
@@ -89,6 +95,76 @@ const all = Taxonomy.allRecordsBelongTo(records, oaks);
 const some = Taxonomy.anyRecordBelongsTo(records, name);
 const none = Taxonomy.noRecordBelongsTo(records, oaks);
 
+// A named assignment retains caller metadata in every returned target record.
+const assignment: {
+  readonly scientificName: TaxonName;
+  readonly assignmentId: "oak-genus";
+  readonly rank: "genus";
+} = { scientificName: name, assignmentId: "oak-genus", rank: "genus" };
+const assignedOaks = TaxonSet.of(assignment);
+const identifiedTarget: {
+  readonly taxonId: TaxonId;
+  readonly source: "reference-panel";
+} = {
+  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
+  source: "reference-panel",
+};
+const mixedPanel = TaxonSet.union(assignedOaks, TaxonSet.of(identifiedTarget));
+const assignedClassification = Taxonomy.classifyRecords(records, assignedOaks);
+const mixedClassification = Taxonomy.classifyRecords(records, mixedPanel);
+const assignedIdentity = Taxonomy.sameTaxon(assignment, identifiedTarget);
+const assignedContainment = Taxonomy.taxonWithin(identifiedTarget, assignment);
+const assignedMembership = Taxonomy.recordBelongsTo(specimen, assignment);
+const assignedSetMembership = Taxonomy.recordBelongsTo(specimen, assignedOaks);
+const namedMembership = Taxonomy.recordBelongsTo(specimen, name);
+const assignedPartition = Taxonomy.partitionRecordsByMembership(records, assignment);
+const assignedSetPartition = Taxonomy.partitionRecordsByMembership(records, assignedOaks);
+const assignedGroups = Taxonomy.groupRecordsByTaxa(records, [assignment, assignedOaks]);
+const assignedCollection = Taxonomy.allRecordsBelongTo(records, assignment);
+const assignedSetCollection = Taxonomy.allRecordsBelongTo(records, assignedOaks);
+
+// Narrowing a diagnostic exposes the original record, with no name-only fallback.
+const assignedDiagnostic = assignedMembership.pipe(
+  Effect.map((judgment) => {
+    if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+    const { scientificName, assignmentId, rank } = judgment.target.record;
+    return { scientificName, assignmentId, rank };
+  }),
+);
+const assignedSetDiagnostic = assignedSetMembership.pipe(
+  Effect.map((judgment) => {
+    if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+    const { scientificName, assignmentId, rank } = judgment.target.record;
+    return { scientificName, assignmentId, rank };
+  }),
+);
+const namedDiagnostic = namedMembership.pipe(
+  Effect.map((judgment) => {
+    if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+    return judgment.target.record.scientificName;
+  }),
+);
+type AssignmentDiagnostic =
+  | {
+      scientificName: TaxonName;
+      assignmentId: "oak-genus";
+      rank: "genus";
+    }
+  | undefined;
+type MixedTarget = typeof assignment | typeof identifiedTarget;
+type AssignedClassification = Effect.Success<typeof assignedClassification>;
+type MixedClassification = Effect.Success<typeof mixedClassification>;
+type MixedMatch = MixedClassification["records"][number]["ranking"][number];
+const mixedTargetLabels = mixedClassification.pipe(
+  Effect.map((result) =>
+    result.records.flatMap((row) =>
+      row.ranking.map(({ taxon }) =>
+        "scientificName" in taxon.record ? taxon.record.scientificName : taxon.record.taxonId.id,
+      ),
+    ),
+  ),
+);
+
 // Both the outer Effect and the inner partition/group value must remain pipeable.
 const members = partition.pipe(Effect.map((value) => value.pipe((p) => p.Member)));
 const groupedMembers = grouped.pipe(
@@ -103,11 +179,59 @@ const classifiedVouchers = classified.pipe(
 );
 
 export type Contracts = [
+  Assert<Judgment<typeof assignedMembership, TaxonMembershipJudgment<typeof assignment>>>,
+  Assert<Judgment<typeof assignedSetMembership, TaxonMembershipJudgment<typeof assignment>>>,
+  Assert<Judgment<typeof namedMembership, TaxonMembershipJudgment<ShorthandTarget>>>,
+  Assert<Judgment<typeof assignedDiagnostic, AssignmentDiagnostic>>,
+  Assert<Judgment<typeof assignedSetDiagnostic, AssignmentDiagnostic>>,
+  Assert<Judgment<typeof namedDiagnostic, TaxonName | undefined>>,
+  Assert<
+    Judgment<
+      typeof assignedPartition,
+      RecordMembershipPartition<typeof specimen, typeof assignment>
+    >
+  >,
+  Assert<
+    Judgment<
+      typeof assignedSetPartition,
+      RecordMembershipPartition<typeof specimen, typeof assignment>
+    >
+  >,
+  Assert<Judgment<typeof assignedGroups, RecordsGroupedByTaxa<typeof specimen, typeof assignment>>>,
+  Assert<Judgment<typeof assignedCollection, CollectionMembershipJudgment<typeof assignment>>>,
+  Assert<Judgment<typeof assignedSetCollection, CollectionMembershipJudgment<typeof assignment>>>,
+  Assert<
+    Equal<
+      Effect.Success<
+        typeof assignedGroups
+      >["groups"][number]["partition"]["MultipleTaxaInTarget"][number]["target"]["record"],
+      typeof assignment
+    >
+  >,
+  Assert<Judgment<typeof assignedIdentity, TaxonIdentityJudgment>>,
+  Assert<Judgment<typeof assignedContainment, TaxonContainmentJudgment>>,
+  Assert<Equal<typeof oaks.record, NamedTarget>>,
+  Assert<Equal<typeof assignedOaks.record, typeof assignment>>,
+  Assert<
+    Equal<
+      AssignedClassification["records"][number]["ranking"][number]["taxon"]["record"],
+      typeof assignment
+    >
+  >,
+  Assert<Equal<typeof mixedPanel, TaxonSet.TaxonSet<MixedTarget>>>,
+  Assert<Equal<MixedClassification["panel"], TaxonSet.TaxonSet<MixedTarget>>>,
+  Assert<Equal<MixedMatch, TaxonMatch<typeof specimen, MixedTarget>>>,
+  Assert<Equal<MixedMatch["taxon"]["record"], MixedTarget>>,
+  Assert<Equal<MixedClassification["records"][number]["taxa"][number], MixedMatch>>,
+  Assert<Judgment<typeof mixedTargetLabels, string[]>>,
   Assert<Equal<ClassifiedRow["record"], typeof specimen>>,
   Assert<Equal<ClassifiedMatch["record"], typeof specimen>>,
-  Assert<Equal<ClassifiedMatch, TaxonMatch<typeof specimen>>>,
-  Assert<Equal<ClassifiedRow["taxa"][number], TaxonMatch<typeof specimen>>>,
-  Assert<Equal<ClassifiedMatch["taxon"], Types.ExtractTag<TaxonSet.TaxonSet, "Taxon">>>,
+  Assert<Equal<ClassifiedMatch, TaxonMatch<typeof specimen, NamedTarget>>>,
+  Assert<Equal<ClassifiedRow["taxa"][number], TaxonMatch<typeof specimen, NamedTarget>>>,
+  Assert<Equal<ClassifiedMatch["taxon"], typeof oaks>>,
+  Assert<Equal<Classified["panel"], TaxonSet.TaxonSet<NamedTarget>>>,
+  Assert<Equal<TaxonMatch<typeof specimen>["record"], typeof specimen>>,
+  Assert<Equal<TaxonMatch<typeof specimen>["taxon"], Types.ExtractTag<TaxonSet.TaxonSet, "Taxon">>>,
   Assert<Equal<ClassifiedMatch["judgment"], TaxonMatchJudgment>>,
   Assert<Equal<TaxonMatchJudgment["_tag"], "Matched" | "NotMatched" | "Undetermined">>,
   Assert<
@@ -138,13 +262,15 @@ export type Contracts = [
   Assert<Equal<IntersectionOperands, Array.NonEmptyReadonlyArray<TaxonSet.TaxonSet>>>,
   Assert<Equal<IsAny<UnionOperands[number]>, false>>,
   Assert<Equal<IsAny<IntersectionOperands[number]>, false>>,
-  Assert<Judgment<typeof relation, TaxonSetRelationJudgment>>,
-  Assert<Judgment<typeof membership, TaxonMembershipJudgment>>,
-  Assert<Judgment<typeof partition, RecordMembershipPartition<typeof specimen>>>,
-  Assert<Judgment<typeof grouped, RecordsGroupedByTaxa<typeof specimen>>>,
-  Assert<Judgment<typeof all, CollectionMembershipJudgment>>,
-  Assert<Judgment<typeof some, CollectionMembershipJudgment>>,
-  Assert<Judgment<typeof none, CollectionMembershipJudgment>>,
+  Assert<Judgment<typeof relation, TaxonSetRelationJudgment<NamedTarget>>>,
+  Assert<Judgment<typeof membership, TaxonMembershipJudgment<NamedTarget>>>,
+  Assert<Judgment<typeof partition, RecordMembershipPartition<typeof specimen, ShorthandTarget>>>,
+  Assert<
+    Judgment<typeof grouped, RecordsGroupedByTaxa<typeof specimen, NamedTarget | ShorthandTarget>>
+  >,
+  Assert<Judgment<typeof all, CollectionMembershipJudgment<NamedTarget>>>,
+  Assert<Judgment<typeof some, CollectionMembershipJudgment<ShorthandTarget>>>,
+  Assert<Judgment<typeof none, CollectionMembershipJudgment<NamedTarget>>>,
   Assert<Judgment<typeof members, readonly (typeof specimen)[]>>,
   Assert<Judgment<typeof groupedMembers, (readonly (typeof specimen)[])[]>>,
   Assert<
@@ -155,9 +281,9 @@ export type Contracts = [
         readonly NotMember: readonly (typeof specimen)[];
         readonly MixedMembership: readonly (typeof specimen)[];
         readonly Undetermined: readonly (typeof specimen)[];
-        readonly MultipleTaxaInTargetName: readonly {
+        readonly MultipleTaxaInTarget: readonly {
           readonly record: typeof specimen;
-          readonly targetName: TaxonName;
+          readonly target: Types.ExtractTag<TaxonSet.TaxonSet<ShorthandTarget>, "Taxon">;
         }[];
       }
     >
@@ -166,14 +292,21 @@ export type Contracts = [
     Equal<
       Effect.Success<typeof grouped>["groups"],
       readonly {
-        readonly target: TaxonName | TaxonSet.TaxonSet;
-        readonly partition: RecordMembershipPartition<typeof specimen>;
+        readonly target:
+          | TaxonName
+          | NamedTarget
+          | ShorthandTarget
+          | TaxonSet.TaxonSet<NamedTarget | ShorthandTarget>;
+        readonly partition: RecordMembershipPartition<
+          typeof specimen,
+          NamedTarget | ShorthandTarget
+        >;
       }[]
     >
   >,
 ];
 
-// Keep every tag and child valid except the deeply nested numeric name.
+// Keep every tag and child valid except the deeply nested numeric scientific name.
 // Otherwise a widened outer tag could mask the recursive-declaration regression.
 const malformed: {
   readonly _tag: "Difference";
@@ -181,7 +314,10 @@ const malformed: {
   readonly right: {
     readonly _tag: "Difference";
     readonly left: TaxonSet.TaxonSet;
-    readonly right: { readonly _tag: "Taxon"; readonly name: number };
+    readonly right: {
+      readonly _tag: "Taxon";
+      readonly record: { readonly scientificName: number };
+    };
   };
 } = {
   _tag: "Difference",
@@ -189,7 +325,7 @@ const malformed: {
   right: {
     _tag: "Difference",
     left: oaks,
-    right: { _tag: "Taxon", name: 42 },
+    right: { _tag: "Taxon", record: { scientificName: 42 } },
   },
 };
 

@@ -22,7 +22,7 @@ const answer = (
 
 const inputSchema = Schema.Struct({
   records: Schema.Array(Schema.String),
-  taxa: Schema.Array(Schema.String),
+  taxa: Schema.Array(Schema.Struct({ scientificName: Schema.String })),
 });
 
 const boundedTaxon = (name: string) => {
@@ -55,9 +55,9 @@ it.effect("ranks several supported taxa while preserving original records and ta
         const input = Schema.decodeUnknownSync(inputSchema)(state);
         expect(input.records).toEqual(['Scientific name: "Saccharomyces cerevisiae"']);
         expect(input.taxa).toEqual([
-          "Saccharomyces",
-          "Saccharomyces cerevisiae",
-          "Lactobacillaceae",
+          { scientificName: "Saccharomyces" },
+          { scientificName: "Saccharomyces cerevisiae" },
+          { scientificName: "Lactobacillaceae" },
         ]);
         return Effect.succeed({
           answers: {
@@ -90,7 +90,7 @@ it.effect("ranks several supported taxa while preserving original records and ta
       "Matched",
       "NotMatched",
     ]);
-    expect(row.ranking.map((match) => match.taxon.name)).toEqual([
+    expect(row.ranking.map((match) => match.taxon.record.scientificName)).toEqual([
       "Saccharomyces",
       "Saccharomyces cerevisiae",
     ]);
@@ -184,7 +184,10 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
     DecisionModel.make({
       decide: ({ state }) => {
         const input = Schema.decodeUnknownSync(inputSchema)(state);
-        expect(input.taxa).toEqual(["Fungi", "Saccharomyces cerevisiae"]);
+        expect(input.taxa).toEqual([
+          { scientificName: "Fungi" },
+          { scientificName: "Saccharomyces cerevisiae" },
+        ]);
         expect(input.records).toEqual([
           'Scientific name: "Saccharomyces cerevisiae"',
           'Taxonomy: "ncbi"\nTaxon ID: "5476"\nTaxonomy release: "fixture-release"',
@@ -193,7 +196,7 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
         expect(state).toMatchObject({
           nodes: expect.arrayContaining([
             expect.objectContaining({ _tag: "Difference" }),
-            { _tag: "Taxon", name: "Saccharomyces" },
+            { _tag: "Taxon", record: { scientificName: "Saccharomyces" } },
           ]),
         });
         return Effect.succeed({
@@ -213,11 +216,9 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
 
   return Effect.gen(function* () {
     const result = yield* Taxonomy.classifyRecords(records, panel);
-    expect(result.records.map((row) => row.ranking.map((match) => match.taxon.name))).toEqual([
-      ["Fungi", "Saccharomyces cerevisiae"],
-      ["Fungi"],
-      [],
-    ]);
+    expect(
+      result.records.map((row) => row.ranking.map((match) => match.taxon.record.scientificName)),
+    ).toEqual([["Fungi", "Saccharomyces cerevisiae"], ["Fungi"], []]);
     for (const row of result.records) {
       expect(row.taxa[0]?.taxon).toBe(fungi);
       expect(row.taxa[1]?.taxon).toBe(species);
@@ -239,10 +240,10 @@ it.effect(
         decide: ({ state }) => {
           const input = Schema.decodeUnknownSync(inputSchema)(state);
           expect(input.taxa).toEqual([
-            "Saccharomyces",
-            "Saccharomyces cerevisiae",
-            "Saccharomyces",
-            "Saccharomyces cerevisiae",
+            { scientificName: "Saccharomyces" },
+            { scientificName: "Saccharomyces cerevisiae" },
+            { scientificName: "Saccharomyces" },
+            { scientificName: "Saccharomyces cerevisiae" },
           ]);
           return Effect.succeed({
             answers: {
@@ -282,7 +283,7 @@ it.effect(
 );
 
 it.effect("does not expand shared positive occurrences when there are no records", () => {
-  let panel = boundedTaxon("Saccharomyces");
+  let panel: TaxonSet.TaxonSet = boundedTaxon("Saccharomyces");
   for (let depth = 0; depth < 40; depth++) panel = TaxonSet.union(panel, panel);
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
@@ -298,7 +299,7 @@ it.effect("does not expand shared positive occurrences when there are no records
 
 it.effect("does not repeatedly expand shared subtraction branches that offer no taxa", () => {
   const fungi = TaxonSet.of(TaxonName.make("Fungi"));
-  let excluded = boundedTaxon("Saccharomyces");
+  let excluded: TaxonSet.TaxonSet = boundedTaxon("Saccharomyces");
   for (let depth = 0; depth < 40; depth++) excluded = TaxonSet.union(excluded, excluded);
   const panel = TaxonSet.difference(fungi, excluded);
   const record = RecordLabel.make("Candida albicans");
@@ -306,7 +307,9 @@ it.effect("does not repeatedly expand shared subtraction branches that offer no 
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state }) => {
-        expect(Schema.decodeUnknownSync(inputSchema)(state).taxa).toEqual(["Fungi"]);
+        expect(Schema.decodeUnknownSync(inputSchema)(state).taxa).toEqual([
+          { scientificName: "Fungi" },
+        ]);
         return Effect.succeed({
           answers: { r0t0: answer("withinTaxon", [0.01, 0.94, 0.02, 0.03]) },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -329,7 +332,9 @@ it.effect("retains a shared taxon when it also occurs outside subtraction", () =
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state }) => {
-        expect(Schema.decodeUnknownSync(inputSchema)(state).taxa).toEqual(["Fungi"]);
+        expect(Schema.decodeUnknownSync(inputSchema)(state).taxa).toEqual([
+          { scientificName: "Fungi" },
+        ]);
         return Effect.succeed({
           answers: { r0t0: answer("withinTaxon", [0.01, 0.94, 0.02, 0.03]) },
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -346,7 +351,7 @@ it.effect("retains a shared taxon when it also occurs outside subtraction", () =
 it.effect("classifies deeply nested panels without recursive source traversal", () => {
   const taxon = TaxonSet.of(TaxonName.make("Fungi"));
   const empty = TaxonSet.empty();
-  let panel = taxon;
+  let panel: TaxonSet.TaxonSet = taxon;
   for (let depth = 0; depth < 5000; depth++) panel = TaxonSet.union(empty, panel);
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
@@ -389,7 +394,10 @@ it.effect("preserves record and usage order when concurrent requests finish out 
         decide: Effect.fnUntraced(function* ({ state }) {
           const input = Schema.decodeUnknownSync(inputSchema)(state);
           expect(input.records).toHaveLength(1);
-          expect(input.taxa).toEqual(["Saccharomyces", "Saccharomyces cerevisiae"]);
+          expect(input.taxa).toEqual([
+            { scientificName: "Saccharomyces" },
+            { scientificName: "Saccharomyces cerevisiae" },
+          ]);
           const index = descriptions.indexOf(Array.head(input.records).pipe(Option.getOrThrow));
           expect(index).toBeGreaterThanOrEqual(0);
           active++;
@@ -448,7 +456,10 @@ it.effect("reuses the default 16-record serial batches while keeping the full pa
           const input = Schema.decodeUnknownSync(inputSchema)(state);
           sizes.push(input.records.length);
           heads.push(Record.size(decisions));
-          expect(input.taxa).toEqual(["Saccharomyces", "Saccharomyces cerevisiae"]);
+          expect(input.taxa).toEqual([
+            { scientificName: "Saccharomyces" },
+            { scientificName: "Saccharomyces cerevisiae" },
+          ]);
           yield* Deferred.succeed(started, undefined);
           yield* Deferred.await(release);
           return {

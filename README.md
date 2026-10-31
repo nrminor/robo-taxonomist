@@ -15,7 +15,7 @@ Rather than using inscrutable and nested regex patterns and other techniques to 
 pnpm add robo-taxonomist
 ```
 
-This release uses Effect 4.0.0. With default settings, pnpm and other package managers will automatically install the right version of Effect if missing. If your application already uses Effect, make sure its version satisfies the library's peer requirement.
+This release supports Effect `^4.0.0`. With default settings, pnpm and other package managers will automatically install the right version of Effect if missing. If your application already uses Effect, make sure its version satisfies the library's peer requirement.
 
 Most operations in this library require internet access as well as access to a live decision model. Wire it up in an Effect `DecisionModel` layer, as demonstrated below.
 
@@ -78,7 +78,7 @@ const program = Effect.gen(function* () {
     unresolvedIds: partition.Undetermined.map((record) => record.sampleId),
     matches: classified.records.map(({ record, ranking }) => ({
       sampleId: record.sampleId,
-      taxa: ranking.map((match) => ({ name: match.taxon.name, support: match.support })),
+      taxa: ranking.map((match) => ({ assignment: match.taxon.record, support: match.support })),
     })),
   };
 });
@@ -126,7 +126,7 @@ const reference = {
 const comparison = Taxonomy.sameGenus(specimen, reference);
 ```
 
-The actual comparison here uses just uses the `label` field, but the other information sticks around, including in the comparison result object. `robo-taxonomist` APIs for directly comparing records all accept either a simple `RecordLabel` (which is basically a non-empty string) or an object with at least one of `label`, `scientificName`, and `taxonId`. A `TaxonId` has a `taxonomy`, an `id`, and an optional `release`. Supplying the release lets you distinguish assignments made against different versions of a taxonomy. All of this information can inform the connected decision model.
+The comparison uses the supplied `label`, `scientificName`, and `taxonId` fields together. It returns a judgment and leaves your records unchanged. `robo-taxonomist` APIs for directly comparing records all accept either a simple `RecordLabel` (which is basically a non-empty string) or an object with at least one of `label`, `scientificName`, and `taxonId`. A `TaxonId` has a `taxonomy`, an `id`, and an optional `release`. Supplying the release lets you distinguish assignments made against different versions of a taxonomy. All of this information can inform the connected decision model.
 
 `RecordLabel.make` and `TaxonName.make` validate that the text is nonblank. They preserve the supplied text, including its spelling, capitalization, and whitespace. They do not check whether a name is currently accepted or uniquely identifies a taxon. Likewise, supplying several identifying fields does not automatically audit whether they agree. If your application needs an authoritative current assignment, obtain it from your preferred taxonomy service and retain its provenance.
 
@@ -192,7 +192,7 @@ Records can also describe combinations, and this is where the value of `robo-tax
 | `Undetermined`              | The comparison remains unresolved.                                                       |
 | `MultipleTaxaAtRank`        | A combined assignment needs clarification; `side` identifies `left`, `right`, or `both`. |
 
-For questions about supplied taxon names themselves, `robo-taxonomist` provides `sameTaxon` as well as set operations like `taxonWithin`:
+For questions about taxa themselves, `robo-taxonomist` provides `sameTaxon` and `taxonWithin`. Both accept a `TaxonName` or a structured record:
 
 ```ts
 import { Effect } from "effect";
@@ -236,6 +236,21 @@ const empty = TaxonSet.empty();
 
 `union`, `intersection`, and `difference` each take two set expressions. Combine those expressions again to build a larger target. `symmetricDifference` describes organisms in exactly one input set, and `complement(set, universe)` subtracts the set from the explicitly supplied universe. In this example, `remaining` and `otherFamilyMembers` describe the same directed difference.
 
+`TaxonSet.of` also accepts a record and keeps its fields:
+
+```ts
+import { TaxonId, TaxonName, TaxonSet } from "robo-taxonomist";
+
+const oakAssignment = {
+  scientificName: TaxonName.make("Quercus robur"),
+  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
+  referenceId: "oak-reference",
+};
+const oakSpecies = TaxonSet.of(oakAssignment);
+```
+
+Each entry identifies one taxon. Use `union` to combine taxa. The model receives the identifying fields; your extra fields remain available in `taxon.record` on returned matches.
+
 To ask how the sets relate, run a relation question:
 
 ```ts
@@ -257,7 +272,7 @@ const compareSets = Effect.gen(function* () {
 
 The available questions you can ask of taxon sets are `isSubsetOf`, `isProperSubsetOf`, `equivalent`, `overlaps`, and `disjoint`. Overlap asks whether there are any shared organisms, so equality and containment also count as overlap. A proper subset must exclude at least one organism from the containing set.
 
-Rather than just reporting with booleans, these set relation questions return result objects that include a tag of `Yes`, `No`, or `Undetermined`; we recommend users handle these tags with exhaustive matching in Effect (see below). The result objects also include the `relation` that was asked. A `MultipleTaxaInSetName` result includes `side` and `taxonName` so you can review a name that appears to combine taxa. When you intend a union, build it from separate `TaxonSet.of` expressions, as above.
+Rather than just reporting with booleans, these set relation questions return result objects that include a tag of `Yes`, `No`, or `Undetermined`; we recommend users handle these tags with exhaustive matching in Effect (see below). The result objects also include the `relation` that was asked. A `MultipleTaxaInSet` result includes `side` and the original `taxon` so you can review its `record`. When you intend a union, build it from separate `TaxonSet.of` expressions, as above.
 
 Literal empty sets allow some answers without a model call: an empty set is a subset of any set, and an empty set cannot overlap another set. Other expressions, including ones you expect to be equivalent or empty, still ask the model. Building an expression and establishing its biological meaning, in other words, are separate operations.
 
@@ -280,13 +295,13 @@ const checkSample = Effect.gen(function* () {
       NotMember: () => "Every subject described by this record is outside the target.",
       MixedMembership: () => "The record describes subjects both inside and outside the target.",
       Undetermined: () => "The supplied information does not settle membership.",
-      MultipleTaxaInTargetName: ({ targetName }) => `Review the target name: ${targetName}`,
+      MultipleTaxaInTarget: ({ target }) => `Review the target: ${target.record.scientificName}`,
     }),
   );
 });
 ```
 
-The target can be a `TaxonName` directly or a `TaxonSet` expression. Use a name for a single whole taxon and an expression for combinations or exclusions. The model receives the whole expression when assessing membership.
+The target can be a `TaxonName`, a structured record, or a `TaxonSet` expression. Use a name or record for one taxon and an expression for combinations or exclusions. The model receives the whole expression when assessing membership.
 
 Handle `MixedMembership` separately from `NotMember`: a mixed sample contains relevant organisms even though it does not wholly belong to the target. Likewise, `Undetermined` is a successful unresolved answer. A failed model request is reported through the Effect error channel, as described under [running model-backed operations](#running-model-backed-operations).
 
@@ -317,9 +332,9 @@ const classifySample = Effect.gen(function* () {
     records: result.records.map(({ record, taxa, ranking }) => ({
       id: record.id,
       abundance: record.abundance,
-      matches: ranking.map((match) => ({ name: match.taxon.name, support: match.support })),
+      matches: ranking.map((match) => ({ assignment: match.taxon.record, support: match.support })),
       decisions: taxa.map((match) => ({
-        name: match.taxon.name,
+        assignment: match.taxon.record,
         judgment: match.judgment._tag,
         label: match.answer.label,
         probabilities: match.answer.probabilities,
@@ -403,15 +418,15 @@ const partitionSamples = Effect.gen(function* () {
     outside: partition.NotMember.map((record) => record.id),
     mixed: partition.MixedMembership.map((record) => record.id),
     unresolved: partition.Undetermined.map((record) => record.id),
-    targetNamesToReview: partition.MultipleTaxaInTargetName.map(({ record, targetName }) => ({
+    targetsToReview: partition.MultipleTaxaInTarget.map(({ record, target }) => ({
       id: record.id,
-      targetName,
+      assignment: target.record,
     })),
   };
 });
 ```
 
-Each bucket preserves input order, repeated occurrences, and the original record. The `MultipleTaxaInTargetName` bucket retains both the record and the target name identified by the model. A partition with no records returns empty buckets without calling the model.
+Each bucket preserves input order, repeated occurrences, and the original record. The `MultipleTaxaInTarget` bucket retains both the record and the target identified by the model. A partition with no records returns empty buckets without calling the model.
 
 For several membership targets, `groupRecordsByTaxa` returns a partition for each target, in target order:
 
@@ -453,7 +468,7 @@ const checkCollection = Effect.gen(function* () {
 });
 ```
 
-Each answer has `_tag: "Yes"`, `"No"`, or `"Undetermined"` and a `quantifier` of `"all"`, `"any"`, or `"none"`. A clarification result uses `MultipleTaxaInTargetName` with that quantifier and the target name.
+Each answer has `_tag: "Yes"`, `"No"`, or `"Undetermined"` and a `quantifier` of `"all"`, `"any"`, or `"none"`. A clarification result uses `MultipleTaxaInTarget` with that quantifier and the original target.
 
 These questions concern whole-record membership, which means they will provide a clearest answer when that record represents only one taxonomic entity. A record describing both an oak and a bacterium, for example, does not wholly belonging to Fagaceae, even though it mentions an organism in that family. `anyRecordBelongsTo` asks whether any record object wholly belongs; it does not ask whether any subject mentioned within any record is inside the target.
 

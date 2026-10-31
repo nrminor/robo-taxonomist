@@ -17,7 +17,10 @@ const requestPanel = (panelId = "broad") =>
 
 const clefRequest = Schema.Struct({
   model: Schema.Literal("clef"),
-  state: Schema.Struct({ records: Schema.Array(Schema.String), taxa: Schema.Array(Schema.String) }),
+  state: Schema.Struct({
+    records: Schema.Array(Schema.String),
+    taxa: Schema.Array(Schema.Struct({ scientificName: Schema.String })),
+  }),
   questions: Schema.Record(
     Schema.String,
     Schema.Struct({

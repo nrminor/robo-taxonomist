@@ -30,7 +30,7 @@ export const RecordLabel = Schema.String.check(
 export type RecordLabel = typeof RecordLabel.Type;
 
 /**
- * Supply a whole-taxon name as nonblank text, preserved exactly as supplied.
+ * Supply a taxon name as nonblank text, preserved exactly as supplied.
  * No trimming or other normalization is applied.
  * To combine several taxa, construct each with TaxonSet.of and combine the expressions with TaxonSet.union.
  *
@@ -160,11 +160,21 @@ export const CollectionExecution = Schema.Struct({
 export type CollectionExecution = typeof CollectionExecution.Type;
 
 class Empty extends Schema.TaggedClass<Empty>("robo-taxonomist/TaxonSet/Empty")("Empty", {}) {}
-class Taxon extends Schema.TaggedClass<Taxon>("robo-taxonomist/TaxonSet/Taxon")("Taxon", {
-  name: TaxonName,
-}) {}
+export class Taxon<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<Taxon>(
+  "robo-taxonomist/TaxonSet/Taxon",
+)("Taxon", {
+  // Retain the supplied record in memory; encode only identifying fields.
+  record: Schema.declare(Schema.is(TaxonomicRecord)).pipe(Schema.encodeTo(TaxonomicRecord)),
+}) {
+  declare readonly record: R;
+}
 
-type Expression = Empty | Taxon | Union | Intersection | Difference;
+export type Expression<R extends TaxonomicRecord = TaxonomicRecord> =
+  | Empty
+  | Taxon<R>
+  | Union<R>
+  | Intersection<R>
+  | Difference<R>;
 type EncodedExpression =
   | typeof Empty.Encoded
   | typeof Taxon.Encoded
@@ -182,26 +192,33 @@ const expressionRef: Schema.Codec<Expression, EncodedExpression> = Schema.suspen
   () => taxonSetSchema,
 );
 
-class Union extends Schema.TaggedClass<Union>("robo-taxonomist/TaxonSet/Union")("Union", {
+export class Union<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<Union>(
+  "robo-taxonomist/TaxonSet/Union",
+)("Union", {
   operands: Schema.NonEmptyArray(expressionRef),
 }) {
-  declare readonly operands: readonly [Expression, ...Expression[]];
+  declare readonly operands: readonly [Expression<R>, ...Expression<R>[]];
 }
 
-class Intersection extends Schema.TaggedClass<Intersection>(
-  "robo-taxonomist/TaxonSet/Intersection",
-)("Intersection", {
-  operands: Schema.NonEmptyArray(expressionRef),
-}) {
-  declare readonly operands: readonly [Expression, ...Expression[]];
-}
-
-class Difference extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSet/Difference")(
-  "Difference",
-  { left: expressionRef, right: expressionRef },
+export class Intersection<
+  R extends TaxonomicRecord = TaxonomicRecord,
+> extends Schema.TaggedClass<Intersection>("robo-taxonomist/TaxonSet/Intersection")(
+  "Intersection",
+  {
+    operands: Schema.NonEmptyArray(expressionRef),
+  },
 ) {
-  declare readonly left: Expression;
-  declare readonly right: Expression;
+  declare readonly operands: readonly [Expression<R>, ...Expression<R>[]];
+}
+
+export class Difference<
+  R extends TaxonomicRecord = TaxonomicRecord,
+> extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSet/Difference")("Difference", {
+  left: expressionRef,
+  right: expressionRef,
+}) {
+  declare readonly left: Expression<R>;
+  declare readonly right: Expression<R>;
 }
 
 /**
