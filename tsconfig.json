@@ -91,8 +91,8 @@
               "test/taxon-set.test.ts",
               "test/taxon-set.property.test.ts",
               "test/taxon-judgments.property.test.ts",
-              "**/sites/demo/**/*.ts",
-              "**/sites/demo/**/*.tsx"
+              "**/apps/demo/**/*.ts",
+              "**/apps/demo/**/*.tsx"
             ],
             "options": {
               "diagnosticSeverity": {

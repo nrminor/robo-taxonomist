@@ -1,5 +1,5 @@
 packages:
-  - sites/demo
+  - apps/demo
 
 allowBuilds:
   esbuild@0.28.2: true
