@@ -132,8 +132,8 @@ it.effect.each(operations)(
           calls++;
           expect(state).toEqual({
             nodes: [
-              { _tag: "Taxon", name: "A" },
-              { _tag: "Taxon", name: "C" },
+              { _tag: "Taxon", record: { scientificName: "A" } },
+              { _tag: "Taxon", record: { scientificName: "C" } },
             ],
             left: 0,
             right: 1,
@@ -155,11 +155,12 @@ it.effect.each(operations)(
       }),
     );
     return Effect.gen(function* () {
-      expect(yield* operation(left, right)).toEqual({
-        _tag: "MultipleTaxaInSetName",
+      const result = yield* operation(left, right);
+      expect(result).toEqual({
+        _tag: "MultipleTaxaInSet",
         relation,
         side: "right",
-        taxonName: "C",
+        taxon: right,
       });
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
@@ -262,9 +263,10 @@ it.effect(
   () => {
     const a = TaxonSet.of(TaxonName.make("A"));
     const left = TaxonSet.union(a, a);
+    const duplicate = TaxonSet.of(TaxonName.make("A"));
     const right = TaxonSet.intersection(
       TaxonSet.of(TaxonName.make("B")),
-      TaxonSet.difference(left, TaxonSet.of(TaxonName.make("A"))),
+      TaxonSet.difference(left, duplicate),
     );
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
@@ -273,11 +275,11 @@ it.effect(
           expect(state).toEqual({
             nodes: [
               { _tag: "Union", operands: [1, 1] },
-              { _tag: "Taxon", name: "A" },
+              { _tag: "Taxon", record: { scientificName: "A" } },
               { _tag: "Intersection", operands: [3, 4] },
-              { _tag: "Taxon", name: "B" },
+              { _tag: "Taxon", record: { scientificName: "B" } },
               { _tag: "Difference", left: 0, right: 5 },
-              { _tag: "Taxon", name: "A" },
+              { _tag: "Taxon", record: { scientificName: "A" } },
             ],
             left: 0,
             right: 2,
@@ -288,16 +290,18 @@ it.effect(
             "multipleLeft0",
             "multipleRight0",
             "multipleRight1",
+            "multipleRight2",
           ]);
-          expect(question.criteria.multipleRight0).toContain('"B"');
-          expect(question.criteria.multipleRight1).toContain('"A"');
+          expect(question.criteria.multipleRight0).toContain("Right taxon node 3 ");
+          expect(question.criteria.multipleRight1).toContain("Right taxon node 1 ");
+          expect(question.criteria.multipleRight2).toContain("Right taxon node 5 ");
           return Effect.succeed({
             answers: {
               relation: {
                 _tag: "Classify",
-                label: "multipleRight1",
+                label: "multipleRight2",
                 probabilities: Record.map(question.criteria, (_value, key) =>
-                  key === "multipleRight1" ? 1 : 0,
+                  key === "multipleRight2" ? 1 : 0,
                 ),
               },
             },
@@ -307,32 +311,36 @@ it.effect(
       }),
     );
     return Effect.gen(function* () {
-      expect(yield* TaxonSet.overlaps(left, right)).toEqual({
-        _tag: "MultipleTaxaInSetName",
+      const result = yield* TaxonSet.overlaps(left, right);
+      expect(result).toEqual({
+        _tag: "MultipleTaxaInSet",
         relation: "overlap",
         side: "right",
-        taxonName: "A",
+        taxon: duplicate,
       });
+      if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected clarification");
+      expect(result.taxon).toBe(duplicate);
+      expect(result.taxon).not.toBe(a);
     }).pipe(Effect.provide(layer));
   },
 );
 
 it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
   const name = TaxonName.make("A");
-  const leaf = TaxonSet.of(name);
-  const expression = Iterable.reduce(Iterable.range(1, 12), leaf, (previous) =>
-    TaxonSet.union(previous, previous),
-  );
   const leafReads = MutableRef.make(0);
-  // Observe preparation, not construction; every read returns the original valid name.
-  Object.defineProperty(leaf, "name", {
-    enumerable: true,
-    configurable: true,
-    get: () => {
+  const leaf = TaxonSet.of({
+    get scientificName() {
       MutableRef.increment(leafReads);
       return name;
     },
   });
+  const expression = Iterable.reduce<number, TaxonSet.TaxonSet>(
+    Iterable.range(1, 12),
+    leaf,
+    (previous) => TaxonSet.union(previous, previous),
+  );
+  // Observe preparation, not construction; every read returns the original valid name.
+  MutableRef.set(leafReads, 0);
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -342,7 +350,10 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
         expect(state).toMatchObject({ left: 0, right: 0 });
         expect(state).toHaveProperty("nodes.0", { _tag: "Union", operands: [1, 1] });
         expect(state).toHaveProperty("nodes.11", { _tag: "Union", operands: [12, 12] });
-        expect(state).toHaveProperty("nodes.12", { _tag: "Taxon", name: "A" });
+        expect(state).toHaveProperty("nodes.12", {
+          _tag: "Taxon",
+          record: { scientificName: "A" },
+        });
         const question = relationQuestion(decisions);
         return Effect.succeed({
           answers: {
@@ -381,9 +392,11 @@ it.effect.each([
   [
     "blank nested name",
     () => {
-      const leaf = TaxonSet.of(TaxonName.make("A"));
+      const record = { scientificName: TaxonName.make("A") };
+      const leaf = TaxonSet.of(record);
       const branch = TaxonSet.union(leaf, leaf);
-      Object.assign(leaf, { name: " " });
+      // @ts-expect-error Untyped consumers can corrupt a previously valid identifying field.
+      record.scientificName = " ";
       return branch;
     },
   ],
@@ -455,29 +468,46 @@ for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations
     [yesLabel, { _tag: yesTag, relation }],
     [noLabel, { _tag: noTag, relation }],
     ["undetermined", { _tag: "Undetermined", relation }],
-    ["multipleLeft0", { _tag: "MultipleTaxaInSetName", relation, side: "left", taxonName: "A" }],
-    ["multipleRight0", { _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" }],
+    [
+      "multipleLeft0",
+      {
+        _tag: "MultipleTaxaInSet",
+        relation,
+        side: "left",
+        taxon: TaxonSet.of(TaxonName.make("A")),
+      },
+    ],
+    [
+      "multipleRight0",
+      {
+        _tag: "MultipleTaxaInSet",
+        relation,
+        side: "right",
+        taxon: TaxonSet.of(TaxonName.make("B")),
+      },
+    ],
   ] as const)(`maps ${relation} selected fixture %s to its original side`, ([label, expected]) =>
     Effect.gen(function* () {
       const left = TaxonSet.of(TaxonName.make("A"));
       const right = TaxonSet.of(TaxonName.make("B"));
-      expect(
-        yield* operation(left, right).pipe(
-          Effect.provide(
-            relationLayer({
-              _tag: "Classify",
-              label,
-              probabilities: relationProbabilities({ [label]: 1 }),
-            }),
-          ),
+      const result = yield* operation(left, right).pipe(
+        Effect.provide(
+          relationLayer({
+            _tag: "Classify",
+            label,
+            probabilities: relationProbabilities({ [label]: 1 }),
+          }),
         ),
-      ).toEqual(expected);
+      );
+      expect(result).toEqual(expected);
+      if (result._tag === "MultipleTaxaInSet")
+        expect(result.taxon).toBe(result.side === "left" ? left : right);
     }),
   );
 }
 
 it.effect(
-  "deduplicates literal names per side only, retaining expression order and original side",
+  "enumerates unique source nodes per side, retaining equal-name entries and original side",
   () => {
     const a = TaxonSet.of(TaxonName.make("A"));
     const b = TaxonSet.of(TaxonName.make("B"));
@@ -498,14 +528,16 @@ it.effect(
             ...baseRelationLabels,
             "multipleLeft0",
             "multipleLeft1",
+            "multipleLeft2",
             "multipleRight0",
             "multipleRight1",
           ]);
           expect(question.criteria).toMatchObject({
-            multipleLeft0: expect.stringContaining('left-set name "A"'),
-            multipleLeft1: expect.stringContaining('left-set name "B"'),
-            multipleRight0: expect.stringContaining('right-set name "C"'),
-            multipleRight1: expect.stringContaining('right-set name "A"'),
+            multipleLeft0: expect.stringContaining("Left taxon node 3 "),
+            multipleLeft1: expect.stringContaining("Left taxon node 5 "),
+            multipleLeft2: expect.stringContaining("Left taxon node 2 "),
+            multipleRight0: expect.stringContaining("Right taxon node 7 "),
+            multipleRight1: expect.stringContaining("Right taxon node 3 "),
           });
           return Effect.succeed({
             answers: {
@@ -514,7 +546,13 @@ it.effect(
                 label: "multipleRight1",
                 probabilities: relationProbabilities(
                   { multipleRight1: 1 },
-                  { multipleLeft0: 0, multipleLeft1: 0, multipleRight0: 0, multipleRight1: 0 },
+                  {
+                    multipleLeft0: 0,
+                    multipleLeft1: 0,
+                    multipleLeft2: 0,
+                    multipleRight0: 0,
+                    multipleRight1: 0,
+                  },
                 ),
               },
             },
@@ -524,12 +562,15 @@ it.effect(
       }),
     );
     return Effect.gen(function* () {
-      expect(yield* TaxonSet.isSubsetOf(left, right)).toEqual({
-        _tag: "MultipleTaxaInSetName",
+      const result = yield* TaxonSet.isSubsetOf(left, right);
+      expect(result).toEqual({
+        _tag: "MultipleTaxaInSet",
         relation: "subset",
         side: "right",
-        taxonName: "A",
+        taxon: a,
       });
+      if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected clarification");
+      expect(result.taxon).toBe(a);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -703,19 +744,18 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
     Effect.gen(function* () {
       const a = TaxonSet.of(TaxonName.make("A"));
       const b = TaxonSet.of(TaxonName.make("B"));
-      expect(
-        yield* operation(a, b, {
-          policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
-        }).pipe(
-          Effect.provide(
-            relationLayer({
-              _tag: "Classify",
-              label: "multipleRight0",
-              probabilities: relationProbabilities({ [yesLabel]: 0.4, multipleRight0: 0.6 }),
-            }),
-          ),
+      const result = yield* operation(a, b, {
+        policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
+      }).pipe(
+        Effect.provide(
+          relationLayer({
+            _tag: "Classify",
+            label: "multipleRight0",
+            probabilities: relationProbabilities({ [yesLabel]: 0.4, multipleRight0: 0.6 }),
+          }),
         ),
-      ).toEqual({ _tag: "MultipleTaxaInSetName", relation, side: "right", taxonName: "B" });
+      );
+      expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation, side: "right", taxon: b });
     }),
   );
 }
@@ -1036,9 +1076,9 @@ it.effect(
           expect(state).toEqual({
             nodes: [
               { _tag: "Union", operands: [1, 2] },
-              { _tag: "Taxon", name: "A" },
-              { _tag: "Taxon", name: "B" },
-              { _tag: "Taxon", name: "C" },
+              { _tag: "Taxon", record: { scientificName: "A" } },
+              { _tag: "Taxon", record: { scientificName: "B" } },
+              { _tag: "Taxon", record: { scientificName: "C" } },
             ],
             left: 0,
             right: 3,
@@ -1051,9 +1091,9 @@ it.effect(
               properSubset: expect.any(globalThis.String),
               disjoint: expect.any(globalThis.String),
               undetermined: expect.any(globalThis.String),
-              multipleLeft0: expect.stringContaining('left-set name "A"'),
-              multipleLeft1: expect.stringContaining('left-set name "B"'),
-              multipleRight0: expect.stringContaining('right-set name "C"'),
+              multipleLeft0: expect.stringContaining("Left taxon node 1 "),
+              multipleLeft1: expect.stringContaining("Left taxon node 2 "),
+              multipleRight0: expect.stringContaining("Right taxon node 3 "),
             },
           });
           const question = relationQuestion(decisions);

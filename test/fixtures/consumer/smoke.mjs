@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { Effect, Layer } from "effect";
 import { DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
-import { TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
+import { TaxonId, TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
 
 const oaks = TaxonSet.of(TaxonName.make("Quercus"));
 
 assert.equal(TaxonSet.union(oaks, oaks)._tag, "Union");
 
-const species = TaxonSet.of(TaxonName.make("Quercus robur"));
+const assignment = {
+  scientificName: TaxonName.make("Quercus robur"),
+  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
+  assignmentId: "oak-species",
+};
+const species = TaxonSet.of(assignment);
 const panel = TaxonSet.union(oaks, species);
 const record = { scientificName: TaxonName.make("Quercus robur"), abundance: 8 };
 const model = Layer.effect(
@@ -50,6 +55,8 @@ assert.equal(classified.panel, panel);
 assert.equal(classified.records[0].record, record);
 assert.equal(classified.records[0].taxa[0].taxon, oaks);
 assert.equal(classified.records[0].ranking[1].taxon, species);
+assert.equal(species.record, assignment);
+assert.equal(classified.records[0].ranking[1].taxon.record.assignmentId, "oak-species");
 assert.deepEqual(
   classified.records[0].ranking.map((match) => match.support),
   [0.96, 0.95],

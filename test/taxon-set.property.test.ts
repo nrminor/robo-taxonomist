@@ -37,8 +37,8 @@ it("rejects split sharing, merged equal objects and extra rows in a literal wire
   // Valid references need not follow the compiler's particular row order.
   const wire: Wire = {
     nodes: [
-      { _tag: "Taxon", name: "A" },
-      { _tag: "Taxon", name: "A" },
+      { _tag: "Taxon", record: { scientificName: "A" } },
+      { _tag: "Taxon", record: { scientificName: "A" } },
       { _tag: "Union", operands: [0, 0] },
     ],
     left: 2,
@@ -49,8 +49,8 @@ it("rejects split sharing, merged equal objects and extra rows in a literal wire
     {
       nodes: [
         { _tag: "Union", operands: [2, 2] },
-        { _tag: "Taxon", name: "A" },
-        { _tag: "Taxon", name: "A" },
+        { _tag: "Taxon", record: { scientificName: "A" } },
+        { _tag: "Taxon", record: { scientificName: "A" } },
       ],
       left: 0,
       right: 1,
@@ -112,7 +112,7 @@ function at<A>(values: ReadonlyArray<A>, index: number): A {
 // Build fresh public objects on every execution and shrink replay. At least one
 // parent step keeps the left root nonliteral, even when its set meaning is empty.
 function publicRoots(construction: Construction) {
-  const handles = [
+  const handles: TaxonSet.TaxonSet[] = [
     TaxonSet.empty(),
     TaxonSet.of(TaxonName.make("A")),
     TaxonSet.of(TaxonName.make("A")),
@@ -138,7 +138,7 @@ function publicRoots(construction: Construction) {
 // Decode the provider boundary independently of the private production graph codec.
 const rowSchema = Schema.TaggedUnion({
   Empty: {},
-  Taxon: { name: Schema.String },
+  Taxon: { record: Schema.Struct({ scientificName: Schema.String }) },
   Union: { operands: Schema.Array(Schema.Natural) },
   Intersection: { operands: Schema.Array(Schema.Natural) },
   Difference: { left: Schema.Natural, right: Schema.Natural },
@@ -199,7 +199,7 @@ function expectSameGraph(
     const row = at(wire.nodes, ref);
     expect(row._tag).toBe(source._tag);
     if (Predicate.isTagged(source, "Taxon") && rowSchema.guards.Taxon(row))
-      expect(row.name).toBe(source.name);
+      expect(row.record).toEqual(source.record);
     const expectedChildren = sourceChildren(source);
     const actualChildren = wireChildren(row);
     expect(actualChildren).toHaveLength(expectedChildren.length);

@@ -47,7 +47,7 @@ export type {
 } from "./Taxonomy.ts";
 
 /**
- * Build set expressions from supplied taxon names and ask how their organisms relate.
+ * Build set expressions from names or structured records and ask how their organisms relate.
  * Constructors return expressions synchronously and can throw if validation fails.
  * Relation questions return Effects and use the model, error, and acceptance rules
  * described for Taxonomy questions.

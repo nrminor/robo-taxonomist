@@ -17,7 +17,7 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
   const panel = panels.find((entry) => entry.id === panelId);
   if (panel === undefined)
     return yield* Effect.fail(ClassificationFailure.cases.InvalidPanel.make({}));
-  const taxonSet = panel.targets.reduce(
+  const taxonSet = panel.targets.reduce<TaxonSet.TaxonSet<{ readonly scientificName: TaxonName }>>(
     (set, target) => TaxonSet.union(set, TaxonSet.of(TaxonName.make(target.name))),
     TaxonSet.empty(),
   );
@@ -79,5 +79,6 @@ export const classifyPanel = Effect.fn("classifyPanel")(function* (
   panelId: PanelId,
   refresh = false,
 ) {
-  return yield* (yield* PanelResults).classify(panelId, refresh);
+  const results = yield* PanelResults;
+  return yield* results.classify(panelId, refresh);
 });

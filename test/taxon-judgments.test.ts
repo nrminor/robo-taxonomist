@@ -99,7 +99,7 @@ it.effect.each(["left", "right"] as const)(
           expect(decisions.identity).toMatchObject({
             _tag: "Classify",
             instructions: expect.stringContaining(
-              'Left taxon name: "Oak\\n\\\"A\\\""\nRight taxon name: "Beech\\\\B"',
+              'Left taxon:\nScientific name: "Oak\\n\\\"A\\\""\nRight taxon:\nScientific name: "Beech\\\\B"',
             ),
             criteria: {
               same: expect.any(String),
@@ -144,7 +144,7 @@ it.effect("asks one identity question with quoted names and null state", () => {
         expect(decisions.identity).toMatchObject({
           _tag: "Classify",
           instructions: expect.stringContaining(
-            'Left taxon name: "Oak\\n\\\"A\\\""\nRight taxon name: "Oak\\n\\\"A\\\""',
+            'Left taxon:\nScientific name: "Oak\\n\\\"A\\\""\nRight taxon:\nScientific name: "Oak\\n\\\"A\\\""',
           ),
         });
         return Effect.succeed({
@@ -258,15 +258,17 @@ it.effect.each([
   ["notMember", { _tag: "NotMember" }],
   ["mixed", { _tag: "MixedMembership" }],
   ["undetermined", { _tag: "Undetermined" }],
-  ["multipleTarget0", { _tag: "MultipleTaxaInTargetName", targetName: "A and B" }],
+  [
+    "multipleTarget0",
+    { _tag: "MultipleTaxaInTarget", target: TaxonSet.of(TaxonName.make("A and B")) },
+  ],
 ] as const)("maps whole-record membership fixture %s", ([label, expected]) =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.recordBelongsTo(
-        RecordLabel.make("Pooled subjects"),
-        TaxonName.make("A and B"),
-      ),
-    ).toEqual(expected);
+    const result = yield* Taxonomy.recordBelongsTo(
+      RecordLabel.make("Pooled subjects"),
+      TaxonName.make("A and B"),
+    );
+    expect(result).toEqual(expected);
   }).pipe(
     Effect.provide(
       scalarLayer("record0", {
@@ -286,15 +288,17 @@ it.effect.each([
 );
 
 it.effect(
-  "deduplicates literal target names in expression order and returns the original selected name",
+  "enumerates unique target nodes in DFS order and returns the original selected node",
   () => {
     const first = TaxonName.make('A "quoted"');
     const second = TaxonName.make("B");
     const third = TaxonName.make("b");
     const a = TaxonSet.of(first);
+    const duplicate = TaxonSet.of(first);
+    const last = TaxonSet.of(third);
     const target = TaxonSet.difference(
       TaxonSet.union(a, TaxonSet.intersection(TaxonSet.of(second), a)),
-      TaxonSet.union(TaxonSet.of(TaxonName.make('A "quoted"')), TaxonSet.of(third)),
+      TaxonSet.union(duplicate, last),
     );
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
@@ -305,19 +309,20 @@ it.effect(
               { _tag: "Difference", left: 1, right: 2 },
               { _tag: "Union", operands: [3, 4] },
               { _tag: "Union", operands: [5, 6] },
-              { _tag: "Taxon", name: 'A "quoted"' },
+              { _tag: "Taxon", record: { scientificName: 'A "quoted"' } },
               { _tag: "Intersection", operands: [7, 3] },
-              { _tag: "Taxon", name: 'A "quoted"' },
-              { _tag: "Taxon", name: "b" },
-              { _tag: "Taxon", name: "B" },
+              { _tag: "Taxon", record: { scientificName: 'A "quoted"' } },
+              { _tag: "Taxon", record: { scientificName: "b" } },
+              { _tag: "Taxon", record: { scientificName: "B" } },
             ],
             target: 0,
           });
           expect(decisions.record0).toMatchObject({
             criteria: {
-              multipleTarget0: expect.stringContaining('name "A \\"quoted\\""'),
-              multipleTarget1: expect.stringContaining('name "B"'),
-              multipleTarget2: expect.stringContaining('name "b"'),
+              multipleTarget0: expect.stringContaining("Target taxon node 3 "),
+              multipleTarget1: expect.stringContaining("Target taxon node 7 "),
+              multipleTarget2: expect.stringContaining("Target taxon node 5 "),
+              multipleTarget3: expect.stringContaining("Target taxon node 6 "),
             },
           });
           const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
@@ -331,6 +336,7 @@ it.effect(
             "multipleTarget0",
             "multipleTarget1",
             "multipleTarget2",
+            "multipleTarget3",
           ]);
           return Effect.succeed({
             answers: {
@@ -345,6 +351,7 @@ it.effect(
                   multipleTarget0: 0,
                   multipleTarget1: 0,
                   multipleTarget2: 1,
+                  multipleTarget3: 0,
                 },
               },
             },
@@ -354,10 +361,14 @@ it.effect(
       }),
     );
     return Effect.gen(function* () {
-      expect(yield* Taxonomy.recordBelongsTo(RecordLabel.make("record"), target)).toEqual({
-        _tag: "MultipleTaxaInTargetName",
-        targetName: third,
+      const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("record"), target);
+      expect(result).toEqual({
+        _tag: "MultipleTaxaInTarget",
+        target: duplicate,
       });
+      if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
+      expect(result.target).toBe(duplicate);
+      expect(result.target).not.toBe(a);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -525,17 +536,17 @@ it.effect(
           ),
         ),
       ).toEqual([
-        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
-        { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
+        { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
+        { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
       ]);
       expect(seen).toEqual(
         expect.arrayContaining([
-          { nodes: [{ _tag: "Taxon", name: "target1" }], target: 0 },
+          { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
           {
             nodes: [
               { _tag: "Union", operands: [1, 2] },
-              { _tag: "Taxon", name: "target2" },
-              { _tag: "Taxon", name: "target3" },
+              { _tag: "Taxon", record: { scientificName: "target2" } },
+              { _tag: "Taxon", record: { scientificName: "target3" } },
             ],
             target: 0,
           },
@@ -755,7 +766,10 @@ it.effect("provides shared target once and record facts once in singleton member
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         calls++;
-        expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: "Quercus" }], target: 0 });
+        expect(state).toEqual({
+          nodes: [{ _tag: "Taxon", record: { scientificName: "Quercus" } }],
+          target: 0,
+        });
         expect(Record.keys(decisions)).toEqual(["record0"]);
         expect(decisions.record0).toMatchObject({
           _tag: "Classify",
@@ -767,7 +781,7 @@ it.effect("provides shared target once and record facts once in singleton member
             notMember: expect.any(String),
             mixed: expect.any(String),
             undetermined: expect.any(String),
-            multipleTarget0: expect.stringContaining('"Quercus"'),
+            multipleTarget0: expect.stringContaining("Target taxon node 0 "),
           },
         });
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
@@ -941,7 +955,7 @@ it.effect("asks the direct containment question with original left = inner", () 
         expect(decisions.containment).toMatchObject({
           _tag: "Classify",
           instructions: expect.stringContaining(
-            'Left (inner) taxon name: "A"\nRight (outer) taxon name: "B"',
+            'Left (inner) taxon:\nScientific name: "A"\nRight (outer) taxon:\nScientific name: "B"',
           ),
           criteria: {
             equal: expect.any(String),

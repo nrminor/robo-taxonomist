@@ -26,7 +26,12 @@ import {
 } from "../src/index.ts";
 
 const namedTargetState = Schema.Struct({
-  nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon"), name: Schema.String })]),
+  nodes: Schema.Tuple([
+    Schema.Struct({
+      _tag: Schema.Literal("Taxon"),
+      record: Schema.Struct({ scientificName: Schema.String }),
+    }),
+  ]),
   target: Schema.Literal(0),
 });
 
@@ -56,7 +61,10 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           calls++;
-          expect(state).toEqual({ nodes: [{ _tag: "Taxon", name: target }], target: 0 });
+          expect(state).toEqual({
+            nodes: [{ _tag: "Taxon", record: { scientificName: target } }],
+            target: 0,
+          });
           expect(Record.keys(decisions)).toEqual([
             "record0",
             "record1",
@@ -96,10 +104,10 @@ it.effect(
       expect(partition.MixedMembership[0]).toBe(mixed);
       expect(partition.Undetermined).toEqual([unresolved]);
       expect(partition.Undetermined[0]).toBe(unresolved);
-      expect(partition.MultipleTaxaInTargetName).toEqual([
-        { record: diagnosed, targetName: target },
+      expect(partition.MultipleTaxaInTarget).toEqual([
+        { record: diagnosed, target: TaxonSet.of(target) },
       ]);
-      expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(diagnosed);
+      expect(partition.MultipleTaxaInTarget[0]?.record).toBe(diagnosed);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -117,7 +125,7 @@ it.effect("keeps overlapping genus/family groups and repeated targets in supplie
         const {
           nodes: [node],
         } = Schema.decodeUnknownSync(namedTargetState)(state);
-        seen.push(node.name);
+        seen.push(node.record.scientificName);
         return Effect.succeed(response(["member"]));
       },
     }),
@@ -293,7 +301,8 @@ it.effect("keeps fine membership unresolved when only grouped non-membership is 
 });
 
 it.effect("snapshots one prepared target across batches but prepares it afresh on rerun", () => {
-  const expression = TaxonSet.of(TaxonName.make("A"));
+  const targetRecord = { scientificName: TaxonName.make("A") };
+  const expression = TaxonSet.of(targetRecord);
   const seen: unknown[] = [];
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
@@ -301,9 +310,12 @@ it.effect("snapshots one prepared target across batches but prepares it afresh o
       decide: ({ state, decisions }) => {
         seen.push(state);
         const question = firstClassificationQuestion(decisions);
-        expect(question.criteria.multipleTarget0).toContain(seen.length <= 2 ? '"A"' : '"B"');
-        // Deliberately bypass readonly typing to exercise caller-owned mutation.
-        if (seen.length === 1) Object.assign(expression, { name: TaxonName.make("B") });
+        expect(question.criteria.multipleTarget0).toContain("Target taxon node 0 ");
+        expect(
+          Schema.decodeUnknownSync(namedTargetState)(state).nodes[0].record.scientificName,
+        ).toBe(seen.length <= 2 ? "A" : "B");
+        // Caller-owned mutation must not change the prepared request between batches.
+        if (seen.length === 1) targetRecord.scientificName = TaxonName.make("B");
         return Effect.succeed(response(["multipleTarget0"]));
       },
     }),
@@ -316,19 +328,15 @@ it.effect("snapshots one prepared target across batches but prepares it afresh o
   return Effect.gen(function* () {
     const first = yield* operation;
     const second = yield* operation;
-    expect(Array.map(first.MultipleTaxaInTargetName, ({ targetName }) => targetName)).toEqual([
-      "A",
-      "A",
-    ]);
-    expect(Array.map(second.MultipleTaxaInTargetName, ({ targetName }) => targetName)).toEqual([
-      "B",
-      "B",
-    ]);
+    for (const partition of [first, second]) {
+      expect(partition.MultipleTaxaInTarget).toHaveLength(2);
+      for (const entry of partition.MultipleTaxaInTarget) expect(entry.target).toBe(expression);
+    }
     expect(seen).toEqual([
-      { nodes: [{ _tag: "Taxon", name: "A" }], target: 0 },
-      { nodes: [{ _tag: "Taxon", name: "A" }], target: 0 },
-      { nodes: [{ _tag: "Taxon", name: "B" }], target: 0 },
-      { nodes: [{ _tag: "Taxon", name: "B" }], target: 0 },
+      { nodes: [{ _tag: "Taxon", record: { scientificName: "A" } }], target: 0 },
+      { nodes: [{ _tag: "Taxon", record: { scientificName: "A" } }], target: 0 },
+      { nodes: [{ _tag: "Taxon", record: { scientificName: "B" } }], target: 0 },
+      { nodes: [{ _tag: "Taxon", record: { scientificName: "B" } }], target: 0 },
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -459,14 +467,14 @@ it.effect(
         NotMember: [],
         MixedMembership: [],
         Undetermined: [],
-        MultipleTaxaInTargetName: [],
+        MultipleTaxaInTarget: [],
       });
       expect(first).not.toBe(second);
       expect(first.Member).not.toBe(second.Member);
       expect(first.NotMember).not.toBe(second.NotMember);
       expect(first.MixedMembership).not.toBe(second.MixedMembership);
       expect(first.Undetermined).not.toBe(second.Undetermined);
-      expect(first.MultipleTaxaInTargetName).not.toBe(second.MultipleTaxaInTargetName);
+      expect(first.MultipleTaxaInTarget).not.toBe(second.MultipleTaxaInTarget);
       const partition = yield* Taxonomy.partitionRecordsByMembership(
         [records[0], records[0]],
         TaxonSet.empty(),
@@ -584,7 +592,7 @@ it.effect("reconstructs partitions in input order after batches finish in revers
     expect(partition.NotMember[0]).toBe(outside);
     expect(partition.MixedMembership[0]).toBe(mixed);
     expect(partition.Undetermined[0]).toBe(tail);
-    expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(diagnosed);
+    expect(partition.MultipleTaxaInTarget[0]?.record).toBe(diagnosed);
   }),
 );
 
@@ -687,7 +695,7 @@ it.effect("bounds grouping batches without multiplying the cap across sequential
           calls++;
           active++;
           maximum = Math.max(maximum, active);
-          seen.push(node.name);
+          seen.push(node.record.scientificName);
           expect(Record.keys(decisions)).toEqual(["record0"]);
           if (calls === 2) yield* Deferred.succeed(firstWindowStarted, undefined);
           yield* Deferred.await(release);
@@ -945,8 +953,8 @@ it.effect(
           expect(state).toEqual({
             nodes: [
               { _tag: "Union", operands: [1, 2] },
-              { _tag: "Taxon", name: "A" },
-              { _tag: "Taxon", name: 'B and "C"' },
+              { _tag: "Taxon", record: { scientificName: "A" } },
+              { _tag: "Taxon", record: { scientificName: 'B and "C"' } },
             ],
             target: 0,
           });
@@ -993,10 +1001,10 @@ it.effect(
       const partition = yield* Taxonomy.partitionRecordsByMembership([first, second], expression, {
         policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
       });
-      expect(partition.MultipleTaxaInTargetName).toEqual([
-        { record: first, targetName: problemName },
+      expect(partition.MultipleTaxaInTarget).toEqual([
+        { record: first, target: TaxonSet.of(problemName) },
       ]);
-      expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(first);
+      expect(partition.MultipleTaxaInTarget[0]?.record).toBe(first);
       expect(partition.Undetermined[0]).toBe(second);
       expect(partition.Member).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -1017,11 +1025,14 @@ it.effect.each(quantifiers)(
       }),
     );
     return Effect.gen(function* () {
-      expect(
-        yield* operation(records, target, {
-          execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
-        }),
-      ).toEqual({ _tag: "MultipleTaxaInTargetName", quantifier, targetName: target });
+      const result = yield* operation(records, target, {
+        execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+      });
+      expect(result).toEqual({
+        _tag: "MultipleTaxaInTarget",
+        quantifier,
+        target: TaxonSet.of(target),
+      });
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -1096,8 +1107,8 @@ it.effect(
       expect(grouped.groups[0]?.partition.Member).toEqual(records.slice(0, 3));
       expect(grouped.groups[1]?.partition.MixedMembership).toEqual([records[0]]);
       expect(grouped.groups[1]?.partition.Undetermined).toEqual([records[1]]);
-      expect(grouped.groups[1]?.partition.MultipleTaxaInTargetName).toEqual([
-        { record: records[2], targetName: "other" },
+      expect(grouped.groups[1]?.partition.MultipleTaxaInTarget).toEqual([
+        { record: records[2], target: TaxonSet.of(TaxonName.make("other")) },
       ]);
       expect(calls).toBe(2);
     }).pipe(Effect.provide(layer));
@@ -1297,22 +1308,23 @@ it.effect("rejects invalid original records/targets before transporting their ba
     DecisionModel.make({ decide: () => Effect.die("Unexpected transport") }),
   );
   return Effect.gen(function* () {
+    const malformedTarget = { _tag: "Difference", left: TaxonSet.empty() };
     const invalidRecords = [
       // @ts-expect-error Untyped caller supplies a record without facts.
       Taxonomy.partitionRecordsByMembership([{}], target).pipe(Effect.asVoid),
       // @ts-expect-error Untyped caller supplies a blank target name.
       Taxonomy.groupRecordsByTaxa(records, [" "]).pipe(Effect.asVoid),
       // @ts-expect-error Untyped caller supplies a malformed recursive target.
-      Taxonomy.allRecordsBelongTo(records, { _tag: "Difference", left: TaxonSet.empty() }).pipe(
-        Effect.asVoid,
-      ),
+      Taxonomy.allRecordsBelongTo(records, malformedTarget).pipe(Effect.asVoid),
       // @ts-expect-error Untyped caller supplies an invalid record.
       Taxonomy.anyRecordBelongsTo([42], target).pipe(Effect.asVoid),
       // @ts-expect-error Untyped caller supplies a blank record label.
       Taxonomy.noRecordBelongsTo([" "], target).pipe(Effect.asVoid),
     ];
-    for (const operation of invalidRecords)
-      expect((yield* Effect.flip(operation)).reason._tag).toBe("InvalidUserInputError");
+    for (const operation of invalidRecords) {
+      const error = yield* Effect.flip(operation);
+      expect(error.reason._tag).toBe("InvalidUserInputError");
+    }
   }).pipe(Effect.provide(layer));
 });
 
@@ -1359,7 +1371,7 @@ for (const [quantifier, operation] of quantifiers) {
     [
       "diagnosis before decisive",
       ["undetermined", "multipleTarget0", decisive],
-      { _tag: "MultipleTaxaInTargetName", quantifier, targetName: target },
+      { _tag: "MultipleTaxaInTarget", quantifier, target: TaxonSet.of(target) },
     ],
   ] as const)(`scans ${quantifier} in record order: %s`, ([_case, labels, expected]) =>
     Effect.gen(function* () {
@@ -1493,7 +1505,7 @@ it.effect(
         NotMember: [outside, shared],
         MixedMembership: [second],
         Undetermined: [uncertain],
-        MultipleTaxaInTargetName: [{ record: shared, targetName: target }],
+        MultipleTaxaInTarget: [{ record: shared, target: TaxonSet.of(target) }],
       });
       expect(partition.Member[0]).toBe(first);
       expect(partition.Member[1]).toBe(shared);
@@ -1502,7 +1514,7 @@ it.effect(
       expect(partition.NotMember[1]).toBe(shared);
       expect(partition.MixedMembership[0]).toBe(second);
       expect(partition.Undetermined[0]).toBe(uncertain);
-      expect(partition.MultipleTaxaInTargetName[0]?.record).toBe(shared);
+      expect(partition.MultipleTaxaInTarget[0]?.record).toBe(shared);
     }),
 );
 
@@ -1601,7 +1613,7 @@ it.effect.each(["failure", "interrupt"] as const)(
         NotMember: [],
         MixedMembership: [bRecord],
         Undetermined: [],
-        MultipleTaxaInTargetName: [],
+        MultipleTaxaInTarget: [],
       });
       expect(partitionB.MixedMembership[0]).toBe(bRecord);
       expect(bFinalized).toBe(1);
@@ -1617,13 +1629,13 @@ it.effect.each(["failure", "interrupt"] as const)(
         NotMember: [],
         MixedMembership: [],
         Undetermined: [],
-        MultipleTaxaInTargetName: [
-          { record: aFirst, targetName: target },
-          { record: aSecond, targetName: target },
+        MultipleTaxaInTarget: [
+          { record: aFirst, target: TaxonSet.of(target) },
+          { record: aSecond, target: TaxonSet.of(target) },
         ],
       });
-      expect(fresh.MultipleTaxaInTargetName[0]?.record).toBe(aFirst);
-      expect(fresh.MultipleTaxaInTargetName[1]?.record).toBe(aSecond);
+      expect(fresh.MultipleTaxaInTarget[0]?.record).toBe(aFirst);
+      expect(fresh.MultipleTaxaInTarget[1]?.record).toBe(aSecond);
       expect(aFinalized).toBe(2);
     }),
 );
@@ -1633,7 +1645,8 @@ it.effect.each(["failure", "interrupt"] as const)(
   (mode) =>
     Effect.gen(function* () {
       const middleBlocked = yield* Deferred.make<void>();
-      const expression = TaxonSet.of(TaxonName.make("before"));
+      const targetRecord = { scientificName: TaxonName.make("before") };
+      const expression = TaxonSet.of(targetRecord);
       const middle = TaxonSet.of(TaxonName.make("middle"));
       const first = TaxonomicRecord.make({ scientificName: TaxonName.make("first record") });
       const second = TaxonomicRecord.make({ scientificName: TaxonName.make("second record") });
@@ -1655,9 +1668,9 @@ it.effect.each(["failure", "interrupt"] as const)(
               const {
                 nodes: [node],
               } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
-              seen.push(node.name);
-              if (node.name === "before") return response(["member"]);
-              expect(node.name).toBe("middle");
+              seen.push(node.record.scientificName);
+              if (node.record.scientificName === "before") return response(["member"]);
+              expect(node.record.scientificName).toBe("middle");
               const question = firstClassificationQuestion(decisions);
               if (question.instructions.endsWith('Scientific name: "first record"')) {
                 yield* Deferred.await(middleBlocked);
@@ -1706,8 +1719,8 @@ it.effect.each(["failure", "interrupt"] as const)(
       expect(attempts).toBe(4);
       expect(finalized).toBe(4);
       const freshName = TaxonName.make('after "fresh"');
-      // Deliberately bypass readonly typing to verify fresh preparation on rerun.
-      Object.assign(expression, { name: freshName });
+      // Caller-owned mutation must be observed by fresh preparation on rerun.
+      targetRecord.scientificName = freshName;
       const freshSeen: string[] = [];
       const freshLayer = Layer.effect(
         DecisionModel.DecisionModel,
@@ -1716,10 +1729,10 @@ it.effect.each(["failure", "interrupt"] as const)(
             const {
               nodes: [node],
             } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
-            freshSeen.push(node.name);
+            freshSeen.push(node.record.scientificName);
             expect(decisions.record0).toMatchObject({
               criteria: {
-                multipleTarget0: expect.stringContaining(JSON.stringify(node.name)),
+                multipleTarget0: expect.stringContaining("Target taxon node 0 "),
               },
             });
             return response(["multipleTarget0"]);
@@ -1742,9 +1755,9 @@ it.effect.each(["failure", "interrupt"] as const)(
           NotMember: [],
           MixedMembership: [],
           Undetermined: [],
-          MultipleTaxaInTargetName: [
-            { record: first, targetName: freshName },
-            { record: second, targetName: freshName },
+          MultipleTaxaInTarget: [
+            { record: first, target: expression },
+            { record: second, target: expression },
           ],
         },
         {
@@ -1752,9 +1765,9 @@ it.effect.each(["failure", "interrupt"] as const)(
           NotMember: [],
           MixedMembership: [],
           Undetermined: [],
-          MultipleTaxaInTargetName: [
-            { record: first, targetName: "middle" },
-            { record: second, targetName: "middle" },
+          MultipleTaxaInTarget: [
+            { record: first, target: TaxonSet.of(TaxonName.make("middle")) },
+            { record: second, target: TaxonSet.of(TaxonName.make("middle")) },
           ],
         },
         {
@@ -1762,15 +1775,15 @@ it.effect.each(["failure", "interrupt"] as const)(
           NotMember: [],
           MixedMembership: [],
           Undetermined: [],
-          MultipleTaxaInTargetName: [
-            { record: first, targetName: freshName },
-            { record: second, targetName: freshName },
+          MultipleTaxaInTarget: [
+            { record: first, target: expression },
+            { record: second, target: expression },
           ],
         },
       ]);
       for (const group of fresh.groups) {
-        expect(group.partition.MultipleTaxaInTargetName[0]?.record).toBe(first);
-        expect(group.partition.MultipleTaxaInTargetName[1]?.record).toBe(second);
+        expect(group.partition.MultipleTaxaInTarget[0]?.record).toBe(first);
+        expect(group.partition.MultipleTaxaInTarget[1]?.record).toBe(second);
       }
       expect(fresh.groups[0]?.partition).not.toBe(fresh.groups[2]?.partition);
       expect(seen).toEqual(["before", "before", "middle", "middle"]);

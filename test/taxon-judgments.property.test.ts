@@ -68,7 +68,7 @@ it.effect.prop(
       const expected = {
         fields: record.fields,
         names: [firstName, secondName],
-        result: { _tag: "MultipleTaxaInTargetName", targetName: selected },
+        result: { _tag: "MultipleTaxaInTarget", target: TaxonSet.of(selected) },
       };
       const observed = yield* observeMembershipRecordEncoding(
         record.value,
@@ -228,13 +228,15 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
   let observation: Option.Option<{
     fields: { [field: string]: unknown };
     targetNames: string[];
-    criterionNames: unknown[];
+    criterionNames: string[];
   }> = Option.none();
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state, decisions }) => {
-        const TaxonNode = Schema.TaggedStruct("Taxon", { name: Schema.String });
+        const TaxonNode = Schema.TaggedStruct("Taxon", {
+          record: Schema.Struct({ scientificName: Schema.String }),
+        });
         const input = Schema.decodeUnknownSync(
           Schema.Struct({
             nodes: Schema.Array(
@@ -252,19 +254,20 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected membership");
         const criterionNames = Array.map(["multipleTarget0", "multipleTarget1"], (key) => {
           const criterion = Record.get(question.criteria, key).pipe(Option.getOrThrow);
-          const literal = Option.fromNullOr(criterion.match(/"(?:[^"\\\r\n]|\\.)*"/u)).pipe(
-            Option.flatMap(Array.head),
+          const index = Option.fromNullOr(criterion.match(/^Target taxon node (\d+) /u)).pipe(
+            Option.flatMap((match) => Array.get(match, 1)),
             Option.getOrThrow,
           );
-          const decoded: unknown = JSON.parse(literal);
-          return decoded;
+          const node = Array.get(input.nodes, Number(index)).pipe(Option.getOrThrow);
+          if (!Schema.is(TaxonNode)(node)) throw new Error("Expected taxon node reference");
+          return node.record.scientificName;
         });
         observation = Option.some({
           fields: decodeQuotedRecordFields(question.instructions),
           targetNames: pipe(
             input.nodes,
             Array.filter(Schema.is(TaxonNode)),
-            Array.map((node) => node.name),
+            Array.map((node) => node.record.scientificName),
           ),
           criterionNames,
         });
@@ -272,9 +275,12 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
       },
     }),
   );
-  const result = yield* Taxonomy.recordBelongsTo(
-    recordValue,
-    TaxonSet.union(TaxonSet.of(firstName), TaxonSet.of(secondName)),
-  ).pipe(Effect.provide(layer));
+  const first = TaxonSet.of(firstName);
+  const second = TaxonSet.of(secondName);
+  const result = yield* Taxonomy.recordBelongsTo(recordValue, TaxonSet.union(first, second)).pipe(
+    Effect.provide(layer),
+  );
+  if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
+  expect(result.target).toBe(label === "multipleTarget0" ? first : second);
   return { ...Option.getOrThrow(observation), result };
 });
