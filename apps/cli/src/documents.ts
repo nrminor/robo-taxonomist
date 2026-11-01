@@ -48,3 +48,61 @@ export const restoreSet = (document: typeof SetDocument.Type): TaxonSet.TaxonSet
       TaxonSet.intersection(restoreSet(left), restoreSet(right)),
     Difference: ({ left, right }) => TaxonSet.difference(restoreSet(left), restoreSet(right)),
   });
+
+const side = Schema.Literals(["left", "right", "both"]);
+const rank = Schema.Literals([
+  "domain",
+  "kingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+]);
+const relation = Schema.Literals(["subset", "proper-subset", "equivalent", "overlap", "disjoint"]);
+const quantifier = Schema.Literals(["all", "any", "none"]);
+const taxonDocument = SetDocument.cases.Taxon;
+
+export const IdentityJudgment = Schema.TaggedUnion({
+  SameTaxon: {},
+  DifferentTaxa: {},
+  Undetermined: {},
+  MultipleTaxa: { side },
+});
+
+export const ContainmentJudgment = Schema.TaggedUnion({
+  Contained: {},
+  PartlyContained: {},
+  Disjoint: {},
+  NotContained: {},
+  Undetermined: {},
+  MultipleTaxa: { side },
+});
+
+export const RankJudgment = Schema.TaggedUnion({
+  SameTaxonAtRank: { rank },
+  SameMultipleTaxaAtRank: { rank },
+  SameTaxaAtRank: { rank },
+  LeftTaxaWithinRightAtRank: { rank },
+  RightTaxaWithinLeftAtRank: { rank },
+  PartlySharedTaxaAtRank: { rank },
+  NoSharedTaxaAtRank: { rank },
+  DifferentTaxaAtRank: { rank },
+  Undetermined: { rank },
+  MultipleTaxaAtRank: { rank, side },
+});
+
+export const SetRelationJudgment = Schema.TaggedUnion({
+  Yes: { relation },
+  No: { relation },
+  Undetermined: { relation },
+  MultipleTaxaInSet: { relation, side: Schema.Literals(["left", "right"]), taxon: taxonDocument },
+});
+
+export const QuantifierJudgment = Schema.TaggedUnion({
+  Yes: { quantifier },
+  No: { quantifier },
+  Undetermined: { quantifier },
+  MultipleTaxaInTarget: { quantifier, target: taxonDocument },
+});

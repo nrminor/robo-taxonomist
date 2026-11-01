@@ -1,9 +1,12 @@
-import { Console, Effect, Match } from "effect";
+import { Effect, Match, Stream } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
 import { classify } from "./classification.ts";
-import { modelFailure, modelFlag, modelHelp, modelLayer } from "./model.ts";
+import * as Documents from "./documents.ts";
+import * as Model from "./model.ts";
 import { membership } from "./membership.ts";
+import * as Output from "./output.ts";
+import * as Presentation from "./presentation.ts";
 import { sets } from "./sets.ts";
 
 const labels = Command.make(
@@ -13,7 +16,8 @@ const labels = Command.make(
     right: Argument.String("right").pipe(Argument.withSchema(RecordLabel)),
   },
   Effect.fn("Cli.compareLabels")(function* ({ left, right }) {
-    yield* Console.log(Taxonomy.sameLabel(left, right));
+    const sameLabel = Taxonomy.sameLabel(left, right);
+    yield* Output.writeText(sameLabel);
   }),
 ).pipe(Command.withDescription("Compare the exact supplied record labels."));
 
@@ -22,30 +26,27 @@ const identity = Command.make(
   {
     left: Argument.String("left").pipe(Argument.withSchema(TaxonName)),
     right: Argument.String("right").pipe(Argument.withSchema(TaxonName)),
-    model: modelFlag,
+    model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
     noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
   },
   Effect.fn("Cli.compareIdentity")(function* ({ left, right, format, noHeader }) {
-    const result = yield* Taxonomy.sameTaxon(left, right).pipe(Effect.mapError(modelFailure));
-    if (format === "json") {
-      yield* Console.log(JSON.stringify(result));
-      return;
-    }
-    const [judgment, side] = Match.value(result).pipe(
-      Match.tagsExhaustive({
-        SameTaxon: () => ["SameTaxon", ""],
-        DifferentTaxa: () => ["DifferentTaxa", ""],
-        Undetermined: () => ["Undetermined", ""],
-        MultipleTaxa: ({ side }) => ["MultipleTaxa", side],
+    const result = yield* Taxonomy.sameTaxon(left, right).pipe(Effect.mapError(Model.modelFailure));
+    const row = Presentation.comparisonRow(result);
+    const rows = Stream.make(row);
+    const writeRows = Output.writeTable(Presentation.ComparisonRow, noHeader);
+    const render = Match.value(format).pipe(
+      Match.literalsExhaustive({
+        tsv: () => writeRows(rows),
+        json: () => Output.writeJson(result, Documents.IdentityJudgment),
       }),
     );
-    if (!noHeader) yield* Console.log("judgment\tside");
-    yield* Console.log(`${judgment}\t${side}`);
+
+    yield* render;
   }),
 ).pipe(
   Command.withDescription(
-    "Ask whether two taxonomic assignments refer to the same taxon.\n\n" + modelHelp,
+    "Ask whether two taxonomic assignments refer to the same taxon.\n\n" + Model.modelHelp,
   ),
   Command.withExamples([
     {
@@ -53,7 +54,7 @@ const identity = Command.make(
       description: "Compare two supplied taxonomic names.",
     },
   ]),
-  Command.provide(({ model }) => modelLayer(model)),
+  Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 const containment = Command.make(
@@ -61,34 +62,31 @@ const containment = Command.make(
   {
     inner: Argument.String("inner").pipe(Argument.withSchema(TaxonName)),
     outer: Argument.String("outer").pipe(Argument.withSchema(TaxonName)),
-    model: modelFlag,
+    model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
     noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
   },
   Effect.fn("Cli.compareContainment")(function* ({ inner, outer, format, noHeader }) {
-    const result = yield* Taxonomy.taxonWithin(inner, outer).pipe(Effect.mapError(modelFailure));
-    if (format === "json") {
-      yield* Console.log(JSON.stringify(result));
-      return;
-    }
-    const [judgment, side] = Match.value(result).pipe(
-      Match.tagsExhaustive({
-        Contained: () => ["Contained", ""],
-        PartlyContained: () => ["PartlyContained", ""],
-        Disjoint: () => ["Disjoint", ""],
-        NotContained: () => ["NotContained", ""],
-        Undetermined: () => ["Undetermined", ""],
-        MultipleTaxa: ({ side }) => ["MultipleTaxa", side],
+    const result = yield* Taxonomy.taxonWithin(inner, outer).pipe(
+      Effect.mapError(Model.modelFailure),
+    );
+    const row = Presentation.comparisonRow(result);
+    const rows = Stream.make(row);
+    const writeRows = Output.writeTable(Presentation.ComparisonRow, noHeader);
+    const render = Match.value(format).pipe(
+      Match.literalsExhaustive({
+        tsv: () => writeRows(rows),
+        json: () => Output.writeJson(result, Documents.ContainmentJudgment),
       }),
     );
-    if (!noHeader) yield* Console.log("judgment\tside");
-    yield* Console.log(`${judgment}\t${side}`);
+
+    yield* render;
   }),
 ).pipe(
   Command.withAlias("within"),
   Command.withDescription(
     "Ask whether the inner taxon's organisms belong to the outer taxon. Left means inner; right means outer.\n\n" +
-      modelHelp,
+      Model.modelHelp,
   ),
   Command.withExamples([
     {
@@ -96,7 +94,7 @@ const containment = Command.make(
       description: "Ask whether the first taxon's organisms belong to the second.",
     },
   ]),
-  Command.provide(({ model }) => modelLayer(model)),
+  Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 const rank = Command.make(
@@ -114,39 +112,30 @@ const rank = Command.make(
       "genus",
       "species",
     ]),
-    model: modelFlag,
+    model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
     noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
   },
   Effect.fn("Cli.compareRank")(function* ({ left, right, rank, format, noHeader }) {
     const result = yield* Taxonomy.sameTaxonAtRank(left, right, rank).pipe(
-      Effect.mapError(modelFailure),
+      Effect.mapError(Model.modelFailure),
     );
-    if (format === "json") {
-      yield* Console.log(JSON.stringify(result));
-      return;
-    }
-    const [judgment, side] = Match.value(result).pipe(
-      Match.tagsExhaustive({
-        SameTaxonAtRank: () => ["SameTaxonAtRank", ""],
-        SameMultipleTaxaAtRank: () => ["SameMultipleTaxaAtRank", ""],
-        SameTaxaAtRank: () => ["SameTaxaAtRank", ""],
-        LeftTaxaWithinRightAtRank: () => ["LeftTaxaWithinRightAtRank", ""],
-        RightTaxaWithinLeftAtRank: () => ["RightTaxaWithinLeftAtRank", ""],
-        PartlySharedTaxaAtRank: () => ["PartlySharedTaxaAtRank", ""],
-        NoSharedTaxaAtRank: () => ["NoSharedTaxaAtRank", ""],
-        DifferentTaxaAtRank: () => ["DifferentTaxaAtRank", ""],
-        Undetermined: () => ["Undetermined", ""],
-        MultipleTaxaAtRank: ({ side }) => ["MultipleTaxaAtRank", side],
+    const row = Presentation.rankRow(result);
+    const rows = Stream.make(row);
+    const writeRows = Output.writeTable(Presentation.RankRow, noHeader);
+    const render = Match.value(format).pipe(
+      Match.literalsExhaustive({
+        tsv: () => writeRows(rows),
+        json: () => Output.writeJson(result, Documents.RankJudgment),
       }),
     );
-    if (!noHeader) yield* Console.log("judgment\trank\tside");
-    yield* Console.log(`${judgment}\t${result.rank}\t${side}`);
+
+    yield* render;
   }),
 ).pipe(
   Command.withDescription(
     "Compare two record labels at an explicit taxonomic rank. --rank is required; there is no default rank.\n\n" +
-      modelHelp,
+      Model.modelHelp,
   ),
   Command.withExamples([
     {
@@ -155,7 +144,7 @@ const rank = Command.make(
       description: "Ask a rank-specific comparison without changing the supplied labels.",
     },
   ]),
-  Command.provide(({ model }) => modelLayer(model)),
+  Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 const compare = Command.make("compare").pipe(

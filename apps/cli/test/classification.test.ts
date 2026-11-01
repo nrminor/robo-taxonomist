@@ -8,6 +8,7 @@ import {
   Match,
   Result,
   Schema,
+  Sink,
   Stdio,
   Stream,
 } from "effect";
@@ -36,48 +37,65 @@ const wireRequest = Schema.fromJsonString(
 );
 
 const invoke = (args: readonly string[], replies: readonly object[] = [fixtureReply], stdin = "") =>
-  Effect.gen(function* () {
-    let requests = 0;
-    const payloads: (typeof wireRequest.Type)[] = [];
-    const http = HttpClient.make((request) =>
-      Effect.sync(() => {
-        const text = Match.value(request.body).pipe(
-          Match.tagsExhaustive({
-            Uint8Array: ({ body }) => new TextDecoder().decode(body),
-            Empty: () => "",
-            Raw: () => "",
-            FormData: () => "",
-            Stream: () => "",
-          }),
-        );
-        payloads.push(Schema.decodeUnknownSync(wireRequest)(text));
-        const reply = replies[requests] ?? fixtureReply;
-        requests++;
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(JSON.stringify(reply), { headers: { "content-type": "application/json" } }),
-        );
-      }),
+  Effect.suspend(() => {
+    let output = "";
+    const decoder = new TextDecoder();
+    return Effect.gen(function* () {
+      let requests = 0;
+      const payloads: (typeof wireRequest.Type)[] = [];
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const text = Match.value(request.body).pipe(
+            Match.tagsExhaustive({
+              Uint8Array: ({ body }) => new TextDecoder().decode(body),
+              Empty: () => "",
+              Raw: () => "",
+              FormData: () => "",
+              Stream: () => "",
+            }),
+          );
+          payloads.push(Schema.decodeUnknownSync(wireRequest)(text));
+          const reply = replies[requests] ?? fixtureReply;
+          requests++;
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(reply), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      );
+      const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
+        Effect.result,
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      output += decoder.decode();
+      return {
+        outcome,
+        requests,
+        payloads,
+        output,
+        stdout: output === "" ? [] : output.replace(/\n$/, "").split("\n"),
+        stderr: yield* TestConsole.errorLines,
+      };
+    }).pipe(
+      Effect.provide([
+        NodeServices.layer,
+        Stdio.layerTest({
+          stdin: Stream.succeed(new TextEncoder().encode(stdin)),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.sync(() => {
+                output +=
+                  typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+              }),
+            ),
+        }),
+        Layer.fresh(TestConsole.layer),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" })),
+      ]),
     );
-    const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
-      Effect.result,
-      Effect.provideService(HttpClient.HttpClient, http),
-    );
-    return {
-      outcome,
-      requests,
-      payloads,
-      stdout: yield* TestConsole.logLines,
-      stderr: yield* TestConsole.errorLines,
-    };
-  }).pipe(
-    Effect.provide([
-      NodeServices.layer,
-      Stdio.layerTest({ stdin: Stream.succeed(new TextEncoder().encode(stdin)) }),
-      Layer.fresh(TestConsole.layer),
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" })),
-    ]),
-  );
+  });
 
 it.effect(
   "classifies a supplied label and emits its native match support and ranking position",
@@ -189,21 +207,20 @@ it.effect("emits one complete empty result with the supplied panel when there ar
   }),
 );
 
-it.effect("rejects delimiter-bearing TSV rather than corrupting columns and points to JSONL", () =>
+it.effect("quotes delimiter-bearing classification TSV", () =>
   Effect.gen(function* () {
     const result = yield* invoke([
       "classify",
       "--record",
-      "Voucher\tA17",
+      'Voucher\tA17\n"sample"',
       "--target",
       "Quercus",
       "--model",
       "custom/model",
       "--no-header",
     ]);
-    expect(Result.isFailure(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("--format jsonl");
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe('"Voucher\tA17\n""sample"""\tQuercus\tMatched\t1\t1\n');
   }),
 );
 
@@ -231,7 +248,7 @@ it.effect("reports deeply nested classification metadata as a safe output failur
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("Cannot serialize classification result");
+    expect(JSON.stringify(result.stderr)).toContain("Cannot serialize output");
   }),
 );
 

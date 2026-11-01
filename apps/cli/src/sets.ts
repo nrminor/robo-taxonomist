@@ -1,21 +1,11 @@
-import { Console, Effect, Match, Option, Schema } from "effect";
-import { CliError, Command, Flag } from "effect/cli";
+import { Effect, Match, Option, Stream } from "effect";
+import { Command, Flag } from "effect/cli";
 import { TaxonSet } from "robo-taxonomist";
-import { checkStdin, loadTargets, targetFlags } from "./targets.ts";
-import { modelFailure, modelFlag, modelHelp, modelLayer } from "./model.ts";
-
-const writeSet = Effect.fn("Cli.writeSet")(function* (set: object) {
-  const text = yield* Effect.try({
-    try: () => JSON.stringify(set),
-    catch: (cause) =>
-      new CliError.UserError({
-        cause,
-        userMessage:
-          "Cannot serialize set as JSON; expression or metadata may be too deeply nested",
-      }),
-  });
-  yield* Console.log(text);
-});
+import * as Documents from "./documents.ts";
+import * as Inputs from "./inputs.ts";
+import * as Model from "./model.ts";
+import * as Output from "./output.ts";
+import * as Presentation from "./presentation.ts";
 
 const sourceHelp =
   "Literal targets come first, then files in supplied order, forming one union per operand. Exact names and repeated occurrences are retained.\n\n" +
@@ -25,10 +15,11 @@ const sourceHelp =
 
 const create = Command.make(
   "create",
-  targetFlags(),
+  Inputs.targetFlags(),
   Effect.fn("Cli.createSet")(function* ({ targets, files, format }) {
-    const set = yield* loadTargets(targets, files, Option.getOrUndefined(format));
-    yield* writeSet(set);
+    yield* Inputs.checkStdin(files);
+    const set = yield* Inputs.loadTargets(targets, files, Option.getOrUndefined(format));
+    yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
   Command.withDescription(
@@ -52,20 +43,21 @@ const create = Command.make(
 
 const difference = Command.make(
   "difference",
-  { left: targetFlags("left-"), right: targetFlags("right-") },
+  { left: Inputs.targetFlags("left-"), right: Inputs.targetFlags("right-") },
   Effect.fn("Cli.difference")(function* ({ left, right }) {
-    yield* checkStdin([...left.files, ...right.files]);
-    const leftSet = yield* loadTargets(
+    yield* Inputs.checkStdin([...left.files, ...right.files]);
+    const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
-    const rightSet = yield* loadTargets(
+    const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
-    yield* writeSet(TaxonSet.difference(leftSet, rightSet));
+    const set = TaxonSet.difference(leftSet, rightSet);
+    yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
   Command.withAlias("diff"),
@@ -80,20 +72,21 @@ const difference = Command.make(
 
 const union = Command.make(
   "union",
-  { left: targetFlags("left-"), right: targetFlags("right-") },
+  { left: Inputs.targetFlags("left-"), right: Inputs.targetFlags("right-") },
   Effect.fn("Cli.union")(function* ({ left, right }) {
-    yield* checkStdin([...left.files, ...right.files]);
-    const leftSet = yield* loadTargets(
+    yield* Inputs.checkStdin([...left.files, ...right.files]);
+    const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
-    const rightSet = yield* loadTargets(
+    const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
-    yield* writeSet(TaxonSet.union(leftSet, rightSet));
+    const set = TaxonSet.union(leftSet, rightSet);
+    yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
   Command.withDescription(
@@ -109,20 +102,21 @@ const union = Command.make(
 
 const intersection = Command.make(
   "intersection",
-  { left: targetFlags("left-"), right: targetFlags("right-") },
+  { left: Inputs.targetFlags("left-"), right: Inputs.targetFlags("right-") },
   Effect.fn("Cli.intersection")(function* ({ left, right }) {
-    yield* checkStdin([...left.files, ...right.files]);
-    const leftSet = yield* loadTargets(
+    yield* Inputs.checkStdin([...left.files, ...right.files]);
+    const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
-    const rightSet = yield* loadTargets(
+    const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
-    yield* writeSet(TaxonSet.intersection(leftSet, rightSet));
+    const set = TaxonSet.intersection(leftSet, rightSet);
+    yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
   Command.withDescription(
@@ -139,8 +133,8 @@ const intersection = Command.make(
 const relation = Command.make(
   "relation",
   {
-    left: targetFlags("left-"),
-    right: targetFlags("right-"),
+    left: Inputs.targetFlags("left-"),
+    right: Inputs.targetFlags("right-"),
     relation: Flag.Literals("relation", [
       "subset",
       "proper-subset",
@@ -148,18 +142,18 @@ const relation = Command.make(
       "overlap",
       "disjoint",
     ]),
-    model: modelFlag,
+    model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
     noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
   },
   Effect.fn("Cli.setRelation")(function* ({ left, right, relation, format, noHeader }) {
-    yield* checkStdin([...left.files, ...right.files]);
-    const leftSet = yield* loadTargets(
+    yield* Inputs.checkStdin([...left.files, ...right.files]);
+    const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
-    const rightSet = yield* loadTargets(
+    const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
@@ -172,51 +166,30 @@ const relation = Command.make(
       disjoint: TaxonSet.disjoint,
     };
     const result = yield* operations[relation](leftSet, rightSet).pipe(
-      Effect.mapError(modelFailure),
+      Effect.mapError(Model.modelFailure),
     );
-    if (format === "json") {
-      yield* writeSet(result);
-      return;
-    }
-    const cells = yield* Match.value(result).pipe(
-      Match.tagsExhaustive({
-        Yes: ({ relation }) => Effect.succeed(["Yes", relation, "", ""]),
-        No: ({ relation }) => Effect.succeed(["No", relation, "", ""]),
-        Undetermined: ({ relation }) => Effect.succeed(["Undetermined", relation, "", ""]),
-        MultipleTaxaInSet: ({ relation, side, taxon }) =>
+    const render = Match.value(format).pipe(
+      Match.literalsExhaustive({
+        tsv: () =>
           Effect.gen(function* () {
-            const target = taxon.record.scientificName ?? taxon.record.label;
-            if (target === undefined)
-              return yield* new CliError.UserError({
-                cause:
-                  "The clarification target has no text name or label; use --format json to retain its identifiers",
-              });
-            const text = yield* Schema.decodeUnknownEffect(
-              Schema.String.check(Schema.isPattern(/^[^\t\r\n]*$/u)),
-            )(target).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new CliError.UserError({
-                    cause,
-                    userMessage: "Clarification text contains TSV delimiters; use --format json",
-                  }),
-              ),
-            );
-            return ["MultipleTaxaInSet", relation, side, text];
+            const row = yield* Presentation.relationRow(result);
+            const rows = Stream.succeed(row);
+            const writeRows = Output.writeTable(Presentation.RelationRow, noHeader);
+            yield* writeRows(rows);
           }),
+        json: () => Output.writeJson(result, Documents.SetRelationJudgment),
       }),
     );
-    if (!noHeader) yield* Console.log("judgment\trelation\tside\tclarification_target");
-    yield* Console.log(cells.join("\t"));
+    yield* render;
   }),
 ).pipe(
   Command.withAlias("rel"),
   Command.withDescription(
     "Ask a native relation question about two symbolic sets.\n\n" +
-      modelHelp +
+      Model.modelHelp +
       "\n\n" +
       sourceHelp +
-      "\n\nJSON preserves the full native clarification target. TSV requires its original text name or label without delimiters; use --format json for identifier-only or delimiter-bearing clarification targets.",
+      "\n\nJSON preserves the full native clarification target. TSV requires its original text name or label; use --format json for identifier-only clarification targets. Tabs, newlines, and quotes are escaped using tab-delimited CSV quoting.",
   ),
   Command.withExamples([
     {
@@ -230,7 +203,7 @@ const relation = Command.make(
       description: "Compare a saved symbolic set without losing clarification details.",
     },
   ]),
-  Command.provide(({ model }) => modelLayer(model)),
+  Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 export const sets = Command.make("set").pipe(

@@ -10,7 +10,7 @@ const modelName = Schema.String.check(
 export const modelHelp =
   "Use --model to override ROBO_TAXONOMIST_MODEL. There is no implicit model default or application model allowlist.\n\n" +
   "Inject TYPESAFE_API_KEY through the environment, not a command-line argument. Model and client are acquired once for the selected command; help and pure operations need no credentials.\n\n" +
-  "Negative and unresolved judgments succeed. Provider and output failures fail the invocation. TSV includes one header unless --no-header is supplied; --format json emits the complete native judgment.";
+  "Negative and unresolved judgments succeed. Provider and output failures fail the invocation. Tabular output uses tab-delimited CSV, quoting tabs, newlines and quotation marks; use a CSV-aware reader with a tab delimiter. One header is included unless --no-header is supplied; --format json emits the complete native judgment.";
 
 export const modelFlag = Flag.String("model").pipe(
   Flag.withSchema(modelName),

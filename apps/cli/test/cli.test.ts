@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 import { execPath } from "node:process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -33,6 +34,30 @@ it.effect("compares identical labels without model configuration", () =>
   Effect.gen(function* () {
     const result = yield* run(["compare", "labels", "Voucher A17", "Voucher A17"]);
     expect(result).toEqual({ stdout: "true\n", stderr: "", code: 0 });
+  }),
+);
+
+it.effect("fails with a diagnostic when the primary stdout reader is closed", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.promise(
+      () =>
+        new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+          const child = spawn(execPath, ["src/main.ts", "compare", "labels", "A17", "A17"], {
+            env: { NO_COLOR: "1" },
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let stderr = "";
+          child.stderr.setEncoding("utf8");
+          child.stderr.on("data", (chunk: string) => {
+            stderr += chunk;
+          });
+          child.on("error", reject);
+          child.on("close", (code) => resolve({ code, stderr }));
+          child.stdout.destroy();
+        }),
+    );
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("Cannot write results to stdout");
   }),
 );
 
@@ -202,7 +227,7 @@ it.effect("reports excessively nested JSONL metadata without diagnostic stdout",
     );
     expect(result.code).not.toBe(0);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Cannot serialize set");
+    expect(result.stderr).toContain("Cannot serialize output");
   }),
 );
 

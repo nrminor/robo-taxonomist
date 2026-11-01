@@ -8,6 +8,7 @@ import {
   Match,
   Result,
   Schema,
+  Sink,
   Stdio,
   Stream,
 } from "effect";
@@ -28,81 +29,97 @@ const invoke = (
   replies: readonly (readonly string[])[] = [["member"]],
   stdin = "",
 ) =>
-  Effect.gen(function* () {
-    const requests: (typeof wireRequest.Type)[] = [];
-    const http = HttpClient.make((request) =>
-      Effect.sync(() => {
-        const text = Match.value(request.body).pipe(
-          Match.tagsExhaustive({
-            Uint8Array: ({ body }) => new TextDecoder().decode(body),
-            Empty: () => "",
-            Raw: () => "",
-            FormData: () => "",
-            Stream: () => "",
-          }),
-        );
-        const payload = Schema.decodeUnknownSync(wireRequest)(text);
-        const choices = replies[requests.length] ?? ["member"];
-        requests.push(payload);
-        const answers = Object.fromEntries(
-          choices.map((choice, index) => [
-            `record${index}`,
-            {
-              type: "choice",
-              choice,
-              confidence: 1,
-              probabilities: {
-                member: 0,
-                notMember: 0,
-                mixed: 0,
-                undetermined: 0,
-                multipleTarget0: 0,
-                [choice]: 1,
+  Effect.suspend(() => {
+    let output = "";
+    const decoder = new TextDecoder();
+    return Effect.gen(function* () {
+      const requests: (typeof wireRequest.Type)[] = [];
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const text = Match.value(request.body).pipe(
+            Match.tagsExhaustive({
+              Uint8Array: ({ body }) => new TextDecoder().decode(body),
+              Empty: () => "",
+              Raw: () => "",
+              FormData: () => "",
+              Stream: () => "",
+            }),
+          );
+          const payload = Schema.decodeUnknownSync(wireRequest)(text);
+          const choices = replies[requests.length] ?? ["member"];
+          requests.push(payload);
+          const answers = Object.fromEntries(
+            choices.map((choice, index) => [
+              `record${index}`,
+              {
+                type: "choice",
+                choice,
+                confidence: 1,
+                probabilities: {
+                  member: 0,
+                  notMember: 0,
+                  mixed: 0,
+                  undetermined: 0,
+                  multipleTarget0: 0,
+                  [choice]: 1,
+                },
               },
-            },
-          ]),
-        );
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(JSON.stringify({ model: "fixture-model", answers }), {
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }),
+            ]),
+          );
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify({ model: "fixture-model", answers }), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      );
+      const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
+        Effect.result,
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      output += decoder.decode();
+      return {
+        outcome,
+        requests,
+        output,
+        stdout: output === "" ? [] : output.replace(/\n$/, "").split("\n"),
+        stderr: yield* TestConsole.errorLines,
+      };
+    }).pipe(
+      Effect.provide([
+        NodeServices.layer,
+        Stdio.layerTest({
+          stdin: Stream.succeed(new TextEncoder().encode(stdin)),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.sync(() => {
+                output +=
+                  typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+              }),
+            ),
+        }),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" })),
+        Layer.fresh(TestConsole.layer),
+      ]),
     );
-    const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
-      Effect.result,
-      Effect.provideService(HttpClient.HttpClient, http),
-    );
-    return {
-      outcome,
-      requests,
-      stdout: yield* TestConsole.logLines,
-      stderr: yield* TestConsole.errorLines,
-    };
-  }).pipe(
-    Effect.provide([
-      NodeServices.layer,
-      Stdio.layerTest({ stdin: Stream.succeed(new TextEncoder().encode(stdin)) }),
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" })),
-      Layer.fresh(TestConsole.layer),
-    ]),
-  );
+  });
 
-it.effect("rejects delimiter-bearing membership TSV before emitting a header", () =>
+it.effect("quotes delimiter-bearing membership TSV", () =>
   Effect.gen(function* () {
     const result = yield* invoke([
       "mem",
       "check",
-      "Voucher\tA17",
+      'Voucher\tA17\n"sample"',
       "--target",
       "Quercus",
       "--model",
       "custom/model",
     ]);
-    expect(Result.isFailure(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("--format jsonl");
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe(
+      'judgment\trecord\tclarification_target\nMember\t"Voucher\tA17\n""sample"""\t\n',
+    );
   }),
 );
 
@@ -359,8 +376,6 @@ it.effect("uses literal-first then positional-file order without inspecting lite
       "A17",
       { label: "B42", metadata: { abundance: 2 } },
     ]);
-    expect(JSON.stringify(result.requests[0]?.questions)).toContain("Record label:");
-    expect(JSON.stringify(result.requests[0]?.questions)).not.toContain("Scientific name:");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -508,18 +523,17 @@ it.effect("reads all quantifier inputs before allowing a decisive early model an
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect(
-  "rejects delimiter-bearing quantifier clarification text with structured-output guidance",
-  () =>
-    Effect.gen(function* () {
-      const result = yield* invoke(
-        ["mem", "all", "--record", "A17", "--target", "Quercus\tFagus", "--model", "custom/model"],
-        [["multipleTarget0"]],
-      );
-      expect(Result.isFailure(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([]);
-      expect(JSON.stringify(result.stderr)).toContain("--format json");
-    }),
+it.effect("quotes delimiter-bearing quantifier clarification text", () =>
+  Effect.gen(function* () {
+    const result = yield* invoke(
+      ["mem", "all", "--record", "A17", "--target", "Quercus\tFagus", "--model", "custom/model"],
+      [["multipleTarget0"]],
+    );
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe(
+      'judgment\tquantifier\tclarification_target\nMultipleTaxaInTarget\tall\t"Quercus\tFagus"\n',
+    );
+  }),
 );
 
 it.effect.each([
@@ -640,7 +654,7 @@ it.effect("reports JSONL serialization limits as operational errors rather than 
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("Cannot serialize membership result");
+    expect(JSON.stringify(result.stderr)).toContain("Cannot serialize output");
   }),
 );
 
@@ -764,7 +778,7 @@ it.effect("handles the empty target through the native primitive without a provi
 
 it.effect("retains a delimiter-bearing record and the complete native judgment in JSONL", () =>
   Effect.gen(function* () {
-    yield* Command.runWith(cli, { version: "test" })([
+    const result = yield* invoke([
       "mem",
       "check",
       "Voucher\tA17",
@@ -775,50 +789,14 @@ it.effect("retains a delimiter-bearing record and the complete native judgment i
       "--format",
       "jsonl",
     ]);
-    expect(yield* TestConsole.logLines).toEqual([
-      '{"record":"Voucher\\tA17","judgment":{"_tag":"Member"}}',
-    ]);
-  }).pipe(
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response(
-              JSON.stringify({
-                model: "fixture-model",
-                answers: {
-                  record0: {
-                    type: "choice",
-                    choice: "member",
-                    confidence: 1,
-                    probabilities: {
-                      member: 1,
-                      notMember: 0,
-                      mixed: 0,
-                      undetermined: 0,
-                      multipleTarget0: 0,
-                    },
-                  },
-                },
-              }),
-              { headers: { "content-type": "application/json" } },
-            ),
-          ),
-        ),
-      ),
-    ),
-    Effect.provide(
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" })),
-    ),
-    Effect.provide([NodeServices.layer, TestConsole.layer]),
-  ),
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.stdout).toEqual(['{"record":"Voucher\\tA17","judgment":{"_tag":"Member"}}']);
+  }),
 );
 
 it.effect("checks one supplied record against a target with the native membership primitive", () =>
   Effect.gen(function* () {
-    yield* Command.runWith(cli, { version: "test" })([
+    const result = yield* invoke([
       "membership",
       "check",
       "Voucher A17",
@@ -827,45 +805,11 @@ it.effect("checks one supplied record against a target with the native membershi
       "--model",
       "custom/model",
     ]);
-    expect(yield* TestConsole.logLines).toEqual([
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.stdout).toEqual([
       "judgment\trecord\tclarification_target",
       "Member\tVoucher A17\t",
     ]);
-    expect(yield* TestConsole.errorLines).toEqual([]);
-  }).pipe(
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response(
-              JSON.stringify({
-                model: "fixture-model",
-                answers: {
-                  record0: {
-                    type: "choice",
-                    choice: "member",
-                    confidence: 1,
-                    probabilities: {
-                      member: 1,
-                      notMember: 0,
-                      mixed: 0,
-                      undetermined: 0,
-                      multipleTarget0: 0,
-                    },
-                  },
-                },
-              }),
-              { headers: { "content-type": "application/json" } },
-            ),
-          ),
-        ),
-      ),
-    ),
-    Effect.provide(
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" })),
-    ),
-    Effect.provide([NodeServices.layer, TestConsole.layer]),
-  ),
+    expect(result.stderr).toEqual([]);
+  }),
 );

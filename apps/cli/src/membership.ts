@@ -1,109 +1,52 @@
-import { Console, Data, Effect, Match, Option, Predicate, Schema, Stream } from "effect";
-import { Argument, CliError, Command, Flag } from "effect/cli";
-import {
-  CollectionExecution,
-  RecordLabel,
-  Taxonomy,
-  type TaxonomicRecord,
-  type TaxonMembershipJudgment,
-} from "robo-taxonomist";
-import { modelFailure, modelFlag, modelLayer } from "./model.ts";
-import { checkStdin, loadTargets, targetFlags } from "./targets.ts";
-import {
-  executionFlags,
-  loadRecords,
-  recordFlags,
-  recordHelp,
-  type InputRecord,
-} from "./records.ts";
-
-const Judgment = Data.taggedEnum<TaxonMembershipJudgment>();
+import { Effect, Match, Option, Stream } from "effect";
+import { Argument, Command, Flag } from "effect/cli";
+import { CollectionExecution, RecordLabel, Taxonomy } from "robo-taxonomist";
+import * as Documents from "./documents.ts";
+import * as Inputs from "./inputs.ts";
+import * as Model from "./model.ts";
+import * as Output from "./output.ts";
+import * as Presentation from "./presentation.ts";
 
 const configurationHelp =
   "Use --model to override ROBO_TAXONOMIST_MODEL; there is no implicit model default. Inject TYPESAFE_API_KEY through the environment. The selected command acquires one client/model; help needs no credentials. Negative, mixed, unresolved and clarification judgments are successful results.\n\n" +
   "Repeated --target names and --targets-file sources form one union, preserving occurrences. Target files default to newline names, .json to a record array or generated set artifact, and .jsonl to identifying records. --targets-format overrides the suffix; target stdin defaults to text. No target sources means the empty set.";
 
 const tableHelp =
-  "TSV contains judgment, record and clarification_target, with one header per invocation unless --no-header is supplied. Text requires an original record label and delimiter-free cells; use --format jsonl for identifying records without labels or delimiter-bearing text. JSONL retains each original record and its complete native judgment, including clarification targets.";
-
-const writeJson = Effect.fn("Cli.writeMembershipJson")(function* (value: object) {
-  const text = yield* Effect.try({
-    try: () => JSON.stringify(value),
-    catch: (cause) =>
-      new CliError.UserError({
-        cause,
-        userMessage: "Cannot serialize membership result; metadata may be too deeply nested",
-      }),
-  });
-  yield* Console.log(text);
-});
-
-const membershipCells = Effect.fnUntraced(function* (
-  record: InputRecord,
-  judgment: TaxonMembershipJudgment,
-) {
-  const original: string | TaxonomicRecord = record;
-  const label = Predicate.isString(original) ? original : original.label;
-  if (label === undefined)
-    return yield* new CliError.UserError({
-      cause: "Record has no original label; use --format jsonl to retain its identifiers",
-    });
-  const cells = yield* Match.value(judgment).pipe(
-    Match.tagsExhaustive({
-      Member: () => Effect.succeed(["Member", label, ""]),
-      NotMember: () => Effect.succeed(["NotMember", label, ""]),
-      MixedMembership: () => Effect.succeed(["MixedMembership", label, ""]),
-      Undetermined: () => Effect.succeed(["Undetermined", label, ""]),
-      MultipleTaxaInTarget: ({ target }) => {
-        const name = target.record.scientificName ?? target.record.label;
-        return name === undefined
-          ? Effect.fail(
-              new CliError.UserError({
-                cause: "Clarification target has no text name or label; use --format jsonl",
-              }),
-            )
-          : Effect.succeed(["MultipleTaxaInTarget", label, name]);
-      },
-    }),
-  );
-  return yield* Schema.decodeUnknownEffect(
-    Schema.Array(Schema.String.check(Schema.isPattern(/^[^\t\r\n]*$/u))),
-  )(cells).pipe(
-    Effect.mapError(
-      (cause) =>
-        new CliError.UserError({
-          cause,
-          userMessage: "Membership text contains TSV delimiters; use --format jsonl",
-        }),
-    ),
-  );
-});
+  "Tabular output contains judgment, record and clarification_target, with one header per invocation unless --no-header is supplied. It uses tab-delimited CSV, quoting tabs, newlines and quotation marks. Use a CSV-aware reader with a tab delimiter. Records require original labels; --format jsonl retains identifying records without labels, arbitrary metadata and the complete native judgment, including clarification targets.";
 
 const check = Command.make(
   "check",
   {
     record: Argument.String("record").pipe(Argument.withSchema(RecordLabel)),
-    target: targetFlags(),
-    model: modelFlag,
+    target: Inputs.targetFlags(),
+    model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(Flag.withDefault("tsv")),
     noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
   },
   Effect.fn("Cli.checkMembership")(function* ({ record, target, format, noHeader }) {
-    const set = yield* loadTargets(
-      target.targets,
-      target.files,
-      Option.getOrUndefined(target.format),
-    );
+    yield* Inputs.checkStdin(target.files);
+
+    const targetFormat = Option.getOrUndefined(target.format);
+    const set = yield* Inputs.loadTargets(target.targets, target.files, targetFormat);
     const judgment = yield* Taxonomy.recordBelongsTo(record, set).pipe(
-      Effect.mapError(modelFailure),
+      Effect.mapError(Model.modelFailure),
     );
-    if (format === "jsonl") {
-      yield* writeJson({ record, judgment });
-      return;
-    }
-    const cells = yield* membershipCells(record, judgment);
-    if (!noHeader) yield* Console.log("judgment\trecord\tclarification_target");
-    yield* Console.log(cells.join("\t"));
+    const entries = Stream.succeed({ record, judgment });
+
+    const render = Match.value(format).pipe(
+      Match.literalsExhaustive({
+        tsv: () =>
+          Effect.gen(function* () {
+            const row = yield* Presentation.membershipRow({ record, judgment });
+            const rows = Stream.succeed(row);
+            const writeRows = Output.writeTable(Presentation.MembershipRow, noHeader);
+            yield* writeRows(rows);
+          }),
+        jsonl: () => Output.writeJsonLines(entries),
+      }),
+    );
+
+    yield* render;
   }),
 ).pipe(
   Command.withDescription(
@@ -118,17 +61,17 @@ const check = Command.make(
       description: "Check one supplied label without inferring a scientific-name field.",
     },
   ]),
-  Command.provide(({ model }) => modelLayer(model)),
+  Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 const partition = Command.make(
   "partition",
   {
-    input: recordFlags,
-    target: targetFlags(),
-    model: modelFlag,
+    input: Inputs.recordFlags,
+    target: Inputs.targetFlags(),
+    model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(Flag.withDefault("tsv")),
-    execution: executionFlags,
+    execution: Inputs.executionFlags,
     noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
   },
   Effect.fn("Cli.partitionMembership")(function* ({
@@ -139,36 +82,37 @@ const partition = Command.make(
     noHeader,
   }) {
     const execution = CollectionExecution.make(flags);
-    yield* checkStdin([...input.files, ...target.files]);
-    const set = yield* loadTargets(
-      target.targets,
-      target.files,
-      Option.getOrUndefined(target.format),
-    );
-    if (format === "tsv" && !noHeader) yield* Console.log("judgment\trecord\tclarification_target");
-    const write = (record: InputRecord, judgment: TaxonMembershipJudgment) =>
-      format === "jsonl"
-        ? writeJson({ record, judgment })
-        : membershipCells(record, judgment).pipe(
-            Effect.flatMap((cells) => Console.log(cells.join("\t"))),
-          );
-    yield* loadRecords(input.records, input.files, Option.getOrUndefined(input.format)).pipe(
-      Stream.grouped(execution.batchSize * execution.concurrency),
-      Stream.runForEach((records) =>
-        Effect.gen(function* () {
-          const result = yield* Taxonomy.partitionRecordsByMembership(records, set, {
-            execution,
-          }).pipe(Effect.mapError(modelFailure));
-          for (const record of result.Member) yield* write(record, Judgment.Member());
-          for (const record of result.NotMember) yield* write(record, Judgment.NotMember());
-          for (const record of result.MixedMembership)
-            yield* write(record, Judgment.MixedMembership());
-          for (const record of result.Undetermined) yield* write(record, Judgment.Undetermined());
-          for (const { record, target } of result.MultipleTaxaInTarget)
-            yield* write(record, Judgment.MultipleTaxaInTarget({ target }));
-        }),
+    const paths = [...input.files, ...target.files];
+    yield* Inputs.checkStdin(paths);
+
+    const targetFormat = Option.getOrUndefined(target.format);
+    const set = yield* Inputs.loadTargets(target.targets, target.files, targetFormat);
+    const recordFormat = Option.getOrUndefined(input.format);
+    const records = Inputs.loadRecords(input.records, input.files, recordFormat);
+    const groupSize = execution.batchSize * execution.concurrency;
+
+    const partitions = records.pipe(
+      Stream.grouped(groupSize),
+      Stream.mapEffect((group) =>
+        Taxonomy.partitionRecordsByMembership(group, set, { execution }).pipe(
+          Effect.mapError(Model.modelFailure),
+        ),
       ),
     );
+    const entries = partitions.pipe(Stream.flatMap(Presentation.partitionEntries));
+
+    const render = Match.value(format).pipe(
+      Match.literalsExhaustive({
+        tsv: () => {
+          const rows = entries.pipe(Stream.mapEffect(Presentation.membershipRow));
+          const writeRows = Output.writeTable(Presentation.MembershipRow, noHeader);
+          return writeRows(rows);
+        },
+        jsonl: () => Output.writeJsonLines(entries),
+      }),
+    );
+
+    yield* render;
   }),
 ).pipe(
   Command.withAlias("part"),
@@ -178,7 +122,7 @@ const partition = Command.make(
       "\n\n" +
       tableHelp +
       "\n\n" +
-      recordHelp,
+      Inputs.recordHelp,
   ),
   Command.withExamples([
     {
@@ -192,17 +136,17 @@ const partition = Command.make(
       description: "Retain identifying fields and metadata from structured stdin.",
     },
   ]),
-  Command.provide(({ model }) => modelLayer(model)),
+  Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 const quantifier = (name: "all" | "any" | "none", operation: typeof Taxonomy.allRecordsBelongTo) =>
   Command.make(
     name,
     {
-      input: recordFlags,
-      target: targetFlags(),
-      model: modelFlag,
-      execution: executionFlags,
+      input: Inputs.recordFlags,
+      target: Inputs.targetFlags(),
+      model: Model.modelFlag,
+      execution: Inputs.executionFlags,
       format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
       noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
     },
@@ -213,62 +157,40 @@ const quantifier = (name: "all" | "any" | "none", operation: typeof Taxonomy.all
       format,
       noHeader,
     }) {
-      yield* checkStdin([...input.files, ...target.files]);
-      const set = yield* loadTargets(
-        target.targets,
-        target.files,
-        Option.getOrUndefined(target.format),
+      const execution = CollectionExecution.make(flags);
+      const paths = [...input.files, ...target.files];
+      yield* Inputs.checkStdin(paths);
+
+      const targetFormat = Option.getOrUndefined(target.format);
+      const set = yield* Inputs.loadTargets(target.targets, target.files, targetFormat);
+      const recordFormat = Option.getOrUndefined(input.format);
+      const recordStream = Inputs.loadRecords(input.records, input.files, recordFormat);
+      const records = yield* Stream.runCollect(recordStream);
+      const result = yield* operation(records, set, { execution }).pipe(
+        Effect.mapError(Model.modelFailure),
       );
-      const records = yield* loadRecords(
-        input.records,
-        input.files,
-        Option.getOrUndefined(input.format),
-      ).pipe(Stream.runCollect);
-      const result = yield* operation(records, set, {
-        execution: CollectionExecution.make(flags),
-      }).pipe(Effect.mapError(modelFailure));
-      if (format === "json") {
-        yield* writeJson(result);
-        return;
-      }
-      const cells = yield* Match.value(result).pipe(
-        Match.tagsExhaustive({
-          Yes: ({ quantifier }) => Effect.succeed(["Yes", quantifier, ""]),
-          No: ({ quantifier }) => Effect.succeed(["No", quantifier, ""]),
-          Undetermined: ({ quantifier }) => Effect.succeed(["Undetermined", quantifier, ""]),
-          MultipleTaxaInTarget: ({ quantifier, target }) => {
-            const original: TaxonomicRecord = target.record;
-            const name = original.scientificName ?? original.label;
-            return name === undefined
-              ? Effect.fail(
-                  new CliError.UserError({
-                    cause: "Clarification target has no text name or label; use --format json",
-                  }),
-                )
-              : Effect.succeed(["MultipleTaxaInTarget", quantifier, name]);
-          },
+
+      const render = Match.value(format).pipe(
+        Match.literalsExhaustive({
+          tsv: () =>
+            Effect.gen(function* () {
+              const row = yield* Presentation.quantifierRow(result);
+              const rows = Stream.succeed(row);
+              const writeRows = Output.writeTable(Presentation.QuantifierRow, noHeader);
+              yield* writeRows(rows);
+            }),
+          json: () => Output.writeJson(result, Documents.QuantifierJudgment),
         }),
       );
-      yield* Schema.decodeUnknownEffect(
-        Schema.Array(Schema.String.check(Schema.isPattern(/^[^\t\r\n]*$/u))),
-      )(cells).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CliError.UserError({
-              cause,
-              userMessage: "Clarification text contains TSV delimiters; use --format json",
-            }),
-        ),
-      );
-      if (!noHeader) yield* Console.log("judgment\tquantifier\tclarification_target");
-      yield* Console.log(cells.join("\t"));
+
+      yield* render;
     }),
   ).pipe(
     Command.withDescription(
-      `Ask the native ${name} whole-record membership question. Collects the complete input in memory and invokes the native quantifier once. No per-group reduction or CLI input cap is applied. Native ordering determines decisive answers, uncertainty and clarification.\n\n` +
+      `Ask the native ${name} whole-record membership question. Collects the complete input in memory and invokes the native quantifier once. Native ordering determines decisive answers, uncertainty and clarification.\n\n` +
         configurationHelp +
-        "\n\nTSV contains judgment, quantifier and clarification_target, with one header unless --no-header is supplied. Use --format json for the complete native judgment, including identifier-only or delimiter-bearing clarification targets.\n\n" +
-        recordHelp,
+        "\n\nTabular output contains judgment, quantifier and clarification_target, with one header unless --no-header is supplied. Tab-delimited CSV quotes tabs, newlines and quotation marks; use a CSV-aware reader. Use --format json for the complete native judgment, including identifier-only clarification targets.\n\n" +
+        Inputs.recordHelp,
     ),
     Command.withExamples([
       {
@@ -276,7 +198,7 @@ const quantifier = (name: "all" | "any" | "none", operation: typeof Taxonomy.all
         description: "Ask one question about the complete input collection.",
       },
     ]),
-    Command.provide(({ model }) => modelLayer(model)),
+    Command.provide(({ model }) => Model.modelLayer(model)),
   );
 
 export const membership = Command.make("membership").pipe(
