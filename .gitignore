@@ -35,7 +35,6 @@
 !/apps/demo/.env.schema
 !/apps/demo/tsconfig.json
 !/apps/demo/next.config.ts
-!/apps/demo/next-env.d.ts
 !/apps/demo/vitest.config.ts
 !/apps/demo/src/
 !/apps/demo/src/**/
