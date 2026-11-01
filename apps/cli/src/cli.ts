@@ -8,6 +8,7 @@ import { membership } from "./membership.ts";
 import * as Output from "./output.ts";
 import * as Presentation from "./presentation.ts";
 import { sets } from "./sets.ts";
+import * as Server from "./server.ts";
 
 const labels = Command.make(
   "labels",
@@ -155,5 +156,5 @@ const compare = Command.make("compare").pipe(
 
 export const cli = Command.make("robo-taxonomist").pipe(
   Command.withDescription("Compare taxonomic records and compose symbolic taxon sets."),
-  Command.withSubcommands([compare, sets, membership, classify]),
+  Command.withSubcommands([compare, sets, membership, classify, Server.command]),
 );

@@ -50,7 +50,7 @@ export const restoreSet = (document: typeof SetDocument.Type): TaxonSet.TaxonSet
   });
 
 const side = Schema.Literals(["left", "right", "both"]);
-const rank = Schema.Literals([
+export const TaxonomicRank = Schema.Literals([
   "domain",
   "kingdom",
   "phylum",
@@ -60,7 +60,13 @@ const rank = Schema.Literals([
   "genus",
   "species",
 ]);
-const relation = Schema.Literals(["subset", "proper-subset", "equivalent", "overlap", "disjoint"]);
+export const SetRelation = Schema.Literals([
+  "subset",
+  "proper-subset",
+  "equivalent",
+  "overlap",
+  "disjoint",
+]);
 const quantifier = Schema.Literals(["all", "any", "none"]);
 const taxonDocument = SetDocument.cases.Taxon;
 
@@ -81,23 +87,27 @@ export const ContainmentJudgment = Schema.TaggedUnion({
 });
 
 export const RankJudgment = Schema.TaggedUnion({
-  SameTaxonAtRank: { rank },
-  SameMultipleTaxaAtRank: { rank },
-  SameTaxaAtRank: { rank },
-  LeftTaxaWithinRightAtRank: { rank },
-  RightTaxaWithinLeftAtRank: { rank },
-  PartlySharedTaxaAtRank: { rank },
-  NoSharedTaxaAtRank: { rank },
-  DifferentTaxaAtRank: { rank },
-  Undetermined: { rank },
-  MultipleTaxaAtRank: { rank, side },
+  SameTaxonAtRank: { rank: TaxonomicRank },
+  SameMultipleTaxaAtRank: { rank: TaxonomicRank },
+  SameTaxaAtRank: { rank: TaxonomicRank },
+  LeftTaxaWithinRightAtRank: { rank: TaxonomicRank },
+  RightTaxaWithinLeftAtRank: { rank: TaxonomicRank },
+  PartlySharedTaxaAtRank: { rank: TaxonomicRank },
+  NoSharedTaxaAtRank: { rank: TaxonomicRank },
+  DifferentTaxaAtRank: { rank: TaxonomicRank },
+  Undetermined: { rank: TaxonomicRank },
+  MultipleTaxaAtRank: { rank: TaxonomicRank, side },
 });
 
 export const SetRelationJudgment = Schema.TaggedUnion({
-  Yes: { relation },
-  No: { relation },
-  Undetermined: { relation },
-  MultipleTaxaInSet: { relation, side: Schema.Literals(["left", "right"]), taxon: taxonDocument },
+  Yes: { relation: SetRelation },
+  No: { relation: SetRelation },
+  Undetermined: { relation: SetRelation },
+  MultipleTaxaInSet: {
+    relation: SetRelation,
+    side: Schema.Literals(["left", "right"]),
+    taxon: taxonDocument,
+  },
 });
 
 export const QuantifierJudgment = Schema.TaggedUnion({

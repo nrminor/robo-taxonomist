@@ -77,6 +77,58 @@ it.effect("reports missing provider credentials on stderr without starting infer
   }),
 );
 
+it.effect("shows foreground server configuration without acquiring credentials", () =>
+  Effect.gen(function* () {
+    const result = yield* run(["server", "--help"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    for (const flag of [
+      "--host",
+      "--port",
+      "--max-body-bytes",
+      "--request-timeout-ms",
+      "--max-json-depth",
+      "--model",
+    ]) {
+      expect(result.stdout).toContain(flag);
+    }
+    expect(result.stdout).toContain("127.0.0.1");
+    expect(result.stdout).toContain("TYPESAFE_API_KEY");
+  }),
+);
+
+it.effect.each([
+  { args: ["server"], configuration: "ROBO_TAXONOMIST_MODEL" },
+  { args: ["server", "--model", "fixture-model"], configuration: "TYPESAFE_API_KEY" },
+])(
+  "requires startup model configuration before binding a server: $configuration",
+  ({ args, configuration }) =>
+    Effect.gen(function* () {
+      const result = yield* run(args);
+
+      expect(result.code).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(configuration);
+    }),
+);
+
+it.effect.each([
+  { flag: "--port", value: "65536" },
+  { flag: "--max-body-bytes", value: "0" },
+  { flag: "--request-timeout-ms", value: "0" },
+  { flag: "--max-json-depth", value: "0" },
+  { flag: "--host", value: "" },
+])("rejects invalid server settings before startup: $flag", ({ flag, value }) =>
+  Effect.gen(function* () {
+    const result = yield* run(["server", "--model", "fixture-model", flag, value]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(flag);
+  }),
+);
+
 it.effect.each([
   { path: ["compare", "identity"] },
   { path: ["compare", "rank"] },
