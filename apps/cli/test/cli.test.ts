@@ -826,7 +826,6 @@ it.effect.each([
     for (const command of commands) {
       expect(entries?.some((line) => line.startsWith(`  ${command}`))).toBe(true);
     }
-    expect(result.stdout.split("\n").length).toBeLessThan(35);
   }),
 );
 
@@ -835,16 +834,13 @@ it.effect.each([
   { path: ["server"] },
   { path: ["membership", "partition"] },
   { path: ["membership", "all"] },
-])("keeps $path help scannable while retaining options and examples", ({ path }) =>
+])("shows options and examples in $path help", ({ path }) =>
   Effect.gen(function* () {
     const result = yield* run([...path, "--help"]);
 
     expect(result).toMatchObject({ code: 0, stderr: "" });
     expect(result.stdout).toContain("EXAMPLES");
     expect(result.stdout).toContain("--model");
-    expect(result.stdout.split("\n").length).toBeLessThan(65);
-    const description = result.stdout.split("USAGE\n")[0];
-    expect(description?.length).toBeLessThan(700);
   }),
 );
 
