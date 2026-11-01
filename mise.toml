@@ -32,5 +32,5 @@ knip = { description = "Check unused code and dependencies", run = "pnpm run kni
 "demo:dev:live" = { description = "Build the public library, then run the live provider demo", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo dev:live" }
 "cli:dev" = { description = "Run the CLI from source", run = "pnpm run build && pnpm --filter @robo-taxonomist/cli dev" }
 "cli:check" = { description = "Build and check the CLI", run = "pnpm run build && pnpm --filter @robo-taxonomist/cli check" }
-"cli:compile" = { description = "Compile the host standalone executable under artifacts/cli", run = "pnpm run cli:compile" }
+"cli:compile" = { description = "Compile a standalone executable under artifacts/cli (optional --target)", run = "pnpm run cli:compile" }
 "cli:smoke" = { description = "Compile and smoke-test the isolated host executable", run = "pnpm run cli:smoke" }

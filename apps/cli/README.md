@@ -14,6 +14,10 @@ Work with labels such as `Voucher A17 | Quercus robur` or structured records con
 
 ## Install
 
+### Release executables
+
+Tagged releases built with the CLI workflow attach Linux and macOS executables for x64 and arm64 to [GitHub Releases](https://github.com/nrminor/robo-taxonomist/releases). Download the archive for your system, extract it and put `robo-taxonomist` on your `PATH`. Each archive includes the MIT license; `SHA256SUMS` lists the archive checksums. Linux builds use glibc.
+
 ### Build an executable
 
 From the repository root, use [Mise](https://mise.jdx.dev/) to install the build tools pinned in [mise.toml](../../mise.toml):

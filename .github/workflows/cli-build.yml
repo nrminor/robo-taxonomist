@@ -1,0 +1,63 @@
+name: CLI archives
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} CLI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - platform: linux-x64
+            target: bun-linux-x64-baseline
+          - platform: linux-arm64
+            target: bun-linux-arm64
+          - platform: darwin-x64
+            target: bun-darwin-x64
+          - platform: darwin-arm64
+            target: bun-darwin-arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned tooling
+        uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: "2026.10.15"
+          bootstrap: false
+
+      - name: Install locked dependencies
+        run: mise run bootstrap
+
+      - name: Compile executable
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: mise run cli:compile -- --target="$CLI_TARGET"
+
+      - name: Package executable and license
+        env:
+          CLI_PLATFORM: ${{ matrix.platform }}
+        run: |
+          cp apps/cli/LICENSE artifacts/cli/
+          tar -czf "artifacts/robo-taxonomist-$CLI_PLATFORM.tar.gz" -C artifacts/cli robo-taxonomist LICENSE
+          cd artifacts
+          sha256sum "robo-taxonomist-$CLI_PLATFORM.tar.gz" > "robo-taxonomist-$CLI_PLATFORM.sha256"
+
+      - name: Upload CLI archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-${{ matrix.platform }}
+          path: |
+            artifacts/robo-taxonomist-${{ matrix.platform }}.tar.gz
+            artifacts/robo-taxonomist-${{ matrix.platform }}.sha256
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
