@@ -1,5 +1,15 @@
 import { expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Logger, Match, Schema, Stream } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Logger,
+  Match,
+  Schema,
+  Stream,
+} from "effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -64,8 +74,136 @@ const options = Server.Options.make({
   maxBodyBytes: 1_048_576,
   timeoutMs: 60_000,
   maxJsonDepth: 64,
+  maxRecords: 1000,
+  maxTargets: 100,
+  maxRecordTargetPairs: 10_000,
+  batchSize: 16,
+  concurrency: 1,
 });
 const running = Server.layer(options).pipe(Layer.provide(provider));
+
+it.effect.each([
+  { records: 3, targets: 1, resource: "records", maximum: 2, actual: 3 },
+  { records: 1, targets: 3, resource: "targets", maximum: 2, actual: 3 },
+  { records: 2, targets: 2, resource: "recordTargetPairs", maximum: 3, actual: 4 },
+])(
+  "rejects excess collection $resource before model inference on every collection route",
+  (test) => {
+    const bounded = Server.layer({
+      ...options,
+      maxRecords: 2,
+      maxTargets: 2,
+      maxRecordTargetPairs: 3,
+    }).pipe(Layer.provide(provider));
+
+    return Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      const baseUrl = HttpServer.formatAddress(server.address);
+      const record = RecordLabel.make("Voucher A17");
+      const records = Array.from({ length: test.records }, () => record);
+      const taxon = { _tag: "Taxon", record: { scientificName: "Quercus" } };
+      const target =
+        test.targets === 1
+          ? taxon
+          : { _tag: "Union", operands: Array.from({ length: test.targets }, () => taxon) };
+
+      for (const path of [
+        "/membership/partition",
+        "/membership/all",
+        "/membership/any",
+        "/membership/none",
+        "/classify",
+      ]) {
+        const endpoint = HttpClientRequest.post(`${baseUrl}${path}`);
+        const payload = path === "/classify" ? { records, panel: target } : { records, target };
+        const request = yield* HttpClientRequest.bodyJson(endpoint, payload);
+        const response = yield* HttpClient.execute(request);
+        const failure = yield* response.json;
+
+        expect(response.status).toBe(413);
+        expect(failure).toEqual({
+          _tag: "CollectionLimit",
+          resource: test.resource,
+          maximum: test.maximum,
+          actual: test.actual,
+        });
+      }
+    }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
+  },
+);
+
+it.live("interrupts ongoing collection inference when the HTTP client disconnects", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    const pending = HttpClient.make(() =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+      ),
+    );
+    const transport = Layer.succeed(HttpClient.HttpClient, pending);
+    const provider = Model.modelLayer("fixture-model").pipe(
+      Layer.provide([configuration, transport]),
+    );
+    const running = Server.layer(options).pipe(Layer.provide(provider));
+
+    yield* Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      const baseUrl = HttpServer.formatAddress(server.address);
+      const client = yield* HttpApiClient.make(Api.api, { baseUrl });
+      const request = client.classification.classify({
+        payload: {
+          records: [RecordLabel.make("Voucher A17")],
+          panel: TaxonName.make("Quercus"),
+        },
+      });
+      const fiber = yield* Effect.forkScoped(request);
+      yield* Deferred.await(started);
+
+      yield* Fiber.interrupt(fiber);
+      yield* Deferred.await(interrupted);
+
+      const stillServing = yield* client.comparisons.labels({
+        payload: {
+          left: RecordLabel.make("A"),
+          right: RecordLabel.make("A"),
+        },
+      });
+      expect(stillServing).toBe(true);
+    }).pipe(Effect.provide([running, FetchHttpClient.layer]));
+  }).pipe(Effect.timeout("5 seconds")),
+);
+
+it.live("returns a typed socket deadline and interrupts pending collection inference", () =>
+  Effect.gen(function* () {
+    const interrupted = yield* Deferred.make<void>();
+    const pending = HttpClient.make(() =>
+      Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+    );
+    const transport = Layer.succeed(HttpClient.HttpClient, pending);
+    const provider = Model.modelLayer("fixture-model").pipe(
+      Layer.provide([configuration, transport]),
+    );
+    const bounded = Server.layer({ ...options, timeoutMs: 50 }).pipe(Layer.provide(provider));
+
+    yield* Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      const baseUrl = HttpServer.formatAddress(server.address);
+      const endpoint = HttpClientRequest.post(`${baseUrl}/membership/partition`);
+      const request = yield* HttpClientRequest.bodyJson(endpoint, {
+        records: ["A"],
+        target: "Quercus",
+      });
+      const response = yield* HttpClient.execute(request);
+      const failure = yield* response.json;
+
+      expect(response.status).toBe(504);
+      expect(failure).toEqual({ _tag: "RequestDeadline", timeoutMs: 50 });
+      yield* Deferred.await(interrupted);
+    }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
+  }).pipe(Effect.timeout("5 seconds")),
+);
 
 it.effect("rejects deeply nested set expressions before the recursive endpoint schema runs", () =>
   Effect.gen(function* () {

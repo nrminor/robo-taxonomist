@@ -33,6 +33,12 @@ export const RequestTooDeep = Schema.TaggedStruct("RequestTooDeep", {
   maxJsonDepth: Schema.Int,
 }).pipe(HttpApiSchema.status(400));
 
+export const CollectionLimit = Schema.TaggedStruct("CollectionLimit", {
+  resource: Schema.Literals(["records", "targets", "recordTargetPairs"]),
+  maximum: Schema.Int,
+  actual: Schema.Int,
+}).pipe(HttpApiSchema.status(413));
+
 export const RequestDeadline = Schema.TaggedStruct("RequestDeadline", {
   timeoutMs: Schema.Int,
 }).pipe(HttpApiSchema.status(504));
@@ -50,6 +56,10 @@ export const SetOperand = Schema.Union([
   Documents.SetDocument,
 ]);
 const setPair = Schema.Struct({ left: SetOperand, right: SetOperand });
+export const CollectionInput = Schema.Struct({
+  records: Schema.Array(Documents.RecordInput),
+  target: SetOperand,
+});
 
 const comparisons = HttpApiGroup.make("comparisons").add(
   HttpApiEndpoint.post("labels", "/compare/labels", {
@@ -103,4 +113,42 @@ const sets = HttpApiGroup.make("sets").add(
   }),
 );
 
-export const api = HttpApi.make("robo-taxonomist").add(comparisons, sets).middleware(RequestBounds);
+const membership = HttpApiGroup.make("membership").add(
+  HttpApiEndpoint.post("check", "/membership/check", {
+    payload: Schema.Struct({ record: Documents.RecordInput, target: SetOperand }),
+    success: Documents.MembershipJudgment,
+    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+  }),
+  HttpApiEndpoint.post("partition", "/membership/partition", {
+    payload: CollectionInput,
+    success: Documents.MembershipPartition,
+    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+  }),
+  HttpApiEndpoint.post("all", "/membership/all", {
+    payload: CollectionInput,
+    success: Documents.QuantifierJudgment,
+    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+  }),
+  HttpApiEndpoint.post("any", "/membership/any", {
+    payload: CollectionInput,
+    success: Documents.QuantifierJudgment,
+    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+  }),
+  HttpApiEndpoint.post("none", "/membership/none", {
+    payload: CollectionInput,
+    success: Documents.QuantifierJudgment,
+    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+  }),
+);
+
+const classification = HttpApiGroup.make("classification").add(
+  HttpApiEndpoint.post("classify", "/classify", {
+    payload: Schema.Struct({ records: Schema.Array(Documents.RecordInput), panel: SetOperand }),
+    success: Documents.Classification,
+    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+  }),
+);
+
+export const api = HttpApi.make("robo-taxonomist")
+  .add(comparisons, sets, membership, classification)
+  .middleware(RequestBounds);

@@ -89,6 +89,11 @@ it.effect("shows foreground server configuration without acquiring credentials",
       "--max-body-bytes",
       "--request-timeout-ms",
       "--max-json-depth",
+      "--max-records",
+      "--max-targets",
+      "--max-record-target-pairs",
+      "--batch-size",
+      "--concurrency",
       "--model",
     ]) {
       expect(result.stdout).toContain(flag);
@@ -118,6 +123,11 @@ it.effect.each([
   { flag: "--max-body-bytes", value: "0" },
   { flag: "--request-timeout-ms", value: "0" },
   { flag: "--max-json-depth", value: "0" },
+  { flag: "--max-records", value: "0" },
+  { flag: "--max-targets", value: "0" },
+  { flag: "--max-record-target-pairs", value: "0" },
+  { flag: "--batch-size", value: "0" },
+  { flag: "--concurrency", value: "0" },
   { flag: "--host", value: "" },
 ])("rejects invalid server settings before startup: $flag", ({ flag, value }) =>
   Effect.gen(function* () {

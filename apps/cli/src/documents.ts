@@ -1,4 +1,5 @@
 import { Schema, type Data } from "effect";
+import { DecisionModel } from "effect/ai";
 import { RecordLabel, TaxonId, TaxonName, TaxonSet } from "robo-taxonomist";
 
 const jsonFields = Schema.Record(Schema.String, Schema.Json);
@@ -17,6 +18,8 @@ export const RecordDocument = Schema.Union([
   Schema.StructWithRest(Schema.Struct({ ...identifyingFields, taxonId: identifier }), [jsonFields]),
 ]);
 export type RecordDocument = typeof RecordDocument.Type;
+
+export const RecordInput = Schema.Union([RecordLabel, RecordDocument]);
 
 type SetNode<R> = Data.TaggedEnum<{
   Empty: {};
@@ -115,4 +118,50 @@ export const QuantifierJudgment = Schema.TaggedUnion({
   No: { quantifier },
   Undetermined: { quantifier },
   MultipleTaxaInTarget: { quantifier, target: taxonDocument },
+});
+
+export const MembershipJudgment = Schema.TaggedUnion({
+  Member: {},
+  NotMember: {},
+  MixedMembership: {},
+  Undetermined: {},
+  MultipleTaxaInTarget: { target: taxonDocument },
+});
+
+export const MembershipPartition = Schema.Struct({
+  Member: Schema.Array(RecordInput),
+  NotMember: Schema.Array(RecordInput),
+  MixedMembership: Schema.Array(RecordInput),
+  Undetermined: Schema.Array(RecordInput),
+  MultipleTaxaInTarget: Schema.Array(Schema.Struct({ record: RecordInput, target: taxonDocument })),
+});
+
+const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+const classificationAnswer = Schema.Struct({
+  label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
+  probabilities: Schema.Struct({
+    sameTaxon: probability,
+    withinTaxon: probability,
+    noMatch: probability,
+    undetermined: probability,
+  }),
+  confidence: Schema.optionalKey(probability),
+});
+const taxonMatch = Schema.Struct({
+  record: RecordInput,
+  taxon: taxonDocument,
+  support: probability,
+  judgment: Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} }),
+  answer: classificationAnswer,
+});
+export const Classification = Schema.Struct({
+  panel: SetDocument,
+  records: Schema.Array(
+    Schema.Struct({
+      record: RecordInput,
+      taxa: Schema.Array(taxonMatch),
+      ranking: Schema.Array(taxonMatch),
+    }),
+  ),
+  usage: Schema.Array(Schema.Struct(DecisionModel.DecisionUsage.fields)),
 });

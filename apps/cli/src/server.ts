@@ -5,12 +5,19 @@ import { DecisionModel } from "effect/ai";
 import { CliError, Command, Flag } from "effect/cli";
 import { HttpIncomingMessage, HttpRouter, HttpServerRequest } from "effect/http";
 import { HttpApiBuilder, HttpApiScalar } from "effect/http-api";
-import { TaxonSet, Taxonomy } from "robo-taxonomist";
+import { CollectionExecution, TaxonSet, Taxonomy } from "robo-taxonomist";
 import * as Api from "./api.ts";
 import * as Documents from "./documents.ts";
 import * as Model from "./model.ts";
 
 const defaultRequestLimits = { maxBodyBytes: 1_048_576, timeoutMs: 60_000, maxJsonDepth: 64 };
+const defaultCollectionLimits = {
+  maxRecords: 1000,
+  maxTargets: 100,
+  maxRecordTargetPairs: 10_000,
+  batchSize: 16,
+  concurrency: 1,
+};
 
 const positiveInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const Options = Schema.Struct({
@@ -19,6 +26,11 @@ export const Options = Schema.Struct({
   maxBodyBytes: positiveInteger,
   timeoutMs: positiveInteger,
   maxJsonDepth: positiveInteger,
+  maxRecords: positiveInteger,
+  maxTargets: positiveInteger,
+  maxRecordTargetPairs: positiveInteger,
+  batchSize: CollectionExecution.schema.fields.batchSize,
+  concurrency: CollectionExecution.schema.fields.concurrency,
 });
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -101,9 +113,62 @@ const modelFailure = () => Api.ModelFailure.make({ message: "The decision model 
 
 const setDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetDocument));
 const relationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetRelationJudgment));
+const membershipDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.MembershipJudgment));
+const partitionDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.MembershipPartition));
+const quantifierDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.QuantifierJudgment));
+const classificationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.Classification));
 const outputFailure = () =>
   Api.OutputFailure.make({ message: "Cannot encode the operation result" });
 const isRecordDocument = Schema.is(Documents.RecordDocument);
+
+const targetCount = (operand: typeof Api.SetOperand.Type): number => {
+  if (Predicate.isString(operand) || isRecordDocument(operand)) return 1;
+
+  return Documents.SetDocument.match(operand, {
+    Empty: () => 0,
+    Taxon: () => 1,
+    Union: ({ operands }) => operands.reduce((count, child) => count + targetCount(child), 0),
+    Intersection: ({ operands }) =>
+      operands.reduce((count, child) => count + targetCount(child), 0),
+    Difference: ({ left, right }) => targetCount(left) + targetCount(right),
+  });
+};
+
+const checkCollection = Effect.fnUntraced(function* (
+  records: number,
+  target: typeof Api.SetOperand.Type,
+  limits: typeof defaultCollectionLimits,
+) {
+  if (records > limits.maxRecords) {
+    return yield* Effect.fail(
+      Api.CollectionLimit.make({
+        resource: "records",
+        maximum: limits.maxRecords,
+        actual: records,
+      }),
+    );
+  }
+  const targets = targetCount(target);
+  if (targets > limits.maxTargets) {
+    return yield* Effect.fail(
+      Api.CollectionLimit.make({
+        resource: "targets",
+        maximum: limits.maxTargets,
+        actual: targets,
+      }),
+    );
+  }
+  const pairs = records * targets;
+  if (pairs > limits.maxRecordTargetPairs) {
+    return yield* Effect.fail(
+      Api.CollectionLimit.make({
+        resource: "recordTargetPairs",
+        maximum: limits.maxRecordTargetPairs,
+        actual: pairs,
+      }),
+    );
+  }
+});
 
 const operandSet = Effect.fnUntraced(function* (operand: typeof Api.SetOperand.Type) {
   return yield* Effect.try({
@@ -219,9 +284,103 @@ export const sets = HttpApiBuilder.group(
   }),
 );
 
+export const membership = (limits = defaultCollectionLimits) =>
+  HttpApiBuilder.group(
+    Api.api,
+    "membership",
+    Effect.fn("Server.membership")(function* (handlers) {
+      const model = yield* DecisionModel.DecisionModel;
+      const execution = CollectionExecution.make({
+        batchSize: limits.batchSize,
+        concurrency: limits.concurrency,
+      });
+
+      const quantify = Effect.fn("Server.quantifyMembership")(function* (
+        operation: typeof Taxonomy.allRecordsBelongTo,
+        payload: typeof Api.CollectionInput.Type,
+      ) {
+        yield* checkCollection(payload.records.length, payload.target, limits);
+        const target = yield* operandSet(payload.target);
+        const result = yield* operation(payload.records, target, { execution }).pipe(
+          Effect.provideService(DecisionModel.DecisionModel, model),
+          Effect.mapError(modelFailure),
+        );
+
+        return yield* quantifierDocument(result).pipe(Effect.mapError(outputFailure));
+      });
+
+      return handlers
+        .handle(
+          "check",
+          Effect.fn("Server.checkMembership")(function* ({ payload }) {
+            yield* checkCollection(1, payload.target, limits);
+            const target = yield* operandSet(payload.target);
+            const result = yield* Taxonomy.recordBelongsTo(payload.record, target).pipe(
+              Effect.provideService(DecisionModel.DecisionModel, model),
+              Effect.mapError(modelFailure),
+            );
+
+            return yield* membershipDocument(result).pipe(Effect.mapError(outputFailure));
+          }),
+        )
+        .handle(
+          "partition",
+          Effect.fn("Server.partitionMembership")(function* ({ payload }) {
+            yield* checkCollection(payload.records.length, payload.target, limits);
+            const target = yield* operandSet(payload.target);
+            const result = yield* Taxonomy.partitionRecordsByMembership(payload.records, target, {
+              execution,
+            }).pipe(
+              Effect.provideService(DecisionModel.DecisionModel, model),
+              Effect.mapError(modelFailure),
+            );
+
+            return yield* partitionDocument(result).pipe(Effect.mapError(outputFailure));
+          }),
+        )
+        .handle("all", ({ payload }) => quantify(Taxonomy.allRecordsBelongTo, payload))
+        .handle("any", ({ payload }) => quantify(Taxonomy.anyRecordBelongsTo, payload))
+        .handle("none", ({ payload }) => quantify(Taxonomy.noRecordBelongsTo, payload));
+    }),
+  );
+
+export const classification = (limits = defaultCollectionLimits) =>
+  HttpApiBuilder.group(
+    Api.api,
+    "classification",
+    Effect.fn("Server.classification")(function* (handlers) {
+      const model = yield* DecisionModel.DecisionModel;
+      const execution = CollectionExecution.make({
+        batchSize: limits.batchSize,
+        concurrency: limits.concurrency,
+      });
+
+      return handlers.handle(
+        "classify",
+        Effect.fn("Server.classify")(function* ({ payload }) {
+          yield* checkCollection(payload.records.length, payload.panel, limits);
+          const panel = yield* operandSet(payload.panel);
+          const result = yield* Taxonomy.classifyRecords(payload.records, panel, {
+            execution,
+          }).pipe(
+            Effect.provideService(DecisionModel.DecisionModel, model),
+            Effect.mapError(modelFailure),
+          );
+
+          return yield* classificationDocument(result).pipe(Effect.mapError(outputFailure));
+        }),
+      );
+    }),
+  );
+
 export const layer = (options: typeof Options.Type) => {
   const bounds = requestBounds(options);
-  const handlers = Layer.mergeAll(comparisons, sets).pipe(Layer.provideMerge(bounds));
+  const handlers = Layer.mergeAll(
+    comparisons,
+    sets,
+    membership(options),
+    classification(options),
+  ).pipe(Layer.provideMerge(bounds));
   const apiRoutes = HttpApiBuilder.layer(Api.api, { openapiPath: "/openapi.json" }).pipe(
     Layer.provide(handlers),
   );
@@ -256,10 +415,30 @@ export const command = Command.make(
       Flag.withSchema(Options.fields.maxJsonDepth),
       Flag.withDefault(defaultRequestLimits.maxJsonDepth),
     ),
+    maxRecords: Flag.Int("max-records").pipe(
+      Flag.withSchema(Options.fields.maxRecords),
+      Flag.withDefault(defaultCollectionLimits.maxRecords),
+    ),
+    maxTargets: Flag.Int("max-targets").pipe(
+      Flag.withSchema(Options.fields.maxTargets),
+      Flag.withDefault(defaultCollectionLimits.maxTargets),
+    ),
+    maxRecordTargetPairs: Flag.Int("max-record-target-pairs").pipe(
+      Flag.withSchema(Options.fields.maxRecordTargetPairs),
+      Flag.withDefault(defaultCollectionLimits.maxRecordTargetPairs),
+    ),
+    batchSize: Flag.Int("batch-size").pipe(
+      Flag.withSchema(Options.fields.batchSize),
+      Flag.withDefault(defaultCollectionLimits.batchSize),
+    ),
+    concurrency: Flag.Int("concurrency").pipe(
+      Flag.withSchema(Options.fields.concurrency),
+      Flag.withDefault(defaultCollectionLimits.concurrency),
+    ),
   },
   Effect.fn("Cli.server")(
-    function* ({ host, port, maxBodyBytes, timeoutMs, maxJsonDepth }) {
-      const options = Options.make({ host, port, maxBodyBytes, timeoutMs, maxJsonDepth });
+    function* ({ model: _model, ...settings }) {
+      const options = Options.make(settings);
       const server = layer(options);
 
       return yield* Layer.launch(server).pipe(
@@ -279,6 +458,7 @@ export const command = Command.make(
     "Serve taxonomy comparisons and symbolic set operations in the foreground. The default address is 127.0.0.1:3000; --port 0 selects an available port. Readiness and request diagnostics go to stderr. Interrupt the process to stop the server and release its socket.\n\n" +
       "The request-body limit defaults to 1048576 bytes (1 MiB), enforced while reading before JSON decoding. The whole request has a 60000 ms deadline, including body reading and model execution; expiry interrupts ongoing work. Override these startup policies with --max-body-bytes and --request-timeout-ms. They do not limit ordinary CLI inputs.\n\n" +
       "JSON requests allow 64 nested object/array containers by default, including the root and metadata. Override with --max-json-depth; exceeding the limit returns RequestTooDeep (400) before endpoint validation. Large flat arrays do not increase nesting depth. Raising this limit can exceed the recursive endpoint decoder's stack capacity.\n\n" +
+      "Membership and classification requests default to at most 1000 records, 100 target-leaf occurrences, and 10000 record × target pairs. Repeated occurrences count; symbolic topology is preserved. Override with --max-records, --max-targets and --max-record-target-pairs. CollectionLimit (413) is returned before inference on excess input. These are conservative work bounds, not billing estimates or CLI limits. Native collection execution defaults to --batch-size 16 and --concurrency 1, fixed at startup. Each response contains the complete native result, not streamed groups; memory is bounded by these request policies.\n\n" +
       "Open /docs for interactive Scalar documentation and /openapi.json for the generated contract. Import the application API definition with HttpApiClient to derive a typed client.\n\n" +
       "Use --model to override ROBO_TAXONOMIST_MODEL and inject TYPESAFE_API_KEY through the environment. One client/model is acquired at startup for all requests. Credentials and model configuration are not request parameters. Help needs no credentials.\n\n" +
       "This local service has no built-in authentication. Keep the loopback default unless appropriate external access controls are in place.",
