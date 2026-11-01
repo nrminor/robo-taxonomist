@@ -57,14 +57,18 @@ it.effect("refreshes through the same POST contract without disturbing other cac
       });
     const broad = yield* post("broad");
     expect(calls).toBe(4);
-    expect(yield* post("broad", false)).toEqual(broad);
+    const unchanged = yield* post("broad", false);
+    expect(unchanged).toEqual(broad);
     expect(calls).toBe(4);
     const focused = yield* post("focused");
     expect(calls).toBe(8);
-    expect(yield* post("broad", true)).toEqual(broad);
+    const refreshed = yield* post("broad", true);
+    expect(refreshed).toEqual(broad);
     expect(calls).toBe(12);
-    expect(yield* post("broad")).toEqual(broad);
-    expect(yield* post("focused")).toEqual(focused);
+    const cachedBroad = yield* post("broad");
+    expect(cachedBroad).toEqual(broad);
+    const cachedFocused = yield* post("focused");
+    expect(cachedFocused).toEqual(focused);
     expect(calls).toBe(12);
     // Each explicit refresh requests new work; ordinary reads still coalesce separately.
     const repeated = yield* Effect.all([post("broad", true), post("broad", true)], {
@@ -72,7 +76,8 @@ it.effect("refreshes through the same POST contract without disturbing other cac
     });
     expect(repeated).toEqual([broad, broad]);
     expect(calls).toBe(20);
-    expect(yield* post("focused")).toEqual(focused);
+    const focusedAfterRefreshes = yield* post("focused");
+    expect(focusedAfterRefreshes).toEqual(focused);
     expect(calls).toBe(20);
   }),
 );
@@ -108,18 +113,18 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
           }),
         ),
       );
-    expect((yield* post()).status).toBe(200);
+    const initial = yield* post();
+    expect(initial.status).toBe(200);
     expect(calls).toBe(4);
     const failed = yield* post(true);
     expect(failed.status).toBe(503);
     expect(failed.headers.get("Cache-Control")).toBe("no-store");
     const wire = yield* Effect.promise(() => failed.text());
     expect(wire).not.toContain("SECRET");
-    expect(
-      yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-        JSON.parse(wire),
-      ),
-    ).toEqual(
+    const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
+      JSON.parse(wire),
+    );
+    expect(failure).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.RateLimitError.make({}),
         retryable: true,
@@ -133,7 +138,8 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
     );
     expect(reply.rows).toHaveLength(24);
     expect(calls).toBe(9);
-    expect((yield* post()).status).toBe(200);
+    const cached = yield* post();
+    expect(cached.status).toBe(200);
     expect(calls).toBe(9);
   }),
 );
@@ -164,11 +170,10 @@ it.effect("rejects nonboolean refresh values with a safe 400 before any inferenc
       expect(response.headers.get("Cache-Control")).toBe("no-store");
       const wire = yield* Effect.promise(() => response.text());
       expect(wire).not.toContain("SECRET");
-      expect(
-        yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-          JSON.parse(wire),
-        ),
-      ).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
+      const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
+        JSON.parse(wire),
+      );
+      expect(failure).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
       expect(calls).toBe(0);
     }
   }),
@@ -205,7 +210,8 @@ it.effect("interrupts provider work when its active HTTP request is cancelled", 
     const response = yield* Effect.promise(() => pending);
     expect(response.status).toBe(499);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(yield* Effect.promise(() => response.text())).toBe("");
+    const body = yield* Effect.promise(() => response.text());
+    expect(body).toBe("");
     yield* Deferred.await(interrupted);
   }),
 );
@@ -251,7 +257,7 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
         signal: controller.signal,
       }),
     );
-    yield* Effect.promise(() => runtime.runPromise(Deferred.await(started)));
+    yield* Deferred.await(started);
     const remaining = handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
@@ -263,7 +269,8 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     controller.abort(new Error("SECRET cancellation"));
     const response = yield* Effect.promise(() => cancelled);
     expect(response.status).toBe(499);
-    expect(yield* Effect.promise(() => response.text())).toBe("");
+    const body = yield* Effect.promise(() => response.text());
+    expect(body).toBe("");
     expect(interruptions).toBe(0);
     yield* Deferred.succeed(release, undefined);
     const remainingResponse = yield* Effect.promise(() => remaining);

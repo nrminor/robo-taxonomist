@@ -42,7 +42,7 @@ const replyFor = (panelId: PanelId) =>
   Effect.runPromise(
     classifyPanel(panelId).pipe(
       Effect.provide(PanelResults.layer),
-      Effect.map((response) => Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response)),
+      Effect.flatMap(Schema.encodeEffect(Schema.toCodecJson(PanelResponse))),
     ),
   );
 

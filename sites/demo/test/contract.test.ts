@@ -16,13 +16,10 @@ it.effect("accepts legacy classification requests and explicit boolean refresh r
       { panelId: "focused", refresh: false },
       { panelId: "nested", refresh: true },
     ]) {
-      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassifyRequest))(
-        request,
-      );
+      const decoded = yield* Schema.decodeEffect(Schema.toCodecJson(ClassifyRequest))(request);
       expect(decoded).toEqual(request);
-      expect(yield* Schema.encodeEffect(Schema.toCodecJson(ClassifyRequest))(decoded)).toEqual(
-        request,
-      );
+      const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(ClassifyRequest))(decoded);
+      expect(encoded).toEqual(request);
     }
   }),
 );
@@ -198,30 +195,29 @@ it("preserves known failures alongside interruption and hides unknown typed erro
 
 it("omits unusable provider retry guidance but retains an immediate retry", () => {
   for (const retryAfter of [undefined, Duration.millis(-1), Duration.infinity]) {
-    expect(
-      publicModelFailure(
-        new AiError.AiError({
-          module: "fixture",
-          method: "decide",
-          reason: new AiError.RateLimitError({ retryAfter }),
-        }),
-      ),
-    ).toEqual(
+    const error = new AiError.AiError({
+      module: "fixture",
+      method: "decide",
+      reason: new AiError.RateLimitError({ retryAfter }),
+    });
+    const failure = publicModelFailure(error);
+
+    expect(failure).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.RateLimitError.make({}),
         retryable: true,
       }),
     );
   }
-  expect(
-    publicModelFailure(
-      new AiError.AiError({
-        module: "fixture",
-        method: "decide",
-        reason: new AiError.RateLimitError({ retryAfter: Duration.zero }),
-      }),
-    ),
-  ).toEqual(
+
+  const error = new AiError.AiError({
+    module: "fixture",
+    method: "decide",
+    reason: new AiError.RateLimitError({ retryAfter: Duration.zero }),
+  });
+  const failure = publicModelFailure(error);
+
+  expect(failure).toEqual(
     ClassificationFailure.cases.ModelFailure.make({
       reason: PublicModelReason.cases.RateLimitError.make({ retryAfterMs: 0 }),
       retryable: true,

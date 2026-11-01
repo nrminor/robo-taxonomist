@@ -1,9 +1,14 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { ConfigProvider, Layer, ManagedRuntime, Schema } from "effect";
+import { Array, ConfigProvider, Layer, ManagedRuntime, Option, Record, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
-import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
+import {
+  ClassificationFailure,
+  MatchJudgment,
+  PanelResponse,
+  PublicModelReason,
+} from "../src/lib/contract.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 
@@ -112,38 +117,30 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
       const body = Schema.decodeUnknownSync(clefRequest)(await request.json());
       expect(body.state.records).toHaveLength(6);
       expect(JSON.stringify(body.state)).not.toContain(token);
-      const questions = Object.entries(body.questions);
-      questionCounts.push(questions.length);
-      for (const [, question] of questions) {
-        expect(Object.keys(question.criteria)).toEqual([
-          "sameTaxon",
-          "withinTaxon",
-          "noMatch",
-          "undetermined",
-        ]);
+      const questions = body.questions;
+      questionCounts.push(Record.size(questions));
+      for (const question of Record.values(questions)) {
+        const criterionNames = Record.keys(question.criteria);
+        expect(criterionNames).toEqual(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]);
       }
+      const answers = Record.map(questions, () => ({
+        type: "choice",
+        choice: "noMatch",
+        probabilities: {
+          sameTaxon: 0.01,
+          withinTaxon: 0.01,
+          noMatch: 0.95,
+          undetermined: 0.03,
+        },
+        confidence: 0.8,
+      }));
       return Response.json({
         success: true,
         errors: [],
         messages: [],
         result: {
           model: "clef",
-          answers: Object.fromEntries(
-            questions.map(([key]) => [
-              key,
-              {
-                type: "choice",
-                choice: "noMatch",
-                probabilities: {
-                  sameTaxon: 0.01,
-                  withinTaxon: 0.01,
-                  noMatch: 0.95,
-                  undetermined: 0.03,
-                },
-                confidence: 0.8,
-              },
-            ]),
-          ),
+          answers,
           usage: { input_tokens: 123, output_tokens: 0 },
         },
       });
@@ -160,9 +157,15 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
       await response.json(),
     );
     expect(reply.rows).toHaveLength(24);
-    expect(reply.rows[0]?.matches[0]).toMatchObject({
+    const row = Array.findFirst(reply.rows, (row) => row.recordId === "r01").pipe(
+      Option.getOrThrow,
+    );
+    const match = Array.findFirst(row.matches, (match) => match.targetId === "fungi").pipe(
+      Option.getOrThrow,
+    );
+    expect(match).toMatchObject({
       targetId: "fungi",
-      judgment: { _tag: "NotMatched" },
+      judgment: MatchJudgment.cases.NotMatched.make({}),
       support: 0.02,
       answer: { label: "noMatch", confidence: 0.8 },
     });
@@ -170,13 +173,16 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
     const cached = await handlers.classifyHttp(requestPanel());
     expect(cached.status).toBe(200);
     expect(cached.headers.get("Cache-Control")).toBe("no-store");
-    expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(await cached.json()),
-    ).toEqual(reply);
+    const cachedReply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(
+      await cached.json(),
+    );
+    expect(cachedReply).toEqual(reply);
     expect(fetch).toHaveBeenCalledTimes(4);
-    expect((await handlers.classifyHttp(requestPanel("focused"))).status).toBe(200);
+    const focused = await handlers.classifyHttp(requestPanel("focused"));
+    expect(focused.status).toBe(200);
     expect(questionCounts).toEqual([36, 36, 36, 36, 60, 60, 60, 60]);
-    expect((await handlers.classifyHttp(requestPanel())).status).toBe(200);
+    const cachedBroad = await handlers.classifyHttp(requestPanel());
+    expect(cachedBroad.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(8);
     expect(maximumActive).toBe(1);
   } finally {
@@ -192,7 +198,8 @@ it("keeps fixture mode independent of live credentials and transport", async () 
     CLOUDFLARE_API_TOKEN: "",
   });
   try {
-    expect((await makeHandlers(runtime).classifyHttp(requestPanel())).status).toBe(200);
+    const response = await makeHandlers(runtime).classifyHttp(requestPanel());
+    expect(response.status).toBe(200);
     expect(fetch).not.toHaveBeenCalled();
   } finally {
     await runtime.dispose();
@@ -229,9 +236,11 @@ it.each([
       const wire = await response.text();
       expect(wire).not.toContain("SECRET");
       expect(wire).not.toContain(token);
-      expect(
-        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
-      ).toEqual(ClassificationFailure.cases.ModelFailure.make({ reason, retryable }));
+      const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+        JSON.parse(wire),
+      );
+      const expected = ClassificationFailure.cases.ModelFailure.make({ reason, retryable });
+      expect(failure).toEqual(expected);
       expect(fetch).toHaveBeenCalledTimes(1);
     } finally {
       await runtime.dispose();
@@ -248,14 +257,14 @@ it("sanitizes transport failures without retrying", async () => {
     const wire = await response.text();
     expect(wire).not.toContain(token);
     expect(wire).not.toContain("SECRET");
-    expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
-    ).toEqual(
-      ClassificationFailure.cases.ModelFailure.make({
-        reason: PublicModelReason.cases.NetworkError.make({}),
-        retryable: true,
-      }),
+    const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+      JSON.parse(wire),
     );
+    const expected = ClassificationFailure.cases.ModelFailure.make({
+      reason: PublicModelReason.cases.NetworkError.make({}),
+      retryable: true,
+    });
+    expect(failure).toEqual(expected);
     expect(fetch).toHaveBeenCalledTimes(1);
   } finally {
     await runtime.dispose();
@@ -294,7 +303,8 @@ it("aborts the actual transport when the final HTTP waiter cancels", async () =>
     controller.abort(new Error("SECRET cancellation"));
     const response = await pending;
     expect(response.status).toBe(499);
-    expect(await response.text()).toBe("");
+    const body = await response.text();
+    expect(body).toBe("");
     expect(aborts).toBe(1);
     expect(fetch).toHaveBeenCalledTimes(1);
   } finally {
@@ -308,30 +318,26 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       if (kind === "invalid JSON") return new Response("SECRET not JSON", { status: 200 });
       const request = Schema.decodeUnknownSync(clefRequest)(await new Request(input, init).json());
+      const answers =
+        kind === "missing answers"
+          ? {}
+          : Record.map(request.questions, () => ({
+              type: "choice",
+              choice: "noMatch",
+              confidence: 0.8,
+              probabilities: {
+                sameTaxon: 0.5,
+                withinTaxon: 0.5,
+                noMatch: 0.5,
+                undetermined: 0.5,
+              },
+            }));
       return Response.json({
         success: true,
         result: {
           model: "clef",
           usage: { input_tokens: 1, output_tokens: 0 },
-          answers:
-            kind === "missing answers"
-              ? {}
-              : Object.fromEntries(
-                  Object.keys(request.questions).map((key) => [
-                    key,
-                    {
-                      type: "choice",
-                      choice: "noMatch",
-                      confidence: 0.8,
-                      probabilities: {
-                        sameTaxon: 0.5,
-                        withinTaxon: 0.5,
-                        noMatch: 0.5,
-                        undetermined: 0.5,
-                      },
-                    },
-                  ]),
-                ),
+          answers,
         },
       });
     });
@@ -339,14 +345,14 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
     try {
       const response = await makeHandlers(runtime).classifyHttp(requestPanel());
       expect(response.status).toBe(503);
-      expect(
-        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(await response.json()),
-      ).toEqual(
-        ClassificationFailure.cases.ModelFailure.make({
-          reason: PublicModelReason.cases.InvalidOutputError.make({}),
-          retryable: true,
-        }),
+      const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+        await response.json(),
       );
+      const expected = ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.InvalidOutputError.make({}),
+        retryable: true,
+      });
+      expect(failure).toEqual(expected);
       expect(fetch).toHaveBeenCalledTimes(1);
     } finally {
       await runtime.dispose();
