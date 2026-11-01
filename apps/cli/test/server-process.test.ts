@@ -65,7 +65,7 @@ it.live("reports foreground readiness on stderr and shuts down when interrupted"
     const stderr = yield* Ref.get(server.stderr);
     const stopped = yield* HttpClient.get(server.baseUrl).pipe(Effect.result);
 
-    expect(exitCode).not.toBe(137);
+    expect(exitCode).toBe(130);
     expect(stdout).toBe("");
     expect(stderr).toContain(server.baseUrl);
     expect(Result.isFailure(stopped)).toBe(true);
