@@ -47,6 +47,8 @@
 !/apps/demo/test/**/*.tsx
 !/apps/cli/
 !/apps/cli/package.json
+!/apps/cli/README.md
+!/apps/cli/LICENSE
 !/apps/cli/tsconfig.json
 !/apps/cli/tsconfig.test.json
 !/apps/cli/vitest.config.ts
