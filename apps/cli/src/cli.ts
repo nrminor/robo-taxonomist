@@ -1,4 +1,4 @@
-import { Effect, Match, Stream } from "effect";
+import { Effect, Match } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
 import appPackage from "../package.json" with { type: "json" };
@@ -7,10 +7,10 @@ import * as Documents from "./documents.ts";
 import * as Model from "./model.ts";
 import { membership } from "./membership.ts";
 import * as Output from "./output.ts";
-import * as Presentation from "./presentation.ts";
 import { sets } from "./sets.ts";
 import * as Server from "./server.ts";
 
+/** Use the application package version for the CLI runner and help banner. */
 export const version = appPackage.version;
 
 const labels = Command.make(
@@ -51,12 +51,9 @@ const identity = Command.make(
   },
   Effect.fn("Cli.compareIdentity")(function* ({ left, right, format, noHeader }) {
     const result = yield* Taxonomy.sameTaxon(left, right).pipe(Effect.mapError(Model.modelFailure));
-    const row = Presentation.comparisonRow(result);
-    const rows = Stream.make(row);
-    const writeRows = Output.writeTable(Presentation.ComparisonRow, noHeader);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () => writeRows(rows),
+        tsv: () => Output.writeComparison(result, noHeader),
         json: () => Output.writeJson(result, Documents.IdentityJudgment),
       }),
     );
@@ -99,12 +96,9 @@ const containment = Command.make(
     const result = yield* Taxonomy.taxonWithin(inner, outer).pipe(
       Effect.mapError(Model.modelFailure),
     );
-    const row = Presentation.comparisonRow(result);
-    const rows = Stream.make(row);
-    const writeRows = Output.writeTable(Presentation.ComparisonRow, noHeader);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () => writeRows(rows),
+        tsv: () => Output.writeComparison(result, noHeader),
         json: () => Output.writeJson(result, Documents.ContainmentJudgment),
       }),
     );
@@ -155,12 +149,9 @@ const rank = Command.make(
     const result = yield* Taxonomy.sameTaxonAtRank(left, right, rank).pipe(
       Effect.mapError(Model.modelFailure),
     );
-    const row = Presentation.rankRow(result);
-    const rows = Stream.make(row);
-    const writeRows = Output.writeTable(Presentation.RankRow, noHeader);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () => writeRows(rows),
+        tsv: () => Output.writeRank(result, noHeader),
         json: () => Output.writeJson(result, Documents.RankJudgment),
       }),
     );
@@ -186,6 +177,7 @@ const compare = Command.make("compare").pipe(
   Command.withSubcommands([labels, identity, rank, containment]),
 );
 
+/** Assemble local taxonomy commands and the foreground HTTP server command. */
 export const cli = Command.make("robo-taxonomist").pipe(
   Command.withDescription(
     "Compare taxonomic records and compose taxon sets.\n\nUse <command> --help for options and examples.",

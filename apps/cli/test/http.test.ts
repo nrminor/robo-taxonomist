@@ -518,7 +518,11 @@ it.effect("returns a typed provider failure without exposing provider content", 
       .identity({ payload: { left, right } })
       .pipe(Effect.flip);
 
-    expect(failure).toEqual({ _tag: "ModelFailure", message: "The decision model request failed" });
+    expect(failure).toBeInstanceOf(Api.ModelFailure);
+    expect(failure).toMatchObject({
+      _tag: "ModelFailure",
+      message: "The decision model request failed",
+    });
     expect(JSON.stringify(failure)).not.toContain(secret);
   }).pipe(Effect.provide([failingHandlers, HttpServer.layerServices]));
 });
@@ -831,7 +835,8 @@ it.effect(
         .labels({ payload: { left, right } })
         .pipe(Effect.flip);
 
-      expect(failure).toEqual({ _tag: "RequestTooLarge", maxBodyBytes: 32 });
+      expect(failure).toBeInstanceOf(Api.RequestTooLarge);
+      expect(failure).toMatchObject({ _tag: "RequestTooLarge", maxBodyBytes: 32 });
     }).pipe(Effect.provide([boundedHandlers, HttpServer.layerServices]));
   },
 );
@@ -875,6 +880,7 @@ it.effect("interrupts the provider request at the HTTP deadline and returns a ty
     expect(wasInterrupted).toBe(true);
 
     const failure = yield* Fiber.join(fiber);
-    expect(failure).toEqual({ _tag: "RequestDeadline", timeoutMs: 10 });
+    expect(failure).toBeInstanceOf(Api.RequestDeadline);
+    expect(failure).toMatchObject({ _tag: "RequestDeadline", timeoutMs: 10 });
   }),
 );

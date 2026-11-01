@@ -1,9 +1,10 @@
 import * as NodeHttp from "node:http";
+import { MIMEType } from "node:util";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ByteSize, Effect, Layer, Logger, Match, Predicate, Result, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import { CliError, Command, Flag } from "effect/cli";
-import { HttpIncomingMessage, HttpRouter, HttpServerRequest } from "effect/http";
+import { HttpIncomingMessage, HttpRouter, HttpServerError, HttpServerRequest } from "effect/http";
 import { HttpApiBuilder, HttpApiScalar } from "effect/http-api";
 import { CollectionExecution, TaxonSet, Taxonomy } from "robo-taxonomist";
 import * as Api from "./api.ts";
@@ -20,6 +21,7 @@ const defaultCollectionLimits = {
 };
 
 const positiveInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+/** Validate the server's bind address, request limits and collection execution settings. */
 export const Options = Schema.Struct({
   host: Schema.NonEmptyString,
   port: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 })),
@@ -55,6 +57,34 @@ const exceedsJsonDepth = (value: unknown, maximum: number): boolean => {
   return false;
 };
 
+const requestReadFailure = (error: HttpServerError.HttpServerError, maxBodyBytes: number) =>
+  Match.value(error.reason).pipe(
+    Match.when(
+      { _tag: "RequestParseError", reason: "BodyTooLarge" },
+      () => new Api.RequestTooLarge({ maxBodyBytes }),
+    ),
+    Match.orElse(() => new Api.RequestReadFailure({ message: "Cannot read the request body" })),
+  );
+
+/** Check depth before endpoint validation; let the API handle syntax and content-type errors. */
+const checkJsonDepth = Effect.fnUntraced(function* (
+  text: string,
+  header: string | undefined,
+  maximum: number,
+) {
+  if (text === "") return;
+
+  const contentType = header ?? "application/json";
+  const mediaType = Result.try(() => new MIMEType(contentType.trim()));
+  if (Result.isFailure(mediaType) || mediaType.success.essence !== "application/json") return;
+
+  const parsed = yield* decodeJson(text).pipe(Effect.result);
+  if (Result.isSuccess(parsed) && exceedsJsonDepth(parsed.success, maximum)) {
+    return yield* new Api.RequestTooDeep({ maxJsonDepth: maximum });
+  }
+});
+
+/** Enforce byte, JSON-depth and time limits around endpoint decoding and execution. */
 export const requestBounds = (limits = defaultRequestLimits) => {
   const maxBodySize = ByteSize.bytes(limits.maxBodyBytes);
 
@@ -63,53 +93,22 @@ export const requestBounds = (limits = defaultRequestLimits) => {
       const request = yield* HttpServerRequest.HttpServerRequest;
 
       const text = yield* request.text.pipe(
-        Effect.mapError((error) =>
-          Match.value(error.reason).pipe(
-            Match.tag("RequestParseError", (reason) =>
-              Match.value(reason.reason).pipe(
-                Match.when(undefined, () =>
-                  Api.RequestReadFailure.make({ message: "Cannot read the request body" }),
-                ),
-                Match.literalsExhaustive({
-                  BodyTooLarge: () =>
-                    Api.RequestTooLarge.make({ maxBodyBytes: limits.maxBodyBytes }),
-                  Parse: () =>
-                    Api.RequestReadFailure.make({ message: "Cannot read the request body" }),
-                }),
-              ),
-            ),
-            Match.orElse(() =>
-              Api.RequestReadFailure.make({ message: "Cannot read the request body" }),
-            ),
-          ),
-        ),
+        Effect.mapError((error) => requestReadFailure(error, limits.maxBodyBytes)),
       );
-
-      const header = request.headers["content-type"] ?? "application/json";
-      const separator = header.indexOf(";");
-      const mediaType = separator === -1 ? header : header.slice(0, separator);
-      const contentType = mediaType.trim().toLowerCase();
-
-      if (contentType === "application/json" && text !== "") {
-        const parsed = yield* decodeJson(text).pipe(Effect.result);
-
-        if (Result.isSuccess(parsed) && exceedsJsonDepth(parsed.success, limits.maxJsonDepth)) {
-          return yield* Effect.fail(Api.RequestTooDeep.make({ maxJsonDepth: limits.maxJsonDepth }));
-        }
-      }
+      yield* checkJsonDepth(text, request.headers["content-type"], limits.maxJsonDepth);
 
       return yield* httpEffect;
     }).pipe(
       Effect.provideService(HttpIncomingMessage.MaxBodySize, maxBodySize),
       Effect.timeoutOrElse({
         duration: limits.timeoutMs,
-        orElse: () => Effect.fail(Api.RequestDeadline.make({ timeoutMs: limits.timeoutMs })),
+        orElse: () => new Api.RequestDeadline({ timeoutMs: limits.timeoutMs }),
       }),
     ),
   );
 };
 
-const modelFailure = () => Api.ModelFailure.make({ message: "The decision model request failed" });
+const modelFailure = () => new Api.ModelFailure({ message: "The decision model request failed" });
 
 const setDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetDocument));
 const relationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetRelationJudgment));
@@ -118,7 +117,7 @@ const partitionDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.Mem
 const quantifierDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.QuantifierJudgment));
 const classificationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.Classification));
 const outputFailure = () =>
-  Api.OutputFailure.make({ message: "Cannot encode the operation result" });
+  new Api.OutputFailure({ message: "Cannot encode the operation result" });
 const isRecordDocument = Schema.is(Documents.RecordDocument);
 
 const targetCount = (operand: typeof Api.SetOperand.Type): number => {
@@ -140,33 +139,27 @@ const checkCollection = Effect.fnUntraced(function* (
   limits: typeof defaultCollectionLimits,
 ) {
   if (records > limits.maxRecords) {
-    return yield* Effect.fail(
-      Api.CollectionLimit.make({
-        resource: "records",
-        maximum: limits.maxRecords,
-        actual: records,
-      }),
-    );
+    return yield* new Api.CollectionLimit({
+      resource: "records",
+      maximum: limits.maxRecords,
+      actual: records,
+    });
   }
   const targets = targetCount(target);
   if (targets > limits.maxTargets) {
-    return yield* Effect.fail(
-      Api.CollectionLimit.make({
-        resource: "targets",
-        maximum: limits.maxTargets,
-        actual: targets,
-      }),
-    );
+    return yield* new Api.CollectionLimit({
+      resource: "targets",
+      maximum: limits.maxTargets,
+      actual: targets,
+    });
   }
   const pairs = records * targets;
   if (pairs > limits.maxRecordTargetPairs) {
-    return yield* Effect.fail(
-      Api.CollectionLimit.make({
-        resource: "recordTargetPairs",
-        maximum: limits.maxRecordTargetPairs,
-        actual: pairs,
-      }),
-    );
+    return yield* new Api.CollectionLimit({
+      resource: "recordTargetPairs",
+      maximum: limits.maxRecordTargetPairs,
+      actual: pairs,
+    });
   }
 });
 
@@ -178,10 +171,11 @@ const operandSet = Effect.fnUntraced(function* (operand: typeof Api.SetOperand.T
         Match.when(isRecordDocument, (record) => TaxonSet.of(record)),
         Match.orElse(Documents.restoreSet),
       ),
-    catch: () => Api.InvalidSet.make({ message: "The set input is invalid or too deeply nested" }),
+    catch: () => new Api.InvalidSet({ message: "The set input is invalid or too deeply nested" }),
   });
 });
 
+/** Bind comparison endpoints to the model acquired by this layer. */
 export const comparisons = HttpApiBuilder.group(
   Api.api,
   "comparisons",
@@ -214,6 +208,7 @@ export const comparisons = HttpApiBuilder.group(
   }),
 );
 
+/** Bind set construction and relation endpoints to the configured model. */
 export const sets = HttpApiBuilder.group(
   Api.api,
   "sets",
@@ -284,6 +279,7 @@ export const sets = HttpApiBuilder.group(
   }),
 );
 
+/** Configure membership handlers with fixed record, target and batch limits. */
 export const membership = (limits = defaultCollectionLimits) =>
   HttpApiBuilder.group(
     Api.api,
@@ -344,6 +340,7 @@ export const membership = (limits = defaultCollectionLimits) =>
     }),
   );
 
+/** Configure classification handlers with fixed panel, record and batch limits. */
 export const classification = (limits = defaultCollectionLimits) =>
   HttpApiBuilder.group(
     Api.api,
@@ -373,6 +370,7 @@ export const classification = (limits = defaultCollectionLimits) =>
     }),
   );
 
+/** Serve the API and documentation with a scoped Node HTTP server. */
 export const layer = (options: typeof Options.Type) => {
   const bounds = requestBounds(options);
   const handlers = Layer.mergeAll(
@@ -394,6 +392,7 @@ export const layer = (options: typeof Options.Type) => {
   return HttpRouter.serve(routes).pipe(Layer.provideMerge(platform));
 };
 
+/** Run the API in the foreground with the model and limits selected at startup. */
 export const command = Command.make(
   "server",
   {

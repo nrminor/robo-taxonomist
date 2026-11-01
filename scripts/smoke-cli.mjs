@@ -116,6 +116,15 @@ await test(
         });
         assert.equal(response.status, 200);
         assert.equal(await response.json(), true);
+        const metadata = "[".repeat(65) + "null" + "]".repeat(65);
+        const oversizedDepth = await fetch(`${address}/sets/create`, {
+          method: "POST",
+          headers: { "content-type": "Application/JSON; charset=utf-8" },
+          body: `{"targets":[{"scientificName":"Quercus","metadata":${metadata}}]}`,
+          signal: AbortSignal.timeout(5_000),
+        });
+        assert.equal(oversizedDepth.status, 400);
+        assert.deepEqual(await oversizedDepth.json(), { _tag: "RequestTooDeep", maxJsonDepth: 64 });
         const specification = await fetch(`${address}/openapi.json`, {
           signal: AbortSignal.timeout(5_000),
         });

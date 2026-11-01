@@ -1,48 +1,107 @@
 import { Schema } from "effect";
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  HttpApiMiddleware,
-  HttpApiSchema,
-} from "effect/http-api";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
 import { RecordLabel, TaxonName } from "robo-taxonomist";
 import * as Documents from "./documents.ts";
 
-export const ModelFailure = Schema.TaggedStruct("ModelFailure", {
-  message: Schema.String,
-}).pipe(HttpApiSchema.status(502));
+/** Report a model request failure without exposing provider details. */
+export class ModelFailure extends Schema.TaggedError<ModelFailure>()(
+  "ModelFailure",
+  {
+    message: Schema.String,
+  },
+  {
+    description: "The decision model request failed.",
+    httpApiStatus: 502,
+  },
+) {}
 
-export const OutputFailure = Schema.TaggedStruct("OutputFailure", {
-  message: Schema.String,
-}).pipe(HttpApiSchema.status(500));
+/** Report a result that cannot be encoded for HTTP. */
+export class OutputFailure extends Schema.TaggedError<OutputFailure>()(
+  "OutputFailure",
+  {
+    message: Schema.String,
+  },
+  {
+    description: "The operation result could not be encoded.",
+    httpApiStatus: 500,
+  },
+) {}
 
-export const InvalidSet = Schema.TaggedStruct("InvalidSet", {
-  message: Schema.String,
-}).pipe(HttpApiSchema.status(400));
+/** Report a set document that cannot be restored. */
+export class InvalidSet extends Schema.TaggedError<InvalidSet>()(
+  "InvalidSet",
+  {
+    message: Schema.String,
+  },
+  {
+    description: "The supplied set could not be restored.",
+    httpApiStatus: 400,
+  },
+) {}
 
-export const RequestTooLarge = Schema.TaggedStruct("RequestTooLarge", {
-  maxBodyBytes: Schema.Int,
-}).pipe(HttpApiSchema.status(413));
+/** Report the configured byte limit when a request body exceeds it. */
+export class RequestTooLarge extends Schema.TaggedError<RequestTooLarge>()(
+  "RequestTooLarge",
+  {
+    maxBodyBytes: Schema.Int,
+  },
+  {
+    description: "The request body exceeds the configured byte limit.",
+    httpApiStatus: 413,
+  },
+) {}
 
-export const RequestReadFailure = Schema.TaggedStruct("RequestReadFailure", {
-  message: Schema.String,
-}).pipe(HttpApiSchema.status(400));
+/** Report a request body that cannot be read. */
+export class RequestReadFailure extends Schema.TaggedError<RequestReadFailure>()(
+  "RequestReadFailure",
+  {
+    message: Schema.String,
+  },
+  {
+    description: "The request body could not be read.",
+    httpApiStatus: 400,
+  },
+) {}
 
-export const RequestTooDeep = Schema.TaggedStruct("RequestTooDeep", {
-  maxJsonDepth: Schema.Int,
-}).pipe(HttpApiSchema.status(400));
+/** Report the configured depth limit when JSON nesting exceeds it. */
+export class RequestTooDeep extends Schema.TaggedError<RequestTooDeep>()(
+  "RequestTooDeep",
+  {
+    maxJsonDepth: Schema.Int,
+  },
+  {
+    description: "The JSON body exceeds the configured nesting depth.",
+    httpApiStatus: 400,
+  },
+) {}
 
-export const CollectionLimit = Schema.TaggedStruct("CollectionLimit", {
-  resource: Schema.Literals(["records", "targets", "recordTargetPairs"]),
-  maximum: Schema.Int,
-  actual: Schema.Int,
-}).pipe(HttpApiSchema.status(413));
+/** Report which record, target or pair count exceeds its configured limit. */
+export class CollectionLimit extends Schema.TaggedError<CollectionLimit>()(
+  "CollectionLimit",
+  {
+    resource: Schema.Literals(["records", "targets", "recordTargetPairs"]),
+    maximum: Schema.Int,
+    actual: Schema.Int,
+  },
+  {
+    description: "The request exceeds a configured record, target or record-target pair limit.",
+    httpApiStatus: 413,
+  },
+) {}
 
-export const RequestDeadline = Schema.TaggedStruct("RequestDeadline", {
-  timeoutMs: Schema.Int,
-}).pipe(HttpApiSchema.status(504));
+/** Report the configured time limit when a request exceeds it. */
+export class RequestDeadline extends Schema.TaggedError<RequestDeadline>()(
+  "RequestDeadline",
+  {
+    timeoutMs: Schema.Int,
+  },
+  {
+    description: "The request exceeded its time limit.",
+    httpApiStatus: 504,
+  },
+) {}
 
+/** Require the server's request-limit middleware on every API endpoint. */
 export class RequestBounds extends HttpApiMiddleware.Service<RequestBounds>()(
   "robo-taxonomist/http/RequestBounds",
   { error: [RequestTooLarge, RequestTooDeep, RequestReadFailure, RequestDeadline] },
@@ -50,15 +109,24 @@ export class RequestBounds extends HttpApiMiddleware.Service<RequestBounds>()(
 
 const assignment = Schema.Union([TaxonName, Documents.RecordDocument]);
 const record = Schema.Union([RecordLabel, Documents.RecordDocument]);
+/** Accept a target name, identifying record or saved set as an operand. */
 export const SetOperand = Schema.Union([
   TaxonName,
   Documents.RecordDocument,
   Documents.SetDocument,
-]);
+]).annotate({
+  identifier: "SetOperand",
+  description: "A target name, identifying record or saved set definition.",
+});
 const setPair = Schema.Struct({ left: SetOperand, right: SetOperand });
+/** Supply ordered records and one target set for a membership request. */
 export const CollectionInput = Schema.Struct({
   records: Schema.Array(Documents.RecordInput),
   target: SetOperand,
+}).annotate({
+  identifier: "CollectionInput",
+  description:
+    "Records to check against a target set. Record order and repeated occurrences are retained.",
 });
 
 const comparisons = HttpApiGroup.make("comparisons").add(
@@ -149,6 +217,7 @@ const classification = HttpApiGroup.make("classification").add(
   }),
 );
 
+/** Describe the taxonomy endpoints, result schemas and typed HTTP failures. */
 export const api = HttpApi.make("robo-taxonomist")
   .add(comparisons, sets, membership, classification)
   .middleware(RequestBounds);

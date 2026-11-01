@@ -1,11 +1,10 @@
-import { Effect, Match, Option, Stream } from "effect";
+import { Effect, Match, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import { TaxonSet } from "robo-taxonomist";
 import * as Documents from "./documents.ts";
 import * as Inputs from "./inputs.ts";
 import * as Model from "./model.ts";
 import * as Output from "./output.ts";
-import * as Presentation from "./presentation.ts";
 
 const sourceHelp =
   "Write the set definition as JSON. With no targets, the set is empty. Use stdin (-) only once.";
@@ -171,13 +170,7 @@ const relation = Command.make(
     );
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () =>
-          Effect.gen(function* () {
-            const row = yield* Presentation.relationRow(result);
-            const rows = Stream.succeed(row);
-            const writeRows = Output.writeTable(Presentation.RelationRow, noHeader);
-            yield* writeRows(rows);
-          }),
+        tsv: () => Output.writeRelation(result, noHeader),
         json: () => Output.writeJson(result, Documents.SetRelationJudgment),
       }),
     );
@@ -204,6 +197,7 @@ const relation = Command.make(
   Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
+/** Expose set construction, composition and model-backed relation commands. */
 export const sets = Command.make("set").pipe(
   Command.withShortDescription("Construct and combine taxon sets."),
   Command.withDescription("Construct and combine taxon sets."),

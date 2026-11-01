@@ -241,7 +241,7 @@ it.effect.each([
       const metadata = "[".repeat(containers - 3) + "null" + "]".repeat(containers - 3);
       const body = `{"targets":[{"scientificName":"Quercus","metadata":${metadata}}]}`;
       const request = HttpClientRequest.post(`${baseUrl}/sets/create`).pipe(
-        HttpClientRequest.bodyText(body, "application/json; charset=utf-8"),
+        HttpClientRequest.bodyText(body, "Application/JSON; charset=utf-8"),
       );
 
       const response = yield* HttpClient.execute(request);
@@ -281,19 +281,21 @@ it.effect("allows large flat inputs and ignores bracket characters inside JSON s
   }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
 });
 
-it.effect("leaves unsupported content types to the HTTP API decoder", () =>
-  Effect.gen(function* () {
-    const server = yield* HttpServer.HttpServer;
-    const baseUrl = HttpServer.formatAddress(server.address);
-    const body = "[".repeat(100) + "null" + "]".repeat(100);
-    const request = HttpClientRequest.post(`${baseUrl}/sets/create`).pipe(
-      HttpClientRequest.bodyText(body, "text/plain"),
-    );
+it.effect.each(["text/plain", "invalid"])(
+  "leaves unsupported content type %s to the HTTP API decoder",
+  (contentType) =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      const baseUrl = HttpServer.formatAddress(server.address);
+      const body = "[".repeat(100) + "null" + "]".repeat(100);
+      const request = HttpClientRequest.post(`${baseUrl}/sets/create`).pipe(
+        HttpClientRequest.bodyText(body, contentType),
+      );
 
-    const response = yield* HttpClient.execute(request);
+      const response = yield* HttpClient.execute(request);
 
-    expect(response.status).toBe(415);
-  }).pipe(Effect.provide([running, FetchHttpClient.layer])),
+      expect(response.status).toBe(415);
+    }).pipe(Effect.provide([running, FetchHttpClient.layer])),
 );
 
 it.effect("serves pure and model-backed requests over a real loopback socket", () =>

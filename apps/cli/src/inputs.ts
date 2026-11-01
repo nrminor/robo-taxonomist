@@ -5,9 +5,10 @@ import * as Documents from "./documents.ts";
 
 const inputEncodings = ["text", "json", "jsonl"] as const;
 type InputEncoding = (typeof inputEncodings)[number];
-type InputRecord = RecordLabel | typeof Documents.RecordDocument.Type;
-export type { InputRecord };
+/** Accept either an original record label or an identifying record with JSON metadata. */
+export type InputRecord = RecordLabel | typeof Documents.RecordDocument.Type;
 
+/** Configure record batch size and model-request concurrency. */
 export const executionFlags = {
   batchSize: Flag.Int("batch-size").pipe(
     Flag.withSchema(CollectionExecution.schema.fields.batchSize),
@@ -21,6 +22,7 @@ export const executionFlags = {
   ),
 };
 
+/** Read record labels, ordered file paths and an optional file-format override. */
 export const recordFlags = {
   files: Argument.String("files").pipe(
     Argument.variadic(),
@@ -37,6 +39,7 @@ export const recordFlags = {
   ),
 };
 
+/** Define target-name and file flags, optionally prefixed for a set operand. */
 export const targetFlags = (prefix = "") => ({
   targets: Flag.String(`${prefix}target`).pipe(
     Flag.withSchema(TaxonName),
@@ -55,12 +58,14 @@ export const targetFlags = (prefix = "") => ({
   ),
 });
 
+/** Explain supported record files and the shared stdin constraint in command help. */
 export const recordHelp =
   "Read one label per line from text files, a record array from .json, or one record per line from .jsonl. JSON records need a label, scientificName or taxonId. Use stdin (-) only once across record and target inputs.";
 
+/** Reject commands that would read stdin through more than one input source. */
 export const checkStdin = (paths: readonly string[]) =>
   paths.filter((path) => path === "-").length > 1
-    ? Effect.fail(new CliError.UserError({ cause: "stdin can only be used once per invocation" }))
+    ? new CliError.UserError({ cause: "stdin can only be used once per invocation" })
     : Effect.void;
 
 type SourceUnit = {
@@ -185,6 +190,7 @@ const decodeTargets = Effect.fnUntraced(function* (unit: SourceUnit) {
   });
 });
 
+/** Stream literal labels followed by decoded record files in source order. */
 export const loadRecords = (
   labels: readonly RecordLabel[],
   paths: readonly string[],
@@ -197,6 +203,7 @@ export const loadRecords = (
   return Stream.fromIterable<InputRecord>(labels).pipe(Stream.concat(files));
 };
 
+/** Collect target sources in order and combine them with the library's union constructor. */
 export const loadTargets = Effect.fnUntraced(function* (
   names: readonly TaxonName[],
   paths: readonly string[],

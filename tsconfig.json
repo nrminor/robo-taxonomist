@@ -99,7 +99,7 @@
             ],
             "options": {
               "diagnosticSeverity": {
-                "unstableApiUsage": "message"
+                "unstableApiUsage": "off"
               }
             }
           }

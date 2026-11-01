@@ -5,7 +5,6 @@ import * as Documents from "./documents.ts";
 import * as Inputs from "./inputs.ts";
 import * as Model from "./model.ts";
 import * as Output from "./output.ts";
-import * as Presentation from "./presentation.ts";
 
 const check = Command.make(
   "check",
@@ -36,13 +35,7 @@ const check = Command.make(
 
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () =>
-          Effect.gen(function* () {
-            const row = yield* Presentation.membershipRow({ record, judgment });
-            const rows = Stream.succeed(row);
-            const writeRows = Output.writeTable(Presentation.MembershipRow, noHeader);
-            yield* writeRows(rows);
-          }),
+        tsv: () => Output.writeMembership(entries, noHeader),
         jsonl: () => Output.writeJsonLines(entries),
       }),
     );
@@ -104,16 +97,11 @@ const partition = Command.make(
         ),
       ),
     );
-    const entries = partitions.pipe(Stream.flatMap(Presentation.partitionEntries));
 
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () => {
-          const rows = entries.pipe(Stream.mapEffect(Presentation.membershipRow));
-          const writeRows = Output.writeTable(Presentation.MembershipRow, noHeader);
-          return writeRows(rows);
-        },
-        jsonl: () => Output.writeJsonLines(entries),
+        tsv: () => Output.writePartition(partitions, noHeader),
+        jsonl: () => Output.writePartitionJsonLines(partitions),
       }),
     );
 
@@ -190,13 +178,7 @@ const quantifier = (
 
       const render = Match.value(format).pipe(
         Match.literalsExhaustive({
-          tsv: () =>
-            Effect.gen(function* () {
-              const row = yield* Presentation.quantifierRow(result);
-              const rows = Stream.succeed(row);
-              const writeRows = Output.writeTable(Presentation.QuantifierRow, noHeader);
-              yield* writeRows(rows);
-            }),
+          tsv: () => Output.writeQuantifier(result, noHeader),
           json: () => Output.writeJson(result, Documents.QuantifierJudgment),
         }),
       );
@@ -218,6 +200,7 @@ const quantifier = (
   );
 };
 
+/** Expose individual membership checks, partitions and all/any/none questions. */
 export const membership = Command.make("membership").pipe(
   Command.withAlias("mem"),
   Command.withShortDescription("Check record membership."),

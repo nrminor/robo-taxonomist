@@ -4,8 +4,8 @@ import { CollectionExecution, Taxonomy } from "robo-taxonomist";
 import * as Inputs from "./inputs.ts";
 import * as Model from "./model.ts";
 import * as Output from "./output.ts";
-import * as Presentation from "./presentation.ts";
 
+/** Classify record inputs against a panel and write bounded result groups. */
 export const classify = Command.make(
   "classify",
   {
@@ -47,11 +47,7 @@ export const classify = Command.make(
 
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
-        tsv: () => {
-          const rows = groups.pipe(Stream.flatMap(Presentation.classificationRows));
-          const writeRows = Output.writeTable(Presentation.ClassificationRow, noHeader);
-          return writeRows(rows);
-        },
+        tsv: () => Output.writeClassification(groups, noHeader),
         jsonl: () => Output.writeJsonLines(groups),
       }),
     );

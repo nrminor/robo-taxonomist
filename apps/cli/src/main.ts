@@ -14,7 +14,7 @@ const banner = `
 (COMMAND-LINE EDITION v${Cli.version})
 `;
 
-const Output = CliOutput.layerPresenter({
+const Presenter = CliOutput.layerPresenter({
   present: Effect.fn("Cli.present")(function* (event: CliOutput.Presenter.Event) {
     const formatter = yield* CliOutput.Formatter;
     yield* Match.value(event).pipe(
@@ -34,6 +34,6 @@ const Output = CliOutput.layerPresenter({
 
 Cli.cli.pipe(
   Command.run({ version: Cli.version }),
-  Effect.provide([NodeServices.layer, FetchHttpClient.layer, Output]),
+  Effect.provide([NodeServices.layer, FetchHttpClient.layer, Presenter]),
   NodeRuntime.runMain,
 );

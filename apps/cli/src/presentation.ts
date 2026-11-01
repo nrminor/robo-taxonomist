@@ -50,27 +50,32 @@ const targetText = Effect.fnUntraced(function* (
   return named.label;
 });
 
+/** Select the judgment and side columns for an identity or containment table. */
 export const ComparisonRow = Schema.Struct({
   judgment: Schema.String,
   side: Schema.optional(Schema.String),
 });
 
+/** Select the judgment, rank and side columns for a rank comparison table. */
 export const RankRow = Schema.Struct({
   judgment: Schema.String,
   rank: Schema.String,
   side: Schema.optional(Schema.String),
 });
 
+/** Convert an identity or containment judgment into its table fields. */
 export const comparisonRow = (judgment: TaxonIdentityJudgment | TaxonContainmentJudgment) => ({
   ...judgment,
   judgment: Struct.get(judgment, "_tag"),
 });
 
+/** Convert a rank comparison judgment into its table fields. */
 export const rankRow = (judgment: RankComparisonJudgment) => ({
   ...judgment,
   judgment: Struct.get(judgment, "_tag"),
 });
 
+/** Select table columns for a set relation and an optional clarification target. */
 export const RelationRow = Schema.Struct({
   judgment: Schema.String,
   relation: Schema.String,
@@ -78,6 +83,7 @@ export const RelationRow = Schema.Struct({
   clarification_target: Schema.optional(Schema.String),
 });
 
+/** Convert a set relation judgment into a row, retaining its original target text. */
 export const relationRow = Effect.fnUntraced(function* (
   judgment: TaxonSet.TaxonSetRelationJudgment,
 ) {
@@ -95,12 +101,14 @@ export const relationRow = Effect.fnUntraced(function* (
   );
 });
 
+/** Select table columns for an all, any or none membership judgment. */
 export const QuantifierRow = Schema.Struct({
   judgment: Schema.String,
   quantifier: Schema.String,
   clarification_target: Schema.optional(Schema.String),
 });
 
+/** Convert a collection membership judgment into a row with clarification text when supplied. */
 export const quantifierRow = Effect.fnUntraced(function* (judgment: CollectionMembershipJudgment) {
   const row = { ...judgment, judgment: Struct.get(judgment, "_tag") };
 
@@ -116,16 +124,21 @@ export const quantifierRow = Effect.fnUntraced(function* (judgment: CollectionMe
   );
 });
 
+/** Select table columns for a record and its membership judgment. */
 export const MembershipRow = Schema.Struct({
   judgment: Schema.String,
   record: Schema.String,
   clarification_target: Schema.optional(Schema.String),
 });
 
-export const membershipRow = Effect.fnUntraced(function* (entry: {
+/** Keep an original record together with its membership judgment. */
+export type MembershipEntry = {
   readonly record: unknown;
   readonly judgment: TaxonMembershipJudgment;
-}) {
+};
+
+/** Convert a record's membership judgment into a row using its original label. */
+export const membershipRow = Effect.fnUntraced(function* (entry: MembershipEntry) {
   const record = yield* recordText(entry.record);
   const row = { judgment: Struct.get(entry.judgment, "_tag"), record };
 
@@ -141,9 +154,11 @@ export const membershipRow = Effect.fnUntraced(function* (entry: {
   );
 });
 
-type Partition = Effect.Success<ReturnType<typeof Taxonomy.partitionRecordsByMembership>>;
+/** Describe the five membership buckets returned by the library. */
+export type Partition = Effect.Success<ReturnType<typeof Taxonomy.partitionRecordsByMembership>>;
 const Membership = Data.taggedEnum<TaxonMembershipJudgment>();
 
+/** Emit membership entries in bucket order, preserving order and repetitions within each bucket. */
 export const partitionEntries = (partition: Partition) => {
   const members = partition.Member.map((record) => ({ record, judgment: Membership.Member() }));
   const nonmembers = partition.NotMember.map((record) => ({
@@ -172,6 +187,7 @@ export const partitionEntries = (partition: Partition) => {
   ]);
 };
 
+/** Select table columns for a record, target, match judgment, support and ranking position. */
 export const ClassificationRow = Schema.Struct({
   record: Schema.String,
   target: Schema.String,
@@ -180,8 +196,10 @@ export const ClassificationRow = Schema.Struct({
   ranking_position: Schema.optional(Schema.Int),
 });
 
-type Classification = Effect.Success<ReturnType<typeof Taxonomy.classifyRecords>>;
+/** Describe the panel, record matches, rankings and usage returned by classification. */
+export type Classification = Effect.Success<ReturnType<typeof Taxonomy.classifyRecords>>;
 
+/** Emit every taxon outcome in record order and attach positions from the accepted ranking. */
 export const classificationRows = (classification: Classification) => {
   const records = Stream.fromIterable(classification.records);
 
