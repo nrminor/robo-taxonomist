@@ -12,30 +12,28 @@ export const executionFlags = {
   batchSize: Flag.Int("batch-size").pipe(
     Flag.withSchema(CollectionExecution.schema.fields.batchSize),
     Flag.withDefault(16),
-    Flag.withDescription("Maximum records per native provider request."),
+    Flag.withDescription("Records per model request (default: 16)."),
   ),
   concurrency: Flag.Int("concurrency").pipe(
     Flag.withSchema(CollectionExecution.schema.fields.concurrency),
     Flag.withDefault(1),
-    Flag.withDescription("Maximum concurrent native batch calls."),
+    Flag.withDescription("Model requests to run at once (default: 1)."),
   ),
 };
 
 export const recordFlags = {
   files: Argument.String("files").pipe(
     Argument.variadic(),
-    Argument.withDescription("Record paths in order; - reads stdin."),
+    Argument.withDescription("Record files, read in order; - reads stdin."),
   ),
   records: Flag.String("record").pipe(
     Flag.withSchema(RecordLabel),
     Flag.atLeast(0),
-    Flag.withDescription(
-      "Literal record label; repeat to supply more records. Never treated as a file path.",
-    ),
+    Flag.withDescription("Record label; repeat as needed. These precede file inputs."),
   ),
   format: Flag.Literals("records-format", inputEncodings).pipe(
     Flag.optional,
-    Flag.withDescription("Override record file suffixes; stdin defaults to text."),
+    Flag.withDescription("Use this format for record files; stdin defaults to text."),
   ),
 };
 
@@ -43,23 +41,22 @@ export const targetFlags = (prefix = "") => ({
   targets: Flag.String(`${prefix}target`).pipe(
     Flag.withSchema(TaxonName),
     Flag.atLeast(0),
-    Flag.withDescription("Literal target name; repeat to form a union."),
+    Flag.withDescription("Target name; repeat to form a union before file targets."),
   ),
   files: Flag.String(`${prefix}targets-file`).pipe(
     Flag.atLeast(0),
-    Flag.withDescription("Target file, or - for stdin. Repeat to combine sources."),
+    Flag.withDescription(
+      "Target file: text names, .json record array or saved set, or .jsonl records; - reads stdin.",
+    ),
   ),
   format: Flag.Literals(`${prefix}targets-format`, inputEncodings).pipe(
     Flag.optional,
-    Flag.withDescription("Override file suffix detection; stdin defaults to text."),
+    Flag.withDescription("Use this format for target files; stdin defaults to text."),
   ),
 });
 
 export const recordHelp =
-  "Literal --record labels come first, then positional files in supplied order. Labels, identifying fields, JSON metadata and repeated occurrences remain unchanged. No sources means no records.\n\n" +
-  "Files use newline text by default (labels, not scientific names), .json for an identifying record array, or .jsonl for one identifying record per line. --records-format overrides the suffix. stdin (-) defaults to text; structured stdin needs an explicit override. Invalid structured input never falls back to text.\n\n" +
-  "Record JSON arrays are decoded one file at a time in memory; use newline text or JSONL for bounded record ingestion. Target sets are retained in memory. stdin can only be used once across both record and target sources.\n\n" +
-  "Input or provider failure stops processing and fails the invocation, even if earlier groups have already been emitted. An emitted prefix is incomplete output, not a successful partial result.";
+  "Read one label per line from text files, a record array from .json, or one record per line from .jsonl. JSON records need a label, scientificName or taxonId. Use stdin (-) only once across record and target inputs.";
 
 export const checkStdin = (paths: readonly string[]) =>
   paths.filter((path) => path === "-").length > 1

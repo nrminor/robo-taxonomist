@@ -12,9 +12,17 @@ export const classify = Command.make(
     input: Inputs.recordFlags,
     target: Inputs.targetFlags(),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(Flag.withDefault("tsv")),
+    format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription(
+        "Tab-delimited CSV (default), or JSONL. Each JSONL line contains records and their results.",
+      ),
+    ),
     execution: Inputs.executionFlags,
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.classify")(function* ({ input, target, format, execution: flags, noHeader }) {
     const execution = CollectionExecution.make(flags);
@@ -52,23 +60,22 @@ export const classify = Command.make(
   }),
 ).pipe(
   Command.withAlias("cls"),
+  Command.withShortDescription("Classify records against a target panel."),
   Command.withDescription(
-    "Classify records against the supplied panel using native match judgments and rankings. Repeated --target and --targets-file sources form one union, retaining occurrences and imported expression topology. Target encodings follow --targets-format, then .json/.jsonl suffix, then newline names; target stdin defaults to text.\n\n" +
-      "Process sequential groups of at most batch-size × concurrency records; the library owns concurrency within each group. Tabular output emits record, target, judgment, support and ranking_position in record and target occurrence order, including negatives and uncertainty. Rankings contain accepted matches; unranked positions are empty. Support is native model support, not abundance or a normalized allocation across targets.\n\n" +
-      "One header is emitted unless --no-header is supplied. Tabular output uses tab-delimited CSV: tabs, newlines and quotation marks in original labels/names are quoted. Use a CSV-aware reader with a tab delimiter. --format jsonl retains the complete panel, records/taxa/ranking, answers and usage for each bounded group, including identifying fields and metadata. Unknown token counts remain absent. Empty input emits one empty JSONL result; an empty panel retains all records with empty outcomes.\n\n" +
-      "Use --model to override ROBO_TAXONOMIST_MODEL; no model is selected implicitly. Inject TYPESAFE_API_KEY through the environment. The client/model is acquired once per command; help needs no credentials. Negative and unresolved judgments succeed; provider and output errors fail the invocation.\n\n" +
-      Inputs.recordHelp,
+    "Classify records against a panel of target taxa and rank their matches. Support is the model-reported probability of a match.\n\n" +
+      Inputs.recordHelp +
+      "\n\nFor large inputs, prefer text or JSONL; JSON arrays are loaded in full. If a run fails, any output already written is incomplete.",
   ),
   Command.withExamples([
     {
       command:
         "robo-taxonomist classify detections-A.txt detections-B.txt --target Quercus --target Fagus --model your-model",
-      description: "Classify plain labels and retain all outcomes in a table.",
+      description: "Classify labels from text files.",
     },
     {
       command:
         "robo-taxonomist cls - --records-format jsonl --targets-file panel.json --format jsonl --model your-model",
-      description: "Retain structured records, panel topology and complete classification results.",
+      description: "Read JSONL from stdin and keep answers and metadata in the output.",
     },
   ]),
   Command.provide(({ model }) => Model.modelLayer(model)),

@@ -20,7 +20,16 @@ const labels = Command.make(
     const sameLabel = Taxonomy.sameLabel(left, right);
     yield* Output.writeText(sameLabel);
   }),
-).pipe(Command.withDescription("Compare the exact supplied record labels."));
+).pipe(
+  Command.withShortDescription("Compare exact record labels."),
+  Command.withDescription("Compare the exact supplied record labels; no model is needed."),
+  Command.withExamples([
+    {
+      command: 'robo-taxonomist compare labels "Voucher A17" "Voucher A17"',
+      description: "Print true if the labels are identical, otherwise false.",
+    },
+  ]),
+);
 
 const identity = Command.make(
   "identity",
@@ -28,8 +37,14 @@ const identity = Command.make(
     left: Argument.String("left").pipe(Argument.withSchema(TaxonName)),
     right: Argument.String("right").pipe(Argument.withSchema(TaxonName)),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    format: Flag.Literals("format", ["tsv", "json"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription("Write the judgment as tab-delimited CSV (default) or JSON."),
+    ),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.compareIdentity")(function* ({ left, right, format, noHeader }) {
     const result = yield* Taxonomy.sameTaxon(left, right).pipe(Effect.mapError(Model.modelFailure));
@@ -46,9 +61,8 @@ const identity = Command.make(
     yield* render;
   }),
 ).pipe(
-  Command.withDescription(
-    "Ask whether two taxonomic assignments refer to the same taxon.\n\n" + Model.modelHelp,
-  ),
+  Command.withShortDescription("Compare taxonomic identities."),
+  Command.withDescription("Ask whether two taxonomic names refer to the same taxon."),
   Command.withExamples([
     {
       command: 'robo-taxonomist compare identity "Quercus robur" "English oak" --model your-model',
@@ -64,8 +78,14 @@ const containment = Command.make(
     inner: Argument.String("inner").pipe(Argument.withSchema(TaxonName)),
     outer: Argument.String("outer").pipe(Argument.withSchema(TaxonName)),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    format: Flag.Literals("format", ["tsv", "json"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription("Write the judgment as tab-delimited CSV (default) or JSON."),
+    ),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.compareContainment")(function* ({ inner, outer, format, noHeader }) {
     const result = yield* Taxonomy.taxonWithin(inner, outer).pipe(
@@ -85,9 +105,9 @@ const containment = Command.make(
   }),
 ).pipe(
   Command.withAlias("within"),
+  Command.withShortDescription("Check whether one taxon falls within another."),
   Command.withDescription(
-    "Ask whether the inner taxon's organisms belong to the outer taxon. Left means inner; right means outer.\n\n" +
-      Model.modelHelp,
+    "Ask whether the inner taxon's organisms belong to the outer taxon. In the result, left means inner and right means outer.",
   ),
   Command.withExamples([
     {
@@ -112,10 +132,16 @@ const rank = Command.make(
       "family",
       "genus",
       "species",
-    ]),
+    ]).pipe(Flag.withDescription("Taxonomic rank at which to compare the records.")),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    format: Flag.Literals("format", ["tsv", "json"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription("Write the judgment as tab-delimited CSV (default) or JSON."),
+    ),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.compareRank")(function* ({ left, right, rank, format, noHeader }) {
     const result = yield* Taxonomy.sameTaxonAtRank(left, right, rank).pipe(
@@ -134,10 +160,8 @@ const rank = Command.make(
     yield* render;
   }),
 ).pipe(
-  Command.withDescription(
-    "Compare two record labels at an explicit taxonomic rank. --rank is required; there is no default rank.\n\n" +
-      Model.modelHelp,
-  ),
+  Command.withShortDescription("Compare records at a taxonomic rank."),
+  Command.withDescription("Compare two record labels at the specified taxonomic rank."),
   Command.withExamples([
     {
       command:
@@ -150,11 +174,14 @@ const rank = Command.make(
 
 const compare = Command.make("compare").pipe(
   Command.withAlias("cmp"),
+  Command.withShortDescription("Compare labels and taxonomic identities."),
   Command.withDescription("Compare labels, taxonomic identity, rank and containment."),
   Command.withSubcommands([labels, identity, rank, containment]),
 );
 
 export const cli = Command.make("robo-taxonomist").pipe(
-  Command.withDescription("Compare taxonomic records and compose symbolic taxon sets."),
+  Command.withDescription(
+    "Compare taxonomic records and compose taxon sets.\n\nUse <command> --help for options and examples.",
+  ),
   Command.withSubcommands([compare, sets, membership, classify, Server.command]),
 );

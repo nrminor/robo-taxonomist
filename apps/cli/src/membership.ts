@@ -7,21 +7,22 @@ import * as Model from "./model.ts";
 import * as Output from "./output.ts";
 import * as Presentation from "./presentation.ts";
 
-const configurationHelp =
-  "Use --model to override ROBO_TAXONOMIST_MODEL; there is no implicit model default. Inject TYPESAFE_API_KEY through the environment. The selected command acquires one client/model; help needs no credentials. Negative, mixed, unresolved and clarification judgments are successful results.\n\n" +
-  "Repeated --target names and --targets-file sources form one union, preserving occurrences. Target files default to newline names, .json to a record array or generated set artifact, and .jsonl to identifying records. --targets-format overrides the suffix; target stdin defaults to text. No target sources means the empty set.";
-
-const tableHelp =
-  "Tabular output contains judgment, record and clarification_target, with one header per invocation unless --no-header is supplied. It uses tab-delimited CSV, quoting tabs, newlines and quotation marks. Use a CSV-aware reader with a tab delimiter. Records require original labels; --format jsonl retains identifying records without labels, arbitrary metadata and the complete native judgment, including clarification targets.";
-
 const check = Command.make(
   "check",
   {
     record: Argument.String("record").pipe(Argument.withSchema(RecordLabel)),
     target: Inputs.targetFlags(),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(Flag.withDefault("tsv")),
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription(
+        "Tab-delimited CSV (default), or JSONL. Use JSONL for identifier-only targets.",
+      ),
+    ),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.checkMembership")(function* ({ record, target, format, noHeader }) {
     yield* Inputs.checkStdin(target.files);
@@ -49,16 +50,12 @@ const check = Command.make(
     yield* render;
   }),
 ).pipe(
-  Command.withDescription(
-    "Check one literal record label against the supplied target set.\n\n" +
-      configurationHelp +
-      "\n\n" +
-      tableHelp,
-  ),
+  Command.withShortDescription("Check one record's membership."),
+  Command.withDescription("Check one record label against a target set."),
   Command.withExamples([
     {
       command: 'robo-taxonomist mem check "Voucher A17" --target Quercus --model your-model',
-      description: "Check one supplied label without inferring a scientific-name field.",
+      description: "Check a record against a target taxon.",
     },
   ]),
   Command.provide(({ model }) => Model.modelLayer(model)),
@@ -70,9 +67,17 @@ const partition = Command.make(
     input: Inputs.recordFlags,
     target: Inputs.targetFlags(),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(Flag.withDefault("tsv")),
+    format: Flag.Literals("format", ["tsv", "jsonl"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription(
+        "Tab-delimited CSV (default), or JSONL. Use JSONL for records without labels.",
+      ),
+    ),
     execution: Inputs.executionFlags,
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.partitionMembership")(function* ({
     input,
@@ -116,39 +121,52 @@ const partition = Command.make(
   }),
 ).pipe(
   Command.withAlias("part"),
+  Command.withShortDescription("Group records by membership outcome."),
   Command.withDescription(
-    "Partition record inputs into the five native membership buckets. Process sequential groups of at most batch-size × concurrency records; the library owns concurrency within each group. Emit Member, NotMember, MixedMembership, Undetermined, then MultipleTaxaInTarget, retaining input order within each group and bucket.\n\n" +
-      configurationHelp +
-      "\n\n" +
-      tableHelp +
-      "\n\n" +
-      Inputs.recordHelp,
+    "Group records by membership outcome, including mixed membership and uncertainty.\n\n" +
+      Inputs.recordHelp +
+      "\n\nFor large inputs, prefer text or JSONL; JSON arrays are loaded in full. If a run fails, any output already written is incomplete.",
   ),
   Command.withExamples([
     {
       command:
         "robo-taxonomist mem part detections-A.txt detections-B.txt --target Quercus --target Fagus --model your-model",
-      description: "Partition multiple plain files against one union of targets.",
+      description: "Group labels from text files against two target taxa.",
     },
     {
       command:
         "robo-taxonomist membership partition - --records-format jsonl --targets-file panel.json --format jsonl --model your-model",
-      description: "Retain identifying fields and metadata from structured stdin.",
+      description: "Read JSONL from stdin and retain record metadata.",
     },
   ]),
   Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
-const quantifier = (name: "all" | "any" | "none", operation: typeof Taxonomy.allRecordsBelongTo) =>
-  Command.make(
+const quantifier = (
+  name: "all" | "any" | "none",
+  operation: typeof Taxonomy.allRecordsBelongTo,
+) => {
+  const description = {
+    all: "Check whether every record belongs to the target.",
+    any: "Check whether at least one record belongs to the target.",
+    none: "Check whether no records belong to the target.",
+  }[name];
+
+  return Command.make(
     name,
     {
       input: Inputs.recordFlags,
       target: Inputs.targetFlags(),
       model: Model.modelFlag,
       execution: Inputs.executionFlags,
-      format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
-      noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+      format: Flag.Literals("format", ["tsv", "json"]).pipe(
+        Flag.withDefault("tsv"),
+        Flag.withDescription("Write the judgment as tab-delimited CSV (default) or JSON."),
+      ),
+      noHeader: Flag.Boolean("no-header").pipe(
+        Flag.withDefault(false),
+        Flag.withDescription("Omit the table header."),
+      ),
     },
     Effect.fn("Cli.quantifyMembership")(function* ({
       input,
@@ -186,24 +204,24 @@ const quantifier = (name: "all" | "any" | "none", operation: typeof Taxonomy.all
       yield* render;
     }),
   ).pipe(
+    Command.withShortDescription(description),
     Command.withDescription(
-      `Ask the native ${name} whole-record membership question. Collects the complete input in memory and invokes the native quantifier once. Native ordering determines decisive answers, uncertainty and clarification.\n\n` +
-        configurationHelp +
-        "\n\nTabular output contains judgment, quantifier and clarification_target, with one header unless --no-header is supplied. Tab-delimited CSV quotes tabs, newlines and quotation marks; use a CSV-aware reader. Use --format json for the complete native judgment, including identifier-only clarification targets.\n\n" +
-        Inputs.recordHelp,
+      description + " This command loads all records into memory.\n\n" + Inputs.recordHelp,
     ),
     Command.withExamples([
       {
         command: `robo-taxonomist mem ${name} detections.txt --target Quercus --model your-model --format json`,
-        description: "Ask one question about the complete input collection.",
+        description: "Read records from a text file and write the judgment as JSON.",
       },
     ]),
     Command.provide(({ model }) => Model.modelLayer(model)),
   );
+};
 
 export const membership = Command.make("membership").pipe(
   Command.withAlias("mem"),
-  Command.withDescription("Check and partition record membership and ask collection quantifiers."),
+  Command.withShortDescription("Check record membership."),
+  Command.withDescription("Check records against a target set."),
   Command.withSubcommands([
     check,
     partition,

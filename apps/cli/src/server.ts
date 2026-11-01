@@ -401,39 +401,68 @@ export const command = Command.make(
     host: Flag.String("host").pipe(
       Flag.withSchema(Options.fields.host),
       Flag.withDefault("127.0.0.1"),
+      Flag.withDescription("Address on which to accept connections (default: 127.0.0.1)."),
     ),
-    port: Flag.Int("port").pipe(Flag.withSchema(Options.fields.port), Flag.withDefault(3000)),
+    port: Flag.Int("port").pipe(
+      Flag.withSchema(Options.fields.port),
+      Flag.withDefault(3000),
+      Flag.withDescription("Listening port (default: 3000). Use 0 to select an available port."),
+    ),
     maxBodyBytes: Flag.Int("max-body-bytes").pipe(
       Flag.withSchema(Options.fields.maxBodyBytes),
       Flag.withDefault(defaultRequestLimits.maxBodyBytes),
+      Flag.withDescription(
+        `Maximum request body size in bytes (default: ${defaultRequestLimits.maxBodyBytes}).`,
+      ),
     ),
     timeoutMs: Flag.Int("request-timeout-ms").pipe(
       Flag.withSchema(Options.fields.timeoutMs),
       Flag.withDefault(defaultRequestLimits.timeoutMs),
+      Flag.withDescription(
+        `Time limit in milliseconds to read and process a request (default: ${defaultRequestLimits.timeoutMs}).`,
+      ),
     ),
     maxJsonDepth: Flag.Int("max-json-depth").pipe(
       Flag.withSchema(Options.fields.maxJsonDepth),
       Flag.withDefault(defaultRequestLimits.maxJsonDepth),
+      Flag.withDescription(
+        `Maximum JSON nesting depth, including metadata (default: ${defaultRequestLimits.maxJsonDepth}).`,
+      ),
     ),
     maxRecords: Flag.Int("max-records").pipe(
       Flag.withSchema(Options.fields.maxRecords),
       Flag.withDefault(defaultCollectionLimits.maxRecords),
+      Flag.withDescription(
+        `Maximum records per membership or classification request (default: ${defaultCollectionLimits.maxRecords}).`,
+      ),
     ),
     maxTargets: Flag.Int("max-targets").pipe(
       Flag.withSchema(Options.fields.maxTargets),
       Flag.withDefault(defaultCollectionLimits.maxTargets),
+      Flag.withDescription(
+        `Maximum target taxa per membership or classification request (default: ${defaultCollectionLimits.maxTargets}). Repeats count separately.`,
+      ),
     ),
     maxRecordTargetPairs: Flag.Int("max-record-target-pairs").pipe(
       Flag.withSchema(Options.fields.maxRecordTargetPairs),
       Flag.withDefault(defaultCollectionLimits.maxRecordTargetPairs),
+      Flag.withDescription(
+        `Maximum records × target taxa per membership or classification request (default: ${defaultCollectionLimits.maxRecordTargetPairs}).`,
+      ),
     ),
     batchSize: Flag.Int("batch-size").pipe(
       Flag.withSchema(Options.fields.batchSize),
       Flag.withDefault(defaultCollectionLimits.batchSize),
+      Flag.withDescription(
+        `Records per model request (default: ${defaultCollectionLimits.batchSize}).`,
+      ),
     ),
     concurrency: Flag.Int("concurrency").pipe(
       Flag.withSchema(Options.fields.concurrency),
       Flag.withDefault(defaultCollectionLimits.concurrency),
+      Flag.withDescription(
+        `Model requests to run at once (default: ${defaultCollectionLimits.concurrency}).`,
+      ),
     ),
   },
   Effect.fn("Cli.server")(
@@ -454,19 +483,15 @@ export const command = Command.make(
     Effect.provideService(Logger.LogToStderr, true),
   ),
 ).pipe(
+  Command.withShortDescription("Start the local HTTP API."),
   Command.withDescription(
-    "Serve taxonomy comparisons and symbolic set operations in the foreground. The default address is 127.0.0.1:3000; --port 0 selects an available port. Readiness and request diagnostics go to stderr. Interrupt the process to stop the server and release its socket.\n\n" +
-      "The request-body limit defaults to 1048576 bytes (1 MiB), enforced while reading before JSON decoding. The whole request has a 60000 ms deadline, including body reading and model execution; expiry interrupts ongoing work. Override these startup policies with --max-body-bytes and --request-timeout-ms. They do not limit ordinary CLI inputs.\n\n" +
-      "JSON requests allow 64 nested object/array containers by default, including the root and metadata. Override with --max-json-depth; exceeding the limit returns RequestTooDeep (400) before endpoint validation. Large flat arrays do not increase nesting depth. Raising this limit can exceed the recursive endpoint decoder's stack capacity.\n\n" +
-      "Membership and classification requests default to at most 1000 records, 100 target-leaf occurrences, and 10000 record × target pairs. Repeated occurrences count; symbolic topology is preserved. Override with --max-records, --max-targets and --max-record-target-pairs. CollectionLimit (413) is returned before inference on excess input. These are conservative work bounds, not billing estimates or CLI limits. Native collection execution defaults to --batch-size 16 and --concurrency 1, fixed at startup. Each response contains the complete native result, not streamed groups; memory is bounded by these request policies.\n\n" +
-      "Open /docs for interactive Scalar documentation and /openapi.json for the generated contract. Import the application API definition with HttpApiClient to derive a typed client.\n\n" +
-      "Use --model to override ROBO_TAXONOMIST_MODEL and inject TYPESAFE_API_KEY through the environment. One client/model is acquired at startup for all requests. Credentials and model configuration are not request parameters. Help needs no credentials.\n\n" +
-      "This local service has no built-in authentication. Keep the loopback default unless appropriate external access controls are in place.",
+    "Start the HTTP API in the foreground. Open /docs for interactive documentation or /openapi.json for the API definition. Press Ctrl-C to stop.\n\n" +
+      "The server has no authentication. Keep the default local address unless you provide external access controls.",
   ),
   Command.withExamples([
     {
       command: "robo-taxonomist server --model your-model --port 3000",
-      description: "Run the local API and documentation until interrupted.",
+      description: "Start the API at http://127.0.0.1:3000.",
     },
   ]),
   Command.provide(({ model }) => Model.modelLayer(model)),

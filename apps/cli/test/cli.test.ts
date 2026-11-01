@@ -100,6 +100,23 @@ it.effect("shows foreground server configuration without acquiring credentials",
     }
     expect(result.stdout).toContain("127.0.0.1");
     expect(result.stdout).toContain("TYPESAFE_API_KEY");
+    for (const [flag, value] of [
+      ["--host", "127.0.0.1"],
+      ["--port", "3000"],
+      ["--max-body-bytes", "1048576"],
+      ["--request-timeout-ms", "60000"],
+      ["--max-json-depth", "64"],
+      ["--max-records", "1000"],
+      ["--max-targets", "100"],
+      ["--max-record-target-pairs", "10000"],
+      ["--batch-size", "16"],
+      ["--concurrency", "1"],
+    ] as const) {
+      const option = result.stdout
+        .split("\n")
+        .find((line) => line.trimStart().startsWith(`${flag} `));
+      expect(option).toContain(value);
+    }
   }),
 );
 
@@ -685,17 +702,16 @@ it.effect("does not sniff JSON-looking stdin when text encoding is the default",
   }),
 );
 
-it.effect("teaches target-source ordering, encodings and symbolic output in generated help", () =>
+it.effect("shows target formats, saved sets and an example in create help", () =>
   Effect.gen(function* () {
     const result = yield* run(["set", "create", "--help"]);
     expect(result).toMatchObject({ code: 0, stderr: "" });
     for (const text of [
-      "Literal targets come first",
+      "--targets-file",
       ".json",
       ".jsonl",
       "stdin defaults to text",
-      "empty set",
-      "symbolic",
+      "JSON",
       "--target Quercus",
     ]) {
       expect(result.stdout).toContain(text);
@@ -709,14 +725,7 @@ it.effect.each(["difference", "union", "intersection"] as const)(
     Effect.gen(function* () {
       const result = yield* run(["set", operation, "--help"]);
       expect(result).toMatchObject({ code: 0, stderr: "" });
-      for (const text of [
-        "--left-target",
-        "--right-targets-file",
-        "Literal targets come first",
-        ".jsonl",
-        "symbolic",
-        "stdin can only be used once",
-      ]) {
+      for (const text of ["--left-target", "--right-targets-file", ".jsonl", "JSON", "stdin"]) {
         expect(result.stdout).toContain(text);
       }
     }),
@@ -794,6 +803,48 @@ it.effect("shows help without credentials or interaction and offers the opt-in w
     expect(result.stdout).toContain("robo-taxonomist");
     expect(result.stdout).toContain("compare");
     expect(result.stdout).toContain("--wizard");
+  }),
+);
+
+it.effect.each([
+  { path: [], commands: ["compare", "set", "membership", "classify", "server"] },
+  { path: ["compare"], commands: ["labels", "identity", "rank", "containment"] },
+  { path: ["set"], commands: ["create", "difference", "union", "intersection", "relation"] },
+  { path: ["membership"], commands: ["check", "partition", "all", "any", "none"] },
+])("keeps the $path command menu to one summary line per subcommand", ({ path, commands }) =>
+  Effect.gen(function* () {
+    const result = yield* run([...path, "--help"]);
+    const menu = result.stdout.split("SUBCOMMANDS\n")[1];
+
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(menu).toBeDefined();
+    const entries = menu
+      ?.trimEnd()
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+    expect(entries).toHaveLength(commands.length);
+    for (const command of commands) {
+      expect(entries?.some((line) => line.startsWith(`  ${command}`))).toBe(true);
+    }
+    expect(result.stdout.split("\n").length).toBeLessThan(35);
+  }),
+);
+
+it.effect.each([
+  { path: ["classify"] },
+  { path: ["server"] },
+  { path: ["membership", "partition"] },
+  { path: ["membership", "all"] },
+])("keeps $path help scannable while retaining options and examples", ({ path }) =>
+  Effect.gen(function* () {
+    const result = yield* run([...path, "--help"]);
+
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(result.stdout).toContain("EXAMPLES");
+    expect(result.stdout).toContain("--model");
+    expect(result.stdout.split("\n").length).toBeLessThan(65);
+    const description = result.stdout.split("USAGE\n")[0];
+    expect(description?.length).toBeLessThan(700);
   }),
 );
 

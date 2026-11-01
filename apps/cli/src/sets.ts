@@ -8,10 +8,7 @@ import * as Output from "./output.ts";
 import * as Presentation from "./presentation.ts";
 
 const sourceHelp =
-  "Literal targets come first, then files in supplied order, forming one union per operand. Exact names and repeated occurrences are retained.\n\n" +
-  "Files use newline text by default, .json for a target record array or generated set artifact, and .jsonl for one identifying record per line. An explicit format overrides the suffix; stdin defaults to text.\n\n" +
-  "stdin can only be used once per invocation. No sources produces the empty set.\n\n" +
-  "All targets remain in memory. Output preserves the symbolic expression, not a resolved list of organisms. Imported subtrees remain intact; unions have two or more operands and intersections have exactly two. Input or output nesting beyond runtime limits fails with a diagnostic.";
+  "Write the set definition as JSON. With no targets, the set is empty. Use stdin (-) only once.";
 
 const create = Command.make(
   "create",
@@ -22,21 +19,16 @@ const create = Command.make(
     yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
-  Command.withDescription(
-    "Construct a symbolic taxon set without model inference.\n\n" + sourceHelp,
-  ),
+  Command.withShortDescription("Create a set from target names or files."),
+  Command.withDescription("Create a taxon set from names or files.\n\n" + sourceHelp),
   Command.withExamples([
     {
       command: "robo-taxonomist set create --target Quercus --target Fagus",
       description: "Create a union directly from target names.",
     },
     {
-      command: "robo-taxonomist set create --targets-file targets.txt",
-      description: "Read one target name per line.",
-    },
-    {
       command: "robo-taxonomist set create --targets-file - --targets-format json",
-      description: "Reload a generated set artifact from stdin.",
+      description: "Read a saved set from stdin.",
     },
   ]),
 );
@@ -61,7 +53,10 @@ const difference = Command.make(
   }),
 ).pipe(
   Command.withAlias("diff"),
-  Command.withDescription("Construct left minus right without model inference.\n\n" + sourceHelp),
+  Command.withShortDescription("Subtract the right set from the left."),
+  Command.withDescription(
+    "Define a set of organisms in the left set but not in the right.\n\n" + sourceHelp,
+  ),
   Command.withExamples([
     {
       command: "robo-taxonomist set diff --left-target Fagaceae --right-target Quercus",
@@ -89,13 +84,12 @@ const union = Command.make(
     yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
-  Command.withDescription(
-    "Construct a union of two sets without model inference.\n\n" + sourceHelp,
-  ),
+  Command.withShortDescription("Combine two sets."),
+  Command.withDescription("Define a set of organisms that belong to either set.\n\n" + sourceHelp),
   Command.withExamples([
     {
       command: "robo-taxonomist set union --left-targets-file oaks.json --right-target Fagus",
-      description: "Combine a generated set artifact with a target name.",
+      description: "Combine a saved set with a target name.",
     },
   ]),
 );
@@ -119,9 +113,8 @@ const intersection = Command.make(
     yield* Output.writeJson(set, Documents.SetDocument);
   }),
 ).pipe(
-  Command.withDescription(
-    "Construct an intersection of two sets without model inference.\n\n" + sourceHelp,
-  ),
+  Command.withShortDescription("Keep the overlap between two sets."),
+  Command.withDescription("Define a set of organisms that belong to both sets.\n\n" + sourceHelp),
   Command.withExamples([
     {
       command: "robo-taxonomist set intersection --left-target Quercus --right-target Fagaceae",
@@ -141,10 +134,18 @@ const relation = Command.make(
       "equivalent",
       "overlap",
       "disjoint",
-    ]),
+    ]).pipe(Flag.withDescription("Relationship to test between the left and right sets.")),
     model: Model.modelFlag,
-    format: Flag.Literals("format", ["tsv", "json"]).pipe(Flag.withDefault("tsv")),
-    noHeader: Flag.Boolean("no-header").pipe(Flag.withDefault(false)),
+    format: Flag.Literals("format", ["tsv", "json"]).pipe(
+      Flag.withDefault("tsv"),
+      Flag.withDescription(
+        "Tab-delimited CSV (default), or JSON. Use JSON for identifier-only targets.",
+      ),
+    ),
+    noHeader: Flag.Boolean("no-header").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Omit the table header."),
+    ),
   },
   Effect.fn("Cli.setRelation")(function* ({ left, right, relation, format, noHeader }) {
     yield* Inputs.checkStdin([...left.files, ...right.files]);
@@ -184,12 +185,9 @@ const relation = Command.make(
   }),
 ).pipe(
   Command.withAlias("rel"),
+  Command.withShortDescription("Test a relationship between two sets."),
   Command.withDescription(
-    "Ask a native relation question about two symbolic sets.\n\n" +
-      Model.modelHelp +
-      "\n\n" +
-      sourceHelp +
-      "\n\nJSON preserves the full native clarification target. TSV requires its original text name or label; use --format json for identifier-only clarification targets. Tabs, newlines, and quotes are escaped using tab-delimited CSV quoting.",
+    "Test a relationship between two taxon sets. Use stdin (-) on only one side.",
   ),
   Command.withExamples([
     {
@@ -200,13 +198,14 @@ const relation = Command.make(
     {
       command:
         "robo-taxonomist set rel --relation overlap --left-targets-file panel.json --right-target Fagus --model your-model --format json",
-      description: "Compare a saved symbolic set without losing clarification details.",
+      description: "Compare a saved set with a target taxon.",
     },
   ]),
   Command.provide(({ model }) => Model.modelLayer(model)),
 );
 
 export const sets = Command.make("set").pipe(
-  Command.withDescription("Construct and compose symbolic taxon sets."),
+  Command.withShortDescription("Construct and combine taxon sets."),
+  Command.withDescription("Construct and combine taxon sets."),
   Command.withSubcommands([create, difference, union, intersection, relation]),
 );
