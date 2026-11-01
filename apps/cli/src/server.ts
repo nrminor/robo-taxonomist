@@ -490,7 +490,7 @@ export const command = Command.make(
   ),
   Command.withExamples([
     {
-      command: "robo-taxonomist server --model your-model --port 3000",
+      command: "robo-taxonomist server",
       description: "Start the API at http://127.0.0.1:3000.",
     },
   ]),

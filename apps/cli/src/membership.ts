@@ -54,7 +54,7 @@ const check = Command.make(
   Command.withDescription("Check one record label against a target set."),
   Command.withExamples([
     {
-      command: 'robo-taxonomist mem check "Voucher A17" --target Quercus --model your-model',
+      command: 'robo-taxonomist mem check "Voucher A17" --target Quercus',
       description: "Check a record against a target taxon.",
     },
   ]),
@@ -130,12 +130,12 @@ const partition = Command.make(
   Command.withExamples([
     {
       command:
-        "robo-taxonomist mem part detections-A.txt detections-B.txt --target Quercus --target Fagus --model your-model",
+        "robo-taxonomist mem part detections-A.txt detections-B.txt --target Quercus --target Fagus",
       description: "Group labels from text files against two target taxa.",
     },
     {
       command:
-        "robo-taxonomist membership partition - --records-format jsonl --targets-file panel.json --format jsonl --model your-model",
+        "robo-taxonomist membership partition - --records-format jsonl --targets-file panel.json --format jsonl",
       description: "Read JSONL from stdin and retain record metadata.",
     },
   ]),
@@ -210,7 +210,7 @@ const quantifier = (
     ),
     Command.withExamples([
       {
-        command: `robo-taxonomist mem ${name} detections.txt --target Quercus --model your-model --format json`,
+        command: `robo-taxonomist mem ${name} detections.txt --target Quercus --format json`,
         description: "Read records from a text file and write the judgment as JSON.",
       },
     ]),

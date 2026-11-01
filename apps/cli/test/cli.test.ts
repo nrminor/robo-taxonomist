@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import appPackage from "../package.json" with { type: "json" };
 
 const run = Effect.fn("CliTest.run")(
   function* (args: readonly string[], entry = "src/main.ts", stdin?: string) {
@@ -855,7 +856,7 @@ it.effect("reports the application version without credentials", () =>
   Effect.gen(function* () {
     const result = yield* run(["--version"]);
     expect(result).toMatchObject({ stderr: "", code: 0 });
-    expect(result.stdout).toContain("0.0.0");
+    expect(result.stdout).toContain(appPackage.version);
   }),
 );
 

@@ -11,7 +11,7 @@ export const modelFlag = Flag.String("model").pipe(
   Flag.withSchema(modelName),
   Flag.withFallbackConfig(Config.schema(modelName, "ROBO_TAXONOMIST_MODEL")),
   Flag.withDescription(
-    "TypeSafe model name (or ROBO_TAXONOMIST_MODEL). Set TYPESAFE_API_KEY in the environment.",
+    "Override ROBO_TAXONOMIST_MODEL for this command. Set TYPESAFE_API_KEY in the environment.",
   ),
 );
 

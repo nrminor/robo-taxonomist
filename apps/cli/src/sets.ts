@@ -192,12 +192,12 @@ const relation = Command.make(
   Command.withExamples([
     {
       command:
-        "robo-taxonomist set relation --relation subset --left-target Quercus --right-target Fagaceae --model your-model",
+        "robo-taxonomist set relation --relation subset --left-target Quercus --right-target Fagaceae",
       description: "Ask a directed subset question.",
     },
     {
       command:
-        "robo-taxonomist set rel --relation overlap --left-targets-file panel.json --right-target Fagus --model your-model --format json",
+        "robo-taxonomist set rel --relation overlap --left-targets-file panel.json --right-target Fagus --format json",
       description: "Compare a saved set with a target taxon.",
     },
   ]),

@@ -1,6 +1,7 @@
 import { Effect, Match, Stream } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+import appPackage from "../package.json" with { type: "json" };
 import { classify } from "./classification.ts";
 import * as Documents from "./documents.ts";
 import * as Model from "./model.ts";
@@ -9,6 +10,8 @@ import * as Output from "./output.ts";
 import * as Presentation from "./presentation.ts";
 import { sets } from "./sets.ts";
 import * as Server from "./server.ts";
+
+export const version = appPackage.version;
 
 const labels = Command.make(
   "labels",
@@ -65,8 +68,13 @@ const identity = Command.make(
   Command.withDescription("Ask whether two taxonomic names refer to the same taxon."),
   Command.withExamples([
     {
-      command: 'robo-taxonomist compare identity "Quercus robur" "English oak" --model your-model',
+      command: 'robo-taxonomist compare identity "Quercus robur" "English oak"',
       description: "Compare two supplied taxonomic names.",
+    },
+    {
+      command:
+        'robo-taxonomist compare identity "Quercus robur" "English oak" --model another-model',
+      description: "Use a different model for this command.",
     },
   ]),
   Command.provide(({ model }) => Model.modelLayer(model)),
@@ -111,7 +119,7 @@ const containment = Command.make(
   ),
   Command.withExamples([
     {
-      command: "robo-taxonomist cmp within Quercus Fagaceae --model your-model",
+      command: "robo-taxonomist cmp within Quercus Fagaceae",
       description: "Ask whether the first taxon's organisms belong to the second.",
     },
   ]),
@@ -164,8 +172,7 @@ const rank = Command.make(
   Command.withDescription("Compare two record labels at the specified taxonomic rank."),
   Command.withExamples([
     {
-      command:
-        'robo-taxonomist compare rank "Quercus robur" "Quercus petraea" --rank genus --model your-model',
+      command: 'robo-taxonomist compare rank "Quercus robur" "Quercus petraea" --rank genus',
       description: "Ask a rank-specific comparison without changing the supplied labels.",
     },
   ]),

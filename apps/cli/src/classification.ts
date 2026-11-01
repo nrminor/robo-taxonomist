@@ -69,12 +69,12 @@ export const classify = Command.make(
   Command.withExamples([
     {
       command:
-        "robo-taxonomist classify detections-A.txt detections-B.txt --target Quercus --target Fagus --model your-model",
+        "robo-taxonomist classify detections-A.txt detections-B.txt --target Quercus --target Fagus",
       description: "Classify labels from text files.",
     },
     {
       command:
-        "robo-taxonomist cls - --records-format jsonl --targets-file panel.json --format jsonl --model your-model",
+        "robo-taxonomist cls - --records-format jsonl --targets-file panel.json --format jsonl",
       description: "Read JSONL from stdin and keep answers and metadata in the output.",
     },
   ]),

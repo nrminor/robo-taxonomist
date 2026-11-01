@@ -4,14 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect, Match } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
-import { cli } from "./cli.ts";
+import * as Cli from "./cli.ts";
 
 const banner = `
 █████▄  ▄████▄ █████▄ ▄████▄   ██████ ▄████▄ ██  ██ ▄████▄ ███  ██ ▄████▄ ██▄  ▄██ ██ ▄█████ ██████
 ██▄▄██▄ ██  ██ ██▄▄██ ██  ██ ▄▄▄ ██   ██▄▄██  ████  ██  ██ ██ ▀▄██ ██  ██ ██ ▀▀ ██ ██ ▀▀▀▄▄▄   ██
 ██   ██ ▀████▀ ██▄▄█▀ ▀████▀     ██   ██  ██ ██  ██ ▀████▀ ██   ██ ▀████▀ ██    ██ ██ █████▀   ██
 
-(COMMAND-LINE EDITION)
+(COMMAND-LINE EDITION v${Cli.version})
 `;
 
 const Output = CliOutput.layerPresenter({
@@ -32,8 +32,8 @@ const Output = CliOutput.layerPresenter({
   }),
 });
 
-cli.pipe(
-  Command.run({ version: "0.0.0" }),
+Cli.cli.pipe(
+  Command.run({ version: Cli.version }),
   Effect.provide([NodeServices.layer, FetchHttpClient.layer, Output]),
   NodeRuntime.runMain,
 );
