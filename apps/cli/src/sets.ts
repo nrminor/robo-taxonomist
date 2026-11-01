@@ -1,7 +1,7 @@
 import { Console, Effect, Match, Option, Schema } from "effect";
 import { CliError, Command, Flag } from "effect/cli";
-import { TaxonName, TaxonSet } from "robo-taxonomist";
-import { checkStdin, loadTargets } from "./targets.ts";
+import { TaxonSet } from "robo-taxonomist";
+import { checkStdin, loadTargets, targetFlags } from "./targets.ts";
 import { modelFailure, modelFlag, modelHelp, modelLayer } from "./model.ts";
 
 const writeSet = Effect.fn("Cli.writeSet")(function* (set: object) {
@@ -15,22 +15,6 @@ const writeSet = Effect.fn("Cli.writeSet")(function* (set: object) {
       }),
   });
   yield* Console.log(text);
-});
-
-const targetFlags = (prefix = "") => ({
-  targets: Flag.String(`${prefix}target`).pipe(
-    Flag.withSchema(TaxonName),
-    Flag.atLeast(0),
-    Flag.withDescription("Literal target name; repeat to form a union."),
-  ),
-  files: Flag.String(`${prefix}targets-file`).pipe(
-    Flag.atLeast(0),
-    Flag.withDescription("Target file, or - for stdin. Repeat to combine sources."),
-  ),
-  format: Flag.Literals(`${prefix}targets-format`, ["text", "json", "jsonl"]).pipe(
-    Flag.optional,
-    Flag.withDescription("Override file suffix detection; stdin defaults to text."),
-  ),
 });
 
 const sourceHelp =

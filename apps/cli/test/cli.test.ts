@@ -57,6 +57,11 @@ it.effect.each([
   { path: ["compare", "rank"] },
   { path: ["cmp", "within"] },
   { path: ["set", "relation"] },
+  { path: ["membership", "check"] },
+  { path: ["mem", "part"] },
+  { path: ["mem", "all"] },
+  { path: ["mem", "any"] },
+  { path: ["mem", "none"] },
 ])("shows model-backed command help without configuration or credentials: $path", ({ path }) =>
   Effect.gen(function* () {
     const result = yield* run([...path, "--help"]);

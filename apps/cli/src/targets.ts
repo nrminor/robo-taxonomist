@@ -1,10 +1,26 @@
 import { Array, Effect, FileSystem, Schema, Stdio, Stream } from "effect";
-import { CliError } from "effect/cli";
+import { CliError, Flag } from "effect/cli";
 import { TaxonName, TaxonSet } from "robo-taxonomist";
 import { RecordDocument, SetDocument, restoreSet } from "./documents.ts";
 
 const targetJson = Schema.fromJsonString(Schema.Union([Schema.Array(RecordDocument), SetDocument]));
 const targetLine = Schema.fromJsonString(RecordDocument);
+
+export const targetFlags = (prefix = "") => ({
+  targets: Flag.String(`${prefix}target`).pipe(
+    Flag.withSchema(TaxonName),
+    Flag.atLeast(0),
+    Flag.withDescription("Literal target name; repeat to form a union."),
+  ),
+  files: Flag.String(`${prefix}targets-file`).pipe(
+    Flag.atLeast(0),
+    Flag.withDescription("Target file, or - for stdin. Repeat to combine sources."),
+  ),
+  format: Flag.Literals(`${prefix}targets-format`, ["text", "json", "jsonl"]).pipe(
+    Flag.optional,
+    Flag.withDescription("Override file suffix detection; stdin defaults to text."),
+  ),
+});
 
 export const checkStdin = (paths: readonly string[]) =>
   paths.filter((path) => path === "-").length > 1

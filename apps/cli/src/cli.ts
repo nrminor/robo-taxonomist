@@ -2,6 +2,7 @@ import { Console, Effect, Match } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
 import { modelFailure, modelFlag, modelHelp, modelLayer } from "./model.ts";
+import { membership } from "./membership.ts";
 import { sets } from "./sets.ts";
 
 const labels = Command.make(
@@ -164,5 +165,5 @@ const compare = Command.make("compare").pipe(
 
 export const cli = Command.make("robo-taxonomist").pipe(
   Command.withDescription("Compare taxonomic records and compose symbolic taxon sets."),
-  Command.withSubcommands([compare, sets]),
+  Command.withSubcommands([compare, sets, membership]),
 );
