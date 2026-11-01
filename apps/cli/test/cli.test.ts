@@ -791,8 +791,11 @@ it.effect("runs the executable bin entry through its shebang", () =>
         stdin: "ignore",
       }),
     );
-    expect(yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString)).toBe("true\n");
-    expect(yield* child.exitCode).toBe(0);
+    const stdout = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
+    expect(stdout).toBe("true\n");
+
+    const exitCode = yield* child.exitCode;
+    expect(exitCode).toBe(0);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
