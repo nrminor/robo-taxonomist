@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Array,
   Cause,
+  Data,
   Deferred,
   Effect,
   Exit,
@@ -12,10 +13,13 @@ import {
   Option,
   Predicate,
   Record,
+  Result,
   String,
 } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
 import { AcceptancePolicy, TaxonName, TaxonSet } from "../src/index.ts";
+
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
   const question = Option.getOrThrow(Record.get(decisions, "relation"));
@@ -219,13 +223,12 @@ it.effect.each(operations)(
           const question = relationQuestion(decisions);
           return Effect.succeed({
             answers: {
-              relation: {
-                _tag: "Classify",
+              relation: Classify({
                 label: "multipleRight0",
                 probabilities: Record.map(question.criteria, (_value, key) =>
                   key === "multipleRight0" ? 1 : 0,
                 ),
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -269,13 +272,12 @@ it.effect(
           const question = relationQuestion(decisions);
           return Effect.succeed({
             answers: {
-              relation: {
-                _tag: "Classify",
+              relation: Classify({
                 label: "multipleLeft1",
                 probabilities: Record.map(question.criteria, (_value, key) =>
                   key === "multipleLeft1" ? 1 : 0,
                 ),
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -323,18 +325,21 @@ it.effect.each([
     const left = TaxonSet.union(TaxonSet.of(TaxonName.make("A")), TaxonSet.empty());
     const right = TaxonSet.union(TaxonSet.of(TaxonName.make("B")), TaxonSet.empty());
     for (const [index, [relation, operation]] of operations.entries()) {
-      expect(yield* operation(left, right)).toEqual({
-        _tag: Array.getUnsafe(expected, index),
+      const comparison = yield* operation(left, right);
+      const expectedTag = Array.get(expected, index).pipe(Option.getOrThrow);
+      expect(comparison).toEqual({
+        _tag: expectedTag,
         relation,
       });
     }
   }).pipe(
     Effect.provide(
-      relationLayer({
-        _tag: "Classify",
-        label,
-        probabilities: relationProbabilities({ [label]: 1 }),
-      }),
+      relationLayer(
+        Classify({
+          label,
+          probabilities: relationProbabilities({ [label]: 1 }),
+        }),
+      ),
     ),
   ),
 );
@@ -346,44 +351,44 @@ it.effect.each([
   "accepts grouped subset support for %s despite a different selected label",
   ([_tag, label, probabilities]) =>
     Effect.gen(function* () {
-      expect(
-        yield* TaxonSet.isSubsetOf(
-          TaxonSet.of(TaxonName.make("A")),
-          TaxonSet.of(TaxonName.make("B")),
-        ),
-      ).toEqual({ _tag, relation: "subset" });
+      const subset = yield* TaxonSet.isSubsetOf(
+        TaxonSet.of(TaxonName.make("A")),
+        TaxonSet.of(TaxonName.make("B")),
+      );
+      expect(subset).toEqual({ _tag, relation: "subset" });
     }).pipe(
       Effect.provide(
-        relationLayer({
-          _tag: "Classify",
-          label,
-          probabilities: relationProbabilities(probabilities),
-        }),
+        relationLayer(
+          Classify({
+            label,
+            probabilities: relationProbabilities(probabilities),
+          }),
+        ),
       ),
     ),
 );
 
 it.effect("keeps a grouped probability tie unresolved", () =>
   Effect.gen(function* () {
-    expect(
-      yield* TaxonSet.isSubsetOf(
-        TaxonSet.of(TaxonName.make("A")),
-        TaxonSet.of(TaxonName.make("B")),
-      ),
-    ).toEqual({ _tag: "Undetermined", relation: "subset" });
+    const subset = yield* TaxonSet.isSubsetOf(
+      TaxonSet.of(TaxonName.make("A")),
+      TaxonSet.of(TaxonName.make("B")),
+    );
+    expect(subset).toEqual({ _tag: "Undetermined", relation: "subset" });
   }).pipe(
     Effect.provide(
-      relationLayer({
-        _tag: "Classify",
-        label: "properSuperset",
-        probabilities: relationProbabilities({
-          equal: 0.1,
-          properSubset: 0.2,
-          bothEmpty: 0.15,
-          leftEmpty: 0.05,
-          properSuperset: 0.5,
+      relationLayer(
+        Classify({
+          label: "properSuperset",
+          probabilities: relationProbabilities({
+            equal: 0.1,
+            properSubset: 0.2,
+            bothEmpty: 0.15,
+            leftEmpty: 0.05,
+            properSuperset: 0.5,
+          }),
         }),
-      }),
+      ),
     ),
   ),
 );
@@ -427,13 +432,12 @@ it.effect(
           expect(question.criteria.multipleRight2).toContain("Right taxon node 5 ");
           return Effect.succeed({
             answers: {
-              relation: {
-                _tag: "Classify",
+              relation: Classify({
                 label: "multipleRight2",
                 probabilities: Record.map(question.criteria, (_value, key) =>
                   key === "multipleRight2" ? 1 : 0,
                 ),
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -487,13 +491,12 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
         const question = relationQuestion(decisions);
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "equal",
               probabilities: Record.map(question.criteria, (_value, key) =>
                 key === "equal" ? 1 : 0,
               ),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -501,7 +504,8 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* TaxonSet.equivalent(expression, expression)).toEqual({
+    const equivalence = yield* TaxonSet.equivalent(expression, expression);
+    expect(equivalence).toEqual({
       _tag: "Yes",
       relation: "equivalent",
     });
@@ -572,12 +576,11 @@ it.effect("accepts an Effect-rescaled set answer despite zero confidence", () =>
       decide: () =>
         Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "properSubset",
               confidence: 0,
               probabilities: relationProbabilities({ properSubset: 0.6, disjoint: 0.3 }),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         }),
@@ -585,11 +588,10 @@ it.effect("accepts an Effect-rescaled set answer despite zero confidence", () =>
   );
   return Effect.gen(function* () {
     const a = TaxonSet.of(TaxonName.make("A"));
-    expect(
-      yield* TaxonSet.isSubsetOf(a, a, {
-        policy: AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
-      }),
-    ).toEqual({ _tag: "Yes", relation: "subset" });
+    const subset = yield* TaxonSet.isSubsetOf(a, a, {
+      policy: AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
+    });
+    expect(subset).toEqual({ _tag: "Yes", relation: "subset" });
   }).pipe(Effect.provide(layer));
 });
 
@@ -622,11 +624,12 @@ for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations
       const right = TaxonSet.of(TaxonName.make("B"));
       const result = yield* operation(left, right).pipe(
         Effect.provide(
-          relationLayer({
-            _tag: "Classify",
-            label,
-            probabilities: relationProbabilities({ [label]: 1 }),
-          }),
+          relationLayer(
+            Classify({
+              label,
+              probabilities: relationProbabilities({ [label]: 1 }),
+            }),
+          ),
         ),
       );
       expect(result).toEqual(expected);
@@ -671,8 +674,7 @@ it.effect(
           });
           return Effect.succeed({
             answers: {
-              relation: {
-                _tag: "Classify",
+              relation: Classify({
                 label: "multipleRight1",
                 probabilities: relationProbabilities(
                   { multipleRight1: 1 },
@@ -684,7 +686,7 @@ it.effect(
                     multipleRight1: 0,
                   },
                 ),
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -714,37 +716,45 @@ it.effect("uses only the listed literal Empty shortcuts, without certifying othe
     DecisionModel.make({ decide: () => Effect.die("No requests expected") }),
   );
   return Effect.gen(function* () {
-    expect(yield* TaxonSet.isSubsetOf(empty, problematic)).toEqual({
+    const emptySubset = yield* TaxonSet.isSubsetOf(empty, problematic);
+    expect(emptySubset).toEqual({
       _tag: "Yes",
       relation: "subset",
     });
-    expect(yield* TaxonSet.isProperSubsetOf(problematic, empty)).toEqual({
+    const properSubset = yield* TaxonSet.isProperSubsetOf(problematic, empty);
+    expect(properSubset).toEqual({
       _tag: "No",
       relation: "proper-subset",
     });
-    expect(yield* TaxonSet.equivalent(empty, empty)).toEqual({
+    const emptyEquivalence = yield* TaxonSet.equivalent(empty, empty);
+    expect(emptyEquivalence).toEqual({
       _tag: "Yes",
       relation: "equivalent",
     });
-    expect(yield* TaxonSet.overlaps(empty, problematic)).toEqual({
+    const leftEmptyOverlap = yield* TaxonSet.overlaps(empty, problematic);
+    expect(leftEmptyOverlap).toEqual({
       _tag: "No",
       relation: "overlap",
     });
-    expect(yield* TaxonSet.overlaps(problematic, empty)).toEqual({
+    const rightEmptyOverlap = yield* TaxonSet.overlaps(problematic, empty);
+    expect(rightEmptyOverlap).toEqual({
       _tag: "No",
       relation: "overlap",
     });
-    expect(yield* TaxonSet.disjoint(empty, problematic)).toEqual({
+    const leftEmptyDisjoint = yield* TaxonSet.disjoint(empty, problematic);
+    expect(leftEmptyDisjoint).toEqual({
       _tag: "Yes",
       relation: "disjoint",
     });
-    expect(yield* TaxonSet.disjoint(problematic, empty)).toEqual({
+    const rightEmptyDisjoint = yield* TaxonSet.disjoint(problematic, empty);
+    expect(rightEmptyDisjoint).toEqual({
       _tag: "Yes",
       relation: "disjoint",
     });
     const untyped: unknown = {};
     // @ts-expect-error Shortcut facts do not validate the unused right operand.
-    expect(yield* TaxonSet.isSubsetOf(empty, untyped)).toEqual({ _tag: "Yes", relation: "subset" });
+    const untypedSubset = yield* TaxonSet.isSubsetOf(empty, untyped);
+    expect(untypedSubset).toEqual({ _tag: "Yes", relation: "subset" });
   }).pipe(Effect.provide(layer));
 });
 
@@ -764,13 +774,12 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
         if (seen.length === 5) expect(Record.keys(question.criteria)).toEqual(baseRelationLabels);
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: seen.length === 4 ? "properSubset" : "equal",
               probabilities: Record.map(question.criteria, (_value, key) =>
                 key === (seen.length === 4 ? "properSubset" : "equal") ? 1 : 0,
               ),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -778,21 +787,27 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* TaxonSet.isSubsetOf(nonliteralEmpty, empty)).toEqual({
+    const subset = yield* TaxonSet.isSubsetOf(nonliteralEmpty, empty);
+    expect(subset).toEqual({
       _tag: "Yes",
       relation: "subset",
     });
-    expect(yield* TaxonSet.equivalent(empty, a)).toEqual({ _tag: "Yes", relation: "equivalent" });
-    expect(yield* TaxonSet.equivalent(a, empty)).toEqual({ _tag: "Yes", relation: "equivalent" });
-    expect(yield* TaxonSet.isProperSubsetOf(empty, nonliteralEmpty)).toEqual({
+    const leftEquivalence = yield* TaxonSet.equivalent(empty, a);
+    expect(leftEquivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
+    const rightEquivalence = yield* TaxonSet.equivalent(a, empty);
+    expect(rightEquivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
+    const properSubset = yield* TaxonSet.isProperSubsetOf(empty, nonliteralEmpty);
+    expect(properSubset).toEqual({
       _tag: "Yes",
       relation: "proper-subset",
     });
-    expect(yield* TaxonSet.overlaps(zeroNames, zeroNames)).toEqual({
+    const overlap = yield* TaxonSet.overlaps(zeroNames, zeroNames);
+    expect(overlap).toEqual({
       _tag: "Yes",
       relation: "overlap",
     });
-    expect(yield* TaxonSet.disjoint(nonliteralEmpty, nonliteralEmpty)).toEqual({
+    const disjoint = yield* TaxonSet.disjoint(nonliteralEmpty, nonliteralEmpty);
+    expect(disjoint).toEqual({
       _tag: "No",
       relation: "disjoint",
     });
@@ -855,19 +870,19 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
       Effect.gen(function* () {
         const a = TaxonSet.of(TaxonName.make("A"));
         const b = TaxonSet.of(TaxonName.make("B"));
-        expect(
-          yield* operation(a, b, {
-            policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
-          }).pipe(
-            Effect.provide(
-              relationLayer({
-                _tag: "Classify",
+        const comparison = yield* operation(a, b, {
+          policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
+        }).pipe(
+          Effect.provide(
+            relationLayer(
+              Classify({
                 label,
                 probabilities: relationProbabilities(probabilities),
               }),
             ),
           ),
-        ).toEqual({ _tag: expectedTag, relation });
+        );
+        expect(comparison).toEqual({ _tag: expectedTag, relation });
       }),
   );
   it.effect(`accepts ${relation} exact support and margin boundary`, () =>
@@ -878,11 +893,12 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
         policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
       }).pipe(
         Effect.provide(
-          relationLayer({
-            _tag: "Classify",
-            label: "multipleRight0",
-            probabilities: relationProbabilities({ [yesLabel]: 0.4, multipleRight0: 0.6 }),
-          }),
+          relationLayer(
+            Classify({
+              label: "multipleRight0",
+              probabilities: relationProbabilities({ [yesLabel]: 0.4, multipleRight0: 0.6 }),
+            }),
+          ),
         ),
       );
       expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation, side: "right", taxon: b });
@@ -902,13 +918,12 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
         seen.push(Record.keys(question.criteria));
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "undetermined",
               probabilities: Record.map(question.criteria, (_value, key) =>
                 key === "undetermined" ? 1 : 0,
               ),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -987,7 +1002,8 @@ it.effect.each(operations)(
     );
     return Effect.gen(function* () {
       const a = TaxonSet.of(TaxonName.make("A"));
-      expect(yield* Effect.flip(operation(a, a))).toBe(failure);
+      const error = yield* Effect.flip(operation(a, a));
+      expect(error).toBe(failure);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -1006,9 +1022,8 @@ it.effect.each(operations)("rejects a missing answer for %s", ([_relation, opera
           }),
       }),
     );
-    expect((yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)))).reason._tag).toBe(
-      "InvalidOutputError",
-    );
+    const error = yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)));
+    expect(error.reason._tag).toBe("InvalidOutputError");
   }),
 );
 
@@ -1055,11 +1070,8 @@ it.effect.each(operations)("preserves a provider defect for %s", ([_relation, op
     expect(Exit.isFailure(exit)).toBe(true);
     const cause = Option.getOrThrow(Exit.getCause(exit));
     expect(cause.reasons).toHaveLength(1);
-    expect(
-      Array.fromIterable(
-        Iterable.map(Iterable.filter(cause.reasons, Cause.isDieReason), (reason) => reason.defect),
-      ),
-    ).toEqual([defect]);
+    const actualDefect = Cause.findDefect(cause).pipe(Result.getOrThrow);
+    expect(actualDefect).toEqual(defect);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1075,11 +1087,10 @@ it.effect("maps a single overlap observation to disjoint without another classif
         expect(Record.keys(decisions)).toEqual(["relation"]);
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "partialOverlap",
               probabilities: relationProbabilities({ partialOverlap: 1 }),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -1087,7 +1098,8 @@ it.effect("maps a single overlap observation to disjoint without another classif
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* TaxonSet.disjoint(set, set)).toEqual({ _tag: "No", relation: "disjoint" });
+    const disjoint = yield* TaxonSet.disjoint(set, set);
+    expect(disjoint).toEqual({ _tag: "No", relation: "disjoint" });
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1109,11 +1121,10 @@ it.effect("asks overlap directly with one complete-expression classification", (
         });
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "disjoint",
               probabilities: relationProbabilities({ disjoint: 1 }),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -1121,7 +1132,8 @@ it.effect("asks overlap directly with one complete-expression classification", (
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* TaxonSet.overlaps(set, set)).toEqual({ _tag: "No", relation: "overlap" });
+    const overlap = yield* TaxonSet.overlaps(set, set);
+    expect(overlap).toEqual({ _tag: "No", relation: "overlap" });
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1140,11 +1152,10 @@ it.effect("asks organism-set equivalence directly even for the same expression",
         });
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "equal",
               probabilities: relationProbabilities({ equal: 1 }),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -1152,7 +1163,8 @@ it.effect("asks organism-set equivalence directly even for the same expression",
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* TaxonSet.equivalent(set, set)).toEqual({ _tag: "Yes", relation: "equivalent" });
+    const equivalence = yield* TaxonSet.equivalent(set, set);
+    expect(equivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1173,11 +1185,10 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
         });
         return Effect.succeed({
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "equal",
               probabilities: relationProbabilities({ equal: 1 }, { multipleRight0: 0 }),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -1185,9 +1196,11 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
     }),
   );
   return Effect.gen(function* () {
-    expect(
-      yield* TaxonSet.isProperSubsetOf(TaxonSet.empty(), TaxonSet.of(TaxonName.make("A"))),
-    ).toEqual({ _tag: "No", relation: "proper-subset" });
+    const properSubset = yield* TaxonSet.isProperSubsetOf(
+      TaxonSet.empty(),
+      TaxonSet.of(TaxonName.make("A")),
+    );
+    expect(properSubset).toEqual({ _tag: "No", relation: "proper-subset" });
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1229,13 +1242,12 @@ it.effect(
           const question = relationQuestion(decisions);
           return Effect.succeed({
             answers: {
-              relation: {
-                _tag: "Classify",
+              relation: Classify({
                 label: "properSubset",
                 probabilities: Record.map(question.criteria, (_value, key) =>
                   key === "properSubset" ? 1 : 0,
                 ),
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -1243,7 +1255,8 @@ it.effect(
       }),
     );
     return Effect.gen(function* () {
-      expect(yield* TaxonSet.isSubsetOf(left, right)).toEqual({ _tag: "Yes", relation: "subset" });
+      const subset = yield* TaxonSet.isSubsetOf(left, right);
+      expect(subset).toEqual({ _tag: "Yes", relation: "subset" });
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },

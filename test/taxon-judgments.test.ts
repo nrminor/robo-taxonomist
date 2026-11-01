@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Array,
   Cause,
+  Data,
   Deferred,
   Effect,
   Exit,
@@ -10,6 +11,7 @@ import {
   Option,
   Predicate,
   Record,
+  Result,
   Schema,
   Struct,
   pipe,
@@ -27,6 +29,8 @@ import {
   type TaxonContainmentJudgment,
   type TaxonMembershipJudgment,
 } from "../src/index.ts";
+
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 // Canned transport answers test library contracts, not biological accuracy.
 const containmentProbabilities = {
@@ -51,8 +55,7 @@ it.effect("retains non-containment when the kind of non-containment is uncertain
       decide: () =>
         Effect.succeed({
           answers: {
-            containment: {
-              _tag: "Classify",
+            containment: Classify({
               label: "partialOverlap",
               probabilities: {
                 equal: 0.1,
@@ -68,19 +71,18 @@ it.effect("retains non-containment when the kind of non-containment is uncertain
                 multipleRight: 0,
                 multipleBoth: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         }),
     }),
   );
   return Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.taxonWithin(
-        TaxonName.make("Quercus robur and Acer saccharum"),
-        TaxonName.make("Quercus"),
-      ),
-    ).toEqual({ _tag: "NotContained" });
+    const containment = yield* Taxonomy.taxonWithin(
+      TaxonName.make("Quercus robur and Acer saccharum"),
+      TaxonName.make("Quercus"),
+    );
+    expect(containment).toEqual({ _tag: "NotContained" });
   }).pipe(Effect.provide(layer));
 });
 
@@ -107,8 +109,7 @@ it.effect.each(["left", "right"] as const)(
           });
           return Effect.succeed({
             answers: {
-              identity: {
-                _tag: "Classify",
+              identity: Classify({
                 label,
                 probabilities: {
                   same: 0,
@@ -119,7 +120,7 @@ it.effect.each(["left", "right"] as const)(
                   multipleBoth: 0,
                   [label]: 1,
                 },
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -127,7 +128,8 @@ it.effect.each(["left", "right"] as const)(
       }),
     );
     return Effect.gen(function* () {
-      expect(yield* Taxonomy.sameTaxon(left, right)).toEqual({ _tag: "MultipleTaxa", side });
+      const identity = yield* Taxonomy.sameTaxon(left, right);
+      expect(identity).toEqual({ _tag: "MultipleTaxa", side });
     }).pipe(Effect.provide(layer));
   },
 );
@@ -149,8 +151,7 @@ it.effect("asks one identity question with quoted names and null state", () => {
         });
         return Effect.succeed({
           answers: {
-            identity: {
-              _tag: "Classify",
+            identity: Classify({
               label: "same",
               probabilities: {
                 same: 1,
@@ -160,7 +161,7 @@ it.effect("asks one identity question with quoted names and null state", () => {
                 multipleRight: 0,
                 multipleBoth: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -169,7 +170,8 @@ it.effect("asks one identity question with quoted names and null state", () => {
   );
   return Effect.gen(function* () {
     const name = TaxonName.make('Oak\n"A"');
-    expect(yield* Taxonomy.sameTaxon(name, name)).toEqual({ _tag: "SameTaxon" });
+    const identity = yield* Taxonomy.sameTaxon(name, name);
+    expect(identity).toEqual({ _tag: "SameTaxon" });
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -189,41 +191,46 @@ it.effect.each([
   ["undetermined", { _tag: "Undetermined" }],
 ] as const)("maps containment fixture %s to its original side", ([label, expected]) =>
   Effect.gen(function* () {
-    expect(yield* Taxonomy.taxonWithin(TaxonName.make("inner"), TaxonName.make("outer"))).toEqual(
-      expected,
+    const containment = yield* Taxonomy.taxonWithin(
+      TaxonName.make("inner"),
+      TaxonName.make("outer"),
     );
+    expect(containment).toEqual(expected);
   }).pipe(
     Effect.provide(
-      scalarLayer("containment", {
-        _tag: "Classify",
-        label,
-        probabilities: {
-          ...containmentProbabilities,
-          [label]: 1,
-        },
-      }),
+      scalarLayer(
+        "containment",
+        Classify({
+          label,
+          probabilities: {
+            ...containmentProbabilities,
+            [label]: 1,
+          },
+        }),
+      ),
     ),
   ),
 );
 
 it.effect("uses projected containment support instead of a nonleading fine selection", () =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
-        policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
-      }),
-    ).toEqual({ _tag: "Contained" });
+    const containment = yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
+      policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+    });
+    expect(containment).toEqual({ _tag: "Contained" });
   }).pipe(
     Effect.provide(
-      scalarLayer("containment", {
-        _tag: "Classify",
-        label: "disjoint",
-        probabilities: {
-          ...containmentProbabilities,
-          equal: 0.6,
-          disjoint: 0.4,
-        },
-      }),
+      scalarLayer(
+        "containment",
+        Classify({
+          label: "disjoint",
+          probabilities: {
+            ...containmentProbabilities,
+            equal: 0.6,
+            disjoint: 0.4,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -234,22 +241,23 @@ it.effect.each([
   ["rejects insufficient margin", 0, 0.625, "Undetermined"],
 ] as const)("threads containment policy: %s", ([_case, minimumSupport, minimumMargin, tag]) =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
-        policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
-      }),
-    ).toEqual({ _tag: tag });
+    const containment = yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
+      policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
+    });
+    expect(containment).toEqual({ _tag: tag });
   }).pipe(
     Effect.provide(
-      scalarLayer("containment", {
-        _tag: "Classify",
-        label: "equal",
-        probabilities: {
-          ...containmentProbabilities,
-          equal: 0.75,
-          disjoint: 0.25,
-        },
-      }),
+      scalarLayer(
+        "containment",
+        Classify({
+          label: "equal",
+          probabilities: {
+            ...containmentProbabilities,
+            equal: 0.75,
+            disjoint: 0.25,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -271,18 +279,20 @@ it.effect.each([
     expect(result).toEqual(expected);
   }).pipe(
     Effect.provide(
-      scalarLayer("record0", {
-        _tag: "Classify",
-        label,
-        probabilities: {
-          member: 0,
-          notMember: 0,
-          mixed: 0,
-          undetermined: 0,
-          multipleTarget0: 0,
-          [label]: 1,
-        },
-      }),
+      scalarLayer(
+        "record0",
+        Classify({
+          label,
+          probabilities: {
+            member: 0,
+            notMember: 0,
+            mixed: 0,
+            undetermined: 0,
+            multipleTarget0: 0,
+            [label]: 1,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -340,8 +350,7 @@ it.effect(
           ]);
           return Effect.succeed({
             answers: {
-              record0: {
-                _tag: "Classify",
+              record0: Classify({
                 label: "multipleTarget2",
                 probabilities: {
                   member: 0,
@@ -353,7 +362,7 @@ it.effect(
                   multipleTarget2: 1,
                   multipleTarget3: 0,
                 },
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -382,7 +391,8 @@ it.effect(
     );
     return Effect.gen(function* () {
       // @ts-expect-error Literal Empty does not certify an untyped record.
-      expect(yield* Taxonomy.recordBelongsTo({}, TaxonSet.empty())).toEqual({ _tag: "NotMember" });
+      const membership = yield* Taxonomy.recordBelongsTo({}, TaxonSet.empty());
+      expect(membership).toEqual({ _tag: "NotMember" });
     }).pipe(Effect.provide(layer));
   },
 );
@@ -407,11 +417,10 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
         ]);
         return Effect.succeed({
           answers: {
-            record0: {
-              _tag: "Classify",
+            record0: Classify({
               label: "notMember",
               probabilities: { member: 0, notMember: 1, mixed: 0, undetermined: 0 },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -419,7 +428,8 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* Taxonomy.recordBelongsTo(RecordLabel.make("A"), target)).toEqual({
+    const membership = yield* Taxonomy.recordBelongsTo(RecordLabel.make("A"), target);
+    expect(membership).toEqual({
       _tag: "NotMember",
     });
   }).pipe(Effect.provide(layer));
@@ -451,21 +461,26 @@ it.effect.each([
   "applies singleton membership policy: %s",
   ([_case, label, probabilities, minimumSupport, minimumMargin, tag]) =>
     Effect.gen(function* () {
-      expect(
-        yield* Taxonomy.recordBelongsTo(RecordLabel.make("A"), TaxonName.make("B"), {
+      const membership = yield* Taxonomy.recordBelongsTo(
+        RecordLabel.make("A"),
+        TaxonName.make("B"),
+        {
           policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
-        }),
-      ).toEqual({ _tag: tag });
+        },
+      );
+      expect(membership).toEqual({ _tag: tag });
     }).pipe(
       Effect.provide(
-        scalarLayer("record0", {
-          _tag: "Classify",
-          label,
-          probabilities: pipe(
-            { member: 0, notMember: 0, mixed: 0, undetermined: 0, multipleTarget0: 0 },
-            Struct.assign(probabilities),
-          ),
-        }),
+        scalarLayer(
+          "record0",
+          Classify({
+            label,
+            probabilities: pipe(
+              { member: 0, notMember: 0, mixed: 0, undetermined: 0, multipleTarget0: 0 },
+              Struct.assign(probabilities),
+            ),
+          }),
+        ),
       ),
     ),
 );
@@ -495,13 +510,12 @@ it.effect(
                   "undetermined",
                   "multipleTarget0",
                 ]);
-              return {
-                _tag: "Classify",
+              return Classify({
                 label: "undetermined",
                 probabilities: Record.map(question.criteria, (_value, key) =>
                   key === "undetermined" ? 1 : 0,
                 ),
-              };
+              });
             },
           );
           return Effect.succeed({
@@ -520,22 +534,19 @@ it.effect(
       ),
     );
     return Effect.gen(function* () {
-      yield* Effect.all(
-        [first, second, Taxonomy.sameTaxon(TaxonName.make("C"), TaxonName.make("D"))],
-        { concurrency: 3 },
-      );
+      const scalarIdentity = Taxonomy.sameTaxon(TaxonName.make("C"), TaxonName.make("D"));
+      yield* Effect.all([first, second, scalarIdentity], { concurrency: 3 });
       yield* first;
       expect(seen).toHaveLength(4);
-      expect(
-        Array.filter(
-          seen,
-          Schema.is(
-            Schema.Struct({
-              nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon") })]),
-            }),
-          ),
+      const singleTaxonStates = Array.filter(
+        seen,
+        Schema.is(
+          Schema.Struct({
+            nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon") })]),
+          }),
         ),
-      ).toEqual([
+      );
+      expect(singleTaxonStates).toEqual([
         { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
         { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
       ]);
@@ -583,8 +594,7 @@ it.effect(
               decisions,
               (_question, key): DecisionModel.ProviderClassifyAnswer =>
                 key === "identity"
-                  ? {
-                      _tag: "Classify",
+                  ? Classify({
                       label: "same",
                       confidence: 0,
                       probabilities: {
@@ -595,9 +605,8 @@ it.effect(
                         multipleRight: 0,
                         multipleBoth: 0,
                       },
-                    }
-                  : {
-                      _tag: "Classify",
+                    })
+                  : Classify({
                       label: "mixed",
                       confidence: 0,
                       probabilities: {
@@ -607,7 +616,7 @@ it.effect(
                         undetermined: 0,
                         multipleTarget0: 0,
                       },
-                    },
+                    }),
             ),
             usage: { inputTokens: undefined, outputTokens: undefined },
           }),
@@ -615,8 +624,10 @@ it.effect(
     );
     return Effect.gen(function* () {
       const policy = AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 });
-      expect(yield* Taxonomy.sameTaxon(nameA, nameB, { policy })).toEqual({ _tag: "SameTaxon" });
-      expect(yield* Taxonomy.recordBelongsTo(recordA, nameB, { policy })).toEqual({
+      const identity = yield* Taxonomy.sameTaxon(nameA, nameB, { policy });
+      expect(identity).toEqual({ _tag: "SameTaxon" });
+      const membership = yield* Taxonomy.recordBelongsTo(recordA, nameB, { policy });
+      expect(membership).toEqual({
         _tag: "MixedMembership",
       });
     }).pipe(Effect.provide(layer));
@@ -653,8 +664,10 @@ it.effect(
         // @ts-expect-error Untyped caller with malformed recursive target.
         Taxonomy.recordBelongsTo(recordA, { _tag: "Difference", left: TaxonSet.of(nameA) }),
       ];
-      for (const request of requests)
-        expect((yield* Effect.flip(request)).reason._tag).toBe("InvalidUserInputError");
+      for (const request of requests) {
+        const error = yield* Effect.flip(request);
+        expect(error.reason._tag).toBe("InvalidUserInputError");
+      }
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));
   },
@@ -677,7 +690,8 @@ it.effect.each(modelOperations)("preserves provider failure for %s", ([_key, ope
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* Effect.flip(operation())).toBe(failure);
+    const error = yield* Effect.flip(operation());
+    expect(error).toBe(failure);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -695,9 +709,8 @@ for (const [key, operation] of modelOperations) {
             }),
         }),
       );
-      expect((yield* Effect.flip(operation().pipe(Effect.provide(layer)))).reason._tag).toBe(
-        "InvalidOutputError",
-      );
+      const error = yield* Effect.flip(operation().pipe(Effect.provide(layer)));
+      expect(error.reason._tag).toBe("InvalidOutputError");
     }),
   );
 }
@@ -743,13 +756,8 @@ it.effect.each(modelOperations)("preserves a provider defect for %s", ([_key, op
     expect(Exit.isFailure(exit)).toBe(true);
     const cause = Exit.getCause(exit).pipe(Option.getOrThrow);
     expect(cause.reasons).toHaveLength(1);
-    expect(
-      pipe(
-        cause.reasons,
-        Array.filter(Cause.isDieReason),
-        Array.map((reason) => reason.defect),
-      ),
-    ).toEqual([defect]);
+    const actualDefect = Cause.findDefect(cause).pipe(Result.getOrThrow);
+    expect(actualDefect).toEqual(defect);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -786,6 +794,7 @@ it.effect("provides shared target once and record facts once in singleton member
         });
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
+        const instructions = question.instructions;
         for (const field of [
           "Record label",
           "Scientific name",
@@ -793,12 +802,11 @@ it.effect("provides shared target once and record facts once in singleton member
           "Taxon ID",
           "Taxonomy release",
         ]) {
-          expect(question.instructions.split(`${field}:`), field).toHaveLength(2);
+          expect(instructions.split(`${field}:`), field).toHaveLength(2);
         }
         return Effect.succeed({
           answers: {
-            record0: {
-              _tag: "Classify",
+            record0: Classify({
               label: "member",
               probabilities: {
                 member: 1,
@@ -807,7 +815,7 @@ it.effect("provides shared target once and record facts once in singleton member
                 undetermined: 0,
                 multipleTarget0: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -815,7 +823,8 @@ it.effect("provides shared target once and record facts once in singleton member
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* Taxonomy.recordBelongsTo(record, TaxonName.make("Quercus"))).toEqual({
+    const membership = yield* Taxonomy.recordBelongsTo(record, TaxonName.make("Quercus"));
+    expect(membership).toEqual({
       _tag: "Member",
     });
     expect(calls).toBe(1);
@@ -840,22 +849,25 @@ it.effect.each([
   ["undetermined", { _tag: "Undetermined" }],
 ] as const)("maps the selected identity fixture %s", ([label, expected]) =>
   Effect.gen(function* () {
-    expect(yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"))).toEqual(expected);
+    const identity = yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"));
+    expect(identity).toEqual(expected);
   }).pipe(
     Effect.provide(
-      scalarLayer("identity", {
-        _tag: "Classify",
-        label,
-        probabilities: {
-          same: 0,
-          different: 0,
-          multipleLeft: 0,
-          multipleRight: 0,
-          multipleBoth: 0,
-          undetermined: 0,
-          [label]: 1,
-        },
-      }),
+      scalarLayer(
+        "identity",
+        Classify({
+          label,
+          probabilities: {
+            same: 0,
+            different: 0,
+            multipleLeft: 0,
+            multipleRight: 0,
+            multipleBoth: 0,
+            undetermined: 0,
+            [label]: 1,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -889,58 +901,60 @@ it.effect.each([
   ],
 ] as const)("abstains for identity %s", ([_case, label, probabilities, policy]) =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.sameTaxon(
-        TaxonName.make("A"),
-        TaxonName.make("B"),
-        Option.match(Option.fromUndefinedOr(policy), {
-          onNone: () => ({}),
-          onSome: (policy) => ({ policy }),
-        }),
-      ),
-    ).toEqual({ _tag: "Undetermined" });
+    const identity = yield* Taxonomy.sameTaxon(
+      TaxonName.make("A"),
+      TaxonName.make("B"),
+      Option.match(Option.fromUndefinedOr(policy), {
+        onNone: () => ({}),
+        onSome: (policy) => ({ policy }),
+      }),
+    );
+    expect(identity).toEqual({ _tag: "Undetermined" });
   }).pipe(
     Effect.provide(
-      scalarLayer("identity", {
-        _tag: "Classify",
-        label,
-        probabilities: pipe(
-          {
-            same: 0,
-            different: 0,
-            undetermined: 0,
-            multipleLeft: 0,
-            multipleRight: 0,
-            multipleBoth: 0,
-          },
-          Struct.assign(probabilities),
-        ),
-      }),
+      scalarLayer(
+        "identity",
+        Classify({
+          label,
+          probabilities: pipe(
+            {
+              same: 0,
+              different: 0,
+              undetermined: 0,
+              multipleLeft: 0,
+              multipleRight: 0,
+              multipleBoth: 0,
+            },
+            Struct.assign(probabilities),
+          ),
+        }),
+      ),
     ),
   ),
 );
 
 it.effect("accepts inclusive support and decimal margin for a selected diagnosis", () =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), {
-        policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
-      }),
-    ).toEqual({ _tag: "MultipleTaxa", side: "right" });
+    const identity = yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), {
+      policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
+    });
+    expect(identity).toEqual({ _tag: "MultipleTaxa", side: "right" });
   }).pipe(
     Effect.provide(
-      scalarLayer("identity", {
-        _tag: "Classify",
-        label: "multipleRight",
-        probabilities: {
-          same: 0.4,
-          different: 0,
-          undetermined: 0,
-          multipleLeft: 0,
-          multipleRight: 0.6,
-          multipleBoth: 0,
-        },
-      }),
+      scalarLayer(
+        "identity",
+        Classify({
+          label: "multipleRight",
+          probabilities: {
+            same: 0.4,
+            different: 0,
+            undetermined: 0,
+            multipleLeft: 0,
+            multipleRight: 0.6,
+            multipleBoth: 0,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -965,14 +979,13 @@ it.effect("asks the direct containment question with original left = inner", () 
         });
         return Effect.succeed({
           answers: {
-            containment: {
-              _tag: "Classify",
+            containment: Classify({
               label: "equal",
               probabilities: {
                 ...containmentProbabilities,
                 equal: 1,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -980,7 +993,8 @@ it.effect("asks the direct containment question with original left = inner", () 
     }),
   );
   return Effect.gen(function* () {
-    expect(yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"))).toEqual({
+    const containment = yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"));
+    expect(containment).toEqual({
       _tag: "Contained",
     });
   }).pipe(Effect.provide(layer));

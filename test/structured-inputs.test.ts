@@ -1,7 +1,9 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Layer, Predicate, Record, Schema } from "effect";
+import { Array, Data, Effect, Layer, Option, Predicate, Record, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import { RecordLabel, TaxonId, TaxonName, TaxonSet, Taxonomy } from "../src/index.ts";
+
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 // Exercise the real DecisionModel contract with deterministic transport, not biological accuracy.
 const modelLayer = (
@@ -15,15 +17,15 @@ const modelLayer = (
         const instructions: string[] = [];
         const answers = Record.map(decisions, (question): DecisionModel.ProviderClassifyAnswer => {
           if (!Predicate.isTagged(question, "Classify")) throw new Error("Expected classification");
-          instructions.push(question.instructions);
+          const instruction = question.instructions;
+          instructions.push(instruction);
           expect(Record.keys(question.criteria)).toContain(label);
-          return {
-            _tag: "Classify",
+          return Classify({
             label,
             probabilities: Record.map(question.criteria, (_criterion, key) =>
               key === label ? 1 : 0,
             ),
-          };
+          });
         });
         inspect(state, instructions);
         return Effect.succeed({
@@ -98,9 +100,11 @@ it.effect.each(["identity", "containment"] as const)(
       expect(text.indexOf("oak-17")).toBeLessThan(text.indexOf("beech-42"));
     });
     return Effect.gen(function* () {
-      const result = yield* operation === "identity"
-        ? Taxonomy.sameTaxon(left, right)
-        : Taxonomy.taxonWithin(left, right);
+      const comparison =
+        operation === "identity"
+          ? Taxonomy.sameTaxon(left, right)
+          : Taxonomy.taxonWithin(left, right);
+      const result = yield* comparison;
       expect(result).toEqual({ _tag: operation === "identity" ? "SameTaxon" : "Contained" });
       expect(calls).toBe(1);
       expect(left.sampleId).toBe("private-target-metadata");
@@ -215,9 +219,9 @@ it.effect.each(["left", "right"] as const)(
     const left = TaxonSet.union(TaxonSet.empty(), taxon);
     const right = TaxonSet.of({ taxonId: TaxonId.make({ taxonomy: "ncbi", id: "9606" }) });
     return Effect.gen(function* () {
-      const result = yield* side === "left"
-        ? TaxonSet.equivalent(left, right)
-        : TaxonSet.equivalent(right, left);
+      const comparison =
+        side === "left" ? TaxonSet.equivalent(left, right) : TaxonSet.equivalent(right, left);
+      const result = yield* comparison;
       expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation: "equivalent", side, taxon });
       if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected set clarification");
       expect(result.taxon).toBe(taxon);
@@ -260,13 +264,16 @@ it.effect(
           const input = Schema.decodeUnknownSync(stateSchema)(state);
           expect(input.records).toEqual(['Record label: "Specimen 17"']);
           expect(input.taxa).toHaveLength(calls === 1 ? 1 : 2);
-          expect(input.taxa[0]).toEqual({
+          const firstTaxon = Array.head(input.taxa).pipe(Option.getOrThrow);
+          expect(firstTaxon).toEqual({
             label: "Quercus and Fagus assignments",
             scientificName: "Quercus robur",
             taxonId: { taxonomy: "local-taxonomy", id: "oak-17", release: "2026-01" },
           });
-          if (calls === 2)
-            expect(input.taxa[1]).toEqual({ taxonId: { taxonomy: "ncbi", id: "9606" } });
+          if (calls === 2) {
+            const secondTaxon = Array.get(input.taxa, 1).pipe(Option.getOrThrow);
+            expect(secondTaxon).toEqual({ taxonId: { taxonomy: "ncbi", id: "9606" } });
+          }
           expect(JSON.stringify(state)).not.toContain("private-target-metadata");
           expect(JSON.stringify(state)).not.toContain("private-id");
           expect(JSON.stringify(state)).not.toContain("abundance");
@@ -280,11 +287,10 @@ it.effect(
                 "noMatch",
                 "undetermined",
               ]);
-              return {
-                _tag: "Classify",
+              return Classify({
                 label: "undetermined",
                 probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
-              };
+              });
             }),
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -295,15 +301,18 @@ it.effect(
       for (const panel of [first, TaxonSet.union(first, second)]) {
         const result = yield* Taxonomy.classifyRecords([specimen], panel);
         expect(result.panel).toBe(panel);
-        expect(result.records[0]?.record).toBe(specimen);
-        const matches = result.records[0]?.taxa ?? [];
+        const record = Array.head(result.records).pipe(Option.getOrThrow);
+        expect(record.record).toBe(specimen);
+        const matches = record.taxa;
         expect(matches).toHaveLength(calls === 1 ? 1 : 2);
-        expect(matches[0]?.taxon).toBe(first);
-        expect(matches[0]?.taxon.record).toBe(source);
-        expect(matches[0]?.record).toBe(specimen);
+        const firstMatch = Array.head(matches).pipe(Option.getOrThrow);
+        expect(firstMatch.taxon).toBe(first);
+        expect(firstMatch.taxon.record).toBe(source);
+        expect(firstMatch.record).toBe(specimen);
         if (calls === 2) {
-          expect(matches[1]?.taxon).toBe(second);
-          expect(matches[1]?.taxon.record).toBe(second.record);
+          const secondMatch = Array.get(matches, 1).pipe(Option.getOrThrow);
+          expect(secondMatch.taxon).toBe(second);
+          expect(secondMatch.taxon.record).toBe(second.record);
         }
         for (const match of matches) {
           expect(match.judgment).toEqual({ _tag: "Undetermined" });

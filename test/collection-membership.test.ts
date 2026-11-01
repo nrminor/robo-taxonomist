@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Array,
   Cause,
+  Data,
   Deferred,
   Effect,
   Exit,
@@ -94,20 +95,27 @@ it.effect(
         [member, outside, mixed, unresolved, diagnosed, member, laterMember],
         target,
       );
+      const firstMember = Array.head(partition.Member).pipe(Option.getOrThrow);
+      const secondMember = Array.get(partition.Member, 1).pipe(Option.getOrThrow);
+      const firstNonMember = Array.head(partition.NotMember).pipe(Option.getOrThrow);
+      const secondNonMember = Array.get(partition.NotMember, 1).pipe(Option.getOrThrow);
+      const mixedRecord = Array.head(partition.MixedMembership).pipe(Option.getOrThrow);
+      const unresolvedRecord = Array.head(partition.Undetermined).pipe(Option.getOrThrow);
+      const diagnosis = Array.head(partition.MultipleTaxaInTarget).pipe(Option.getOrThrow);
       expect(partition.Member).toEqual([member, laterMember]);
-      expect(partition.Member[0]).toBe(member);
-      expect(partition.Member[1]).toBe(laterMember);
+      expect(firstMember).toBe(member);
+      expect(secondMember).toBe(laterMember);
       expect(partition.NotMember).toEqual([outside, member]);
-      expect(partition.NotMember[0]).toBe(outside);
-      expect(partition.NotMember[1]).toBe(member);
+      expect(firstNonMember).toBe(outside);
+      expect(secondNonMember).toBe(member);
       expect(partition.MixedMembership).toEqual([mixed]);
-      expect(partition.MixedMembership[0]).toBe(mixed);
+      expect(mixedRecord).toBe(mixed);
       expect(partition.Undetermined).toEqual([unresolved]);
-      expect(partition.Undetermined[0]).toBe(unresolved);
+      expect(unresolvedRecord).toBe(unresolved);
       expect(partition.MultipleTaxaInTarget).toEqual([
         { record: diagnosed, target: TaxonSet.of(target) },
       ]);
-      expect(partition.MultipleTaxaInTarget[0]?.record).toBe(diagnosed);
+      expect(diagnosis.record).toBe(diagnosed);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -137,12 +145,19 @@ it.effect("keeps overlapping genus/family groups and repeated targets in supplie
     expect(
       grouped.pipe((value) =>
         Array.map(value.groups, (group) =>
-          group.partition.pipe((partition) => partition.Member[0]?.sampleId),
+          group.partition.pipe(
+            (partition) => Array.head(partition.Member).pipe(Option.getOrThrow).sampleId,
+          ),
         ),
       ),
     ).toEqual(["A17", "A17", "A17"]);
-    for (const group of grouped.groups) expect(group.partition.Member[0]).toBe(record);
-    expect(grouped.groups[0]?.partition).not.toBe(grouped.groups[2]?.partition);
+    for (const group of grouped.groups) {
+      const member = Array.head(group.partition.Member).pipe(Option.getOrThrow);
+      expect(member).toBe(record);
+    }
+    const firstGroup = Array.head(grouped.groups).pipe(Option.getOrThrow);
+    const repeatedGroup = Array.get(grouped.groups, 2).pipe(Option.getOrThrow);
+    expect(firstGroup.partition).not.toBe(repeatedGroup.partition);
   }).pipe(Effect.provide(layer));
 });
 
@@ -171,28 +186,29 @@ it.effect(
         RecordLabel.make("mixed"),
         RecordLabel.make("unrequested"),
       ];
-      expect(
-        yield* Taxonomy.allRecordsBelongTo(records, TaxonName.make("A"), {
-          execution: CollectionExecution.make({ batchSize: 2, concurrency: 1 }),
-        }),
-      ).toEqual({ _tag: "No", quantifier: "all" });
+      const membership = yield* Taxonomy.allRecordsBelongTo(records, TaxonName.make("A"), {
+        execution: CollectionExecution.make({ batchSize: 2, concurrency: 1 }),
+      });
+      expect(membership).toEqual({ _tag: "No", quantifier: "all" });
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
 );
 
-const membershipAnswer = (label: string): DecisionModel.ProviderClassifyAnswer => ({
-  _tag: "Classify",
-  label,
-  probabilities: {
-    member: 0,
-    notMember: 0,
-    mixed: 0,
-    undetermined: 0,
-    multipleTarget0: 0,
-    [label]: 1,
-  },
-});
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
+const membershipAnswer = (label: string): DecisionModel.ProviderClassifyAnswer =>
+  Classify({
+    label,
+    probabilities: {
+      member: 0,
+      notMember: 0,
+      mixed: 0,
+      undetermined: 0,
+      multipleTarget0: 0,
+      [label]: 1,
+    },
+  });
 
 const response = (labels: readonly string[]): DecisionModel.ProviderResponse => ({
   answers: Record.fromEntries(
@@ -214,8 +230,7 @@ it.effect.each([
         decide: () =>
           Effect.succeed({
             answers: {
-              record0: {
-                _tag: "Classify",
+              record0: Classify({
                 label: "member",
                 probabilities: {
                   member: 0.35,
@@ -224,16 +239,18 @@ it.effect.each([
                   undetermined: 0.05,
                   multipleTarget0: 0,
                 },
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           }),
       }),
     );
     return Effect.gen(function* () {
-      expect(
-        yield* operation([RecordLabel.make("Pooled subjects")], TaxonName.make("Quercus")),
-      ).toEqual({ _tag: tag, quantifier });
+      const membership = yield* operation(
+        [RecordLabel.make("Pooled subjects")],
+        TaxonName.make("Quercus"),
+      );
+      expect(membership).toEqual({ _tag: tag, quantifier });
     }).pipe(Effect.provide(layer));
   },
 );
@@ -247,7 +264,8 @@ it.effect("snapshots original record occurrences before consuming later quantifi
       decide: ({ decisions }) => {
         const question = firstClassificationQuestion(decisions);
         expect(Record.keys(decisions)).toEqual(["record0"]);
-        facts.push(question.instructions);
+        const instructions = question.instructions;
+        facts.push(instructions);
         // Caller-owned mutation verifies that later batches use the original snapshot.
         if (facts.length === 1) input[1] = RecordLabel.make("replacement second");
         return Effect.succeed(response(["member"]));
@@ -255,16 +273,16 @@ it.effect("snapshots original record occurrences before consuming later quantifi
     }),
   );
   return Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.allRecordsBelongTo(input, TaxonName.make("target"), {
-        execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
-      }),
-    ).toEqual({ _tag: "Yes", quantifier: "all" });
+    const membership = yield* Taxonomy.allRecordsBelongTo(input, TaxonName.make("target"), {
+      execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+    });
+    expect(membership).toEqual({ _tag: "Yes", quantifier: "all" });
     expect(facts).toEqual([
       expect.stringContaining('Record label: "first"'),
       expect.stringContaining('Record label: "original second"'),
     ]);
-    expect(input[1]).toBe("replacement second");
+    const replacement = Array.get(input, 1).pipe(Option.getOrThrow);
+    expect(replacement).toBe("replacement second");
   }).pipe(Effect.provide(layer));
 });
 
@@ -275,8 +293,7 @@ it.effect("keeps fine membership unresolved when only grouped non-membership is 
       decide: () =>
         Effect.succeed({
           answers: {
-            record0: {
-              _tag: "Classify",
+            record0: Classify({
               label: "member",
               probabilities: {
                 member: 0.35,
@@ -285,7 +302,7 @@ it.effect("keeps fine membership unresolved when only grouped non-membership is 
                 undetermined: 0.05,
                 multipleTarget0: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         }),
@@ -294,7 +311,8 @@ it.effect("keeps fine membership unresolved when only grouped non-membership is 
   return Effect.gen(function* () {
     const record = RecordLabel.make("Pooled subjects");
     const target = TaxonName.make("Quercus");
-    expect(yield* Taxonomy.recordBelongsTo(record, target)).toEqual({ _tag: "Undetermined" });
+    const membership = yield* Taxonomy.recordBelongsTo(record, target);
+    expect(membership).toEqual({ _tag: "Undetermined" });
     const partition = yield* Taxonomy.partitionRecordsByMembership([record], target);
     expect(partition.Undetermined).toEqual([record]);
   }).pipe(Effect.provide(layer));
@@ -364,7 +382,8 @@ it.effect(
         decide: ({ decisions }) => {
           calls++;
           expect(Record.keys(decisions)).toEqual(["record0"]);
-          expect(decisions.record0).toMatchObject({
+          const decision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+          expect(decision).toMatchObject({
             instructions: expect.stringContaining('Record label: "decisive"'),
           });
           return Effect.succeed(response(["member"]));
@@ -372,14 +391,13 @@ it.effect(
       }),
     );
     return Effect.gen(function* () {
-      expect(
-        yield* Taxonomy.anyRecordBelongsTo(
-          // @ts-expect-error Untyped input in a later, unattempted window has no record facts.
-          [RecordLabel.make("decisive"), {}],
-          target,
-          { execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }) },
-        ),
-      ).toEqual({ _tag: "Yes", quantifier: "any" });
+      const membership = yield* Taxonomy.anyRecordBelongsTo(
+        // @ts-expect-error Untyped input in a later, unattempted window has no record facts.
+        [RecordLabel.make("decisive"), {}],
+        target,
+        { execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }) },
+      );
+      expect(membership).toEqual({ _tag: "Yes", quantifier: "any" });
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -402,11 +420,10 @@ for (const [quantifier, operation] of quantifiers) {
                 ...(mode === "missing"
                   ? {}
                   : {
-                      record1: {
-                        _tag: "Classify" as const,
+                      record1: Classify({
                         label: "invented",
                         probabilities: { invented: 1 },
-                      },
+                      }),
                     }),
               },
               usage: { inputTokens: undefined, outputTokens: undefined },
@@ -435,15 +452,18 @@ it.effect.each(quantifiers)(
       DecisionModel.make({ decide: () => Effect.die("Unexpected request") }),
     );
     return Effect.gen(function* () {
-      expect(yield* operation([], target)).toEqual({
+      const emptyRecords = yield* operation([], target);
+      expect(emptyRecords).toEqual({
         _tag: quantifier === "any" ? "No" : "Yes",
         quantifier,
       });
-      expect(yield* operation([], TaxonSet.empty())).toEqual({
+      const emptyRecordsAndTarget = yield* operation([], TaxonSet.empty());
+      expect(emptyRecordsAndTarget).toEqual({
         _tag: quantifier === "any" ? "No" : "Yes",
         quantifier,
       });
-      expect(yield* operation(records, TaxonSet.empty())).toEqual({
+      const emptyTarget = yield* operation(records, TaxonSet.empty());
+      expect(emptyTarget).toEqual({
         _tag: quantifier === "none" ? "Yes" : "No",
         quantifier,
       });
@@ -481,16 +501,24 @@ it.effect(
       );
       expect(partition.NotMember).toEqual([records[0], records[0]]);
       expect(partition.Member).toEqual([]);
-      expect(yield* Taxonomy.groupRecordsByTaxa(records, [])).toMatchObject({ groups: [] });
+      const noGroups = yield* Taxonomy.groupRecordsByTaxa(records, []);
+      expect(noGroups).toMatchObject({ groups: [] });
       const grouped = yield* Taxonomy.groupRecordsByTaxa([], [target, target]);
       expect(grouped.groups).toHaveLength(2);
-      expect(grouped.groups[0]?.partition).toEqual(first);
-      expect(grouped.groups[0]?.partition).not.toBe(grouped.groups[1]?.partition);
+      const firstGroup = Array.head(grouped.groups).pipe(Option.getOrThrow);
+      const secondGroup = Array.get(grouped.groups, 1).pipe(Option.getOrThrow);
+      expect(firstGroup.partition).toEqual(first);
+      expect(firstGroup.partition).not.toBe(secondGroup.partition);
       expect(
-        grouped.pipe((value) => value.groups[0]?.partition.pipe((value) => value.Member)),
+        grouped.pipe((value) =>
+          Array.head(value.groups)
+            .pipe(Option.getOrThrow)
+            .partition.pipe((value) => value.Member),
+        ),
       ).toEqual([]);
       const emptyTargets = yield* Taxonomy.groupRecordsByTaxa(records, [TaxonSet.empty()]);
-      expect(emptyTargets.groups[0]?.partition.NotMember).toEqual(records);
+      const emptyGroup = Array.head(emptyTargets.groups).pipe(Option.getOrThrow);
+      expect(emptyGroup.partition.NotMember).toEqual(records);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -514,9 +542,10 @@ it.effect("reconstructs partitions in input order after batches finish in revers
         decide: Effect.fnUntraced(function* ({ decisions }) {
           calls++;
           const question = firstClassificationQuestion(decisions);
-          const index = question.instructions.endsWith('Scientific name: "F"')
+          const instructions = question.instructions;
+          const index = instructions.endsWith('Scientific name: "F"')
             ? 2
-            : question.instructions.endsWith('Scientific name: "C"')
+            : instructions.endsWith('Scientific name: "C"')
               ? 1
               : 0;
           const names = Array.get([["A", "B", "A"], ["C", "D", "E"], ["F"]], index).pipe(
@@ -526,7 +555,8 @@ it.effect("reconstructs partitions in input order after batches finish in revers
             Array.map(names, (_name, local) => `record${local}`),
           );
           for (const [local, name] of names.entries()) {
-            expect(decisions[`record${local}`]).toMatchObject({
+            const decision = Record.get(decisions, `record${local}`).pipe(Option.getOrThrow);
+            expect(decision).toMatchObject({
               instructions: expect.stringContaining(`Scientific name: "${name}"`),
             });
           }
@@ -586,13 +616,20 @@ it.effect("reconstructs partitions in input order after batches finish in revers
       "repeat",
       "last",
     ]);
-    expect(partition.Member[0]).toBe(repeated);
-    expect(partition.Member[1]).toBe(repeated);
-    expect(partition.Member[2]).toBe(last);
-    expect(partition.NotMember[0]).toBe(outside);
-    expect(partition.MixedMembership[0]).toBe(mixed);
-    expect(partition.Undetermined[0]).toBe(tail);
-    expect(partition.MultipleTaxaInTarget[0]?.record).toBe(diagnosed);
+    const firstMember = Array.head(partition.Member).pipe(Option.getOrThrow);
+    const secondMember = Array.get(partition.Member, 1).pipe(Option.getOrThrow);
+    const thirdMember = Array.get(partition.Member, 2).pipe(Option.getOrThrow);
+    const nonMember = Array.head(partition.NotMember).pipe(Option.getOrThrow);
+    const mixedRecord = Array.head(partition.MixedMembership).pipe(Option.getOrThrow);
+    const unresolved = Array.head(partition.Undetermined).pipe(Option.getOrThrow);
+    const diagnosis = Array.head(partition.MultipleTaxaInTarget).pipe(Option.getOrThrow);
+    expect(firstMember).toBe(repeated);
+    expect(secondMember).toBe(repeated);
+    expect(thirdMember).toBe(last);
+    expect(nonMember).toBe(outside);
+    expect(mixedRecord).toBe(mixed);
+    expect(unresolved).toBe(tail);
+    expect(diagnosis.record).toBe(diagnosed);
   }),
 );
 
@@ -611,13 +648,15 @@ it.effect.each(quantifiers)(
           decide: Effect.fnUntraced(function* ({ decisions }) {
             calls++;
             const question = firstClassificationQuestion(decisions);
-            const index = question.instructions.endsWith('Record label: "first"') ? 0 : 1;
+            const instructions = question.instructions;
+            const index = instructions.endsWith('Record label: "first"') ? 0 : 1;
             expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
             for (const [local, name] of (index === 0
               ? ["first", "second"]
               : ["third", "fourth"]
             ).entries()) {
-              expect(decisions[`record${local}`]).toMatchObject({
+              const decision = Record.get(decisions, `record${local}`).pipe(Option.getOrThrow);
+              expect(decision).toMatchObject({
                 instructions: expect.stringContaining(`Record label: "${name}"`),
               });
             }
@@ -667,11 +706,10 @@ it.effect.each(quantifiers)(
       }),
     );
     return Effect.gen(function* () {
-      expect(
-        yield* operation(records, target, {
-          execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
-        }),
-      ).toEqual({ _tag: "Undetermined", quantifier });
+      const membership = yield* operation(records, target, {
+        execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+      });
+      expect(membership).toEqual({ _tag: "Undetermined", quantifier });
       expect(calls).toBe(4);
     }).pipe(Effect.provide(layer));
   },
@@ -727,8 +765,10 @@ it.effect("bounds grouping batches without multiplying the cap across sequential
       "family",
       "family",
     ]);
-    expect(grouped.groups[0]?.partition.Member).toEqual(records);
-    expect(grouped.groups[1]?.partition.Member).toEqual(records);
+    const genusGroup = Array.head(grouped.groups).pipe(Option.getOrThrow);
+    const familyGroup = Array.get(grouped.groups, 1).pipe(Option.getOrThrow);
+    expect(genusGroup.partition.Member).toEqual(records);
+    expect(familyGroup.partition.Member).toEqual(records);
   }),
 );
 
@@ -828,11 +868,10 @@ for (const [kind, operation] of operations) {
                 ? response([])
                 : {
                     answers: {
-                      record0: {
-                        _tag: "Classify",
+                      record0: Classify({
                         label: "invented",
                         probabilities: { invented: 1 },
-                      },
+                      }),
                     },
                     usage: { inputTokens: undefined, outputTokens: undefined },
                   };
@@ -959,16 +998,17 @@ it.effect(
             target: 0,
           });
           expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
-          expect(decisions.record0).toMatchObject({
+          const firstDecision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+          const secondDecision = Record.get(decisions, "record1").pipe(Option.getOrThrow);
+          expect(firstDecision).toMatchObject({
             instructions: expect.stringContaining('Record label: "voucher \\"one\\"\\nline"'),
           });
-          expect(decisions.record1).toMatchObject({
+          expect(secondDecision).toMatchObject({
             instructions: expect.stringContaining('Scientific name: "second name"'),
           });
           return Effect.succeed({
             answers: {
-              record0: {
-                _tag: "Classify",
+              record0: Classify({
                 label: "multipleTarget1",
                 probabilities: {
                   member: 0,
@@ -978,9 +1018,8 @@ it.effect(
                   multipleTarget0: 0,
                   multipleTarget1: 1,
                 },
-              },
-              record1: {
-                _tag: "Classify",
+              }),
+              record1: Classify({
                 label: "member",
                 probabilities: {
                   member: 0.6,
@@ -990,7 +1029,7 @@ it.effect(
                   multipleTarget0: 0.4,
                   multipleTarget1: 0,
                 },
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -1004,8 +1043,10 @@ it.effect(
       expect(partition.MultipleTaxaInTarget).toEqual([
         { record: first, target: TaxonSet.of(problemName) },
       ]);
-      expect(partition.MultipleTaxaInTarget[0]?.record).toBe(first);
-      expect(partition.Undetermined[0]).toBe(second);
+      const diagnosis = Array.head(partition.MultipleTaxaInTarget).pipe(Option.getOrThrow);
+      const unresolved = Array.head(partition.Undetermined).pipe(Option.getOrThrow);
+      expect(diagnosis.record).toBe(first);
+      expect(unresolved).toBe(second);
       expect(partition.Member).toEqual([]);
     }).pipe(Effect.provide(layer));
   },
@@ -1051,8 +1092,7 @@ it.effect.each(quantifiers)(
             calls === 1
               ? {
                   answers: {
-                    record0: {
-                      _tag: "Classify",
+                    record0: Classify({
                       label: "multipleTarget0",
                       probabilities: {
                         member: 0.4,
@@ -1061,7 +1101,7 @@ it.effect.each(quantifiers)(
                         undetermined: 0,
                         multipleTarget0: 0.6,
                       },
-                    },
+                    }),
                   },
                   usage: { inputTokens: undefined, outputTokens: undefined },
                 }
@@ -1071,12 +1111,11 @@ it.effect.each(quantifiers)(
       }),
     );
     return Effect.gen(function* () {
-      expect(
-        yield* operation(records, target, {
-          policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
-          execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
-        }),
-      ).toEqual({ _tag: quantifier === "any" ? "Yes" : "No", quantifier });
+      const membership = yield* operation(records, target, {
+        policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
+        execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
+      });
+      expect(membership).toEqual({ _tag: quantifier === "any" ? "Yes" : "No", quantifier });
       expect(calls).toBe(2);
     }).pipe(Effect.provide(layer));
   },
@@ -1104,10 +1143,12 @@ it.effect(
         target,
         TaxonName.make("other"),
       ]);
-      expect(grouped.groups[0]?.partition.Member).toEqual(records.slice(0, 3));
-      expect(grouped.groups[1]?.partition.MixedMembership).toEqual([records[0]]);
-      expect(grouped.groups[1]?.partition.Undetermined).toEqual([records[1]]);
-      expect(grouped.groups[1]?.partition.MultipleTaxaInTarget).toEqual([
+      const firstGroup = Array.head(grouped.groups).pipe(Option.getOrThrow);
+      const secondGroup = Array.get(grouped.groups, 1).pipe(Option.getOrThrow);
+      expect(firstGroup.partition.Member).toEqual(records.slice(0, 3));
+      expect(secondGroup.partition.MixedMembership).toEqual([records[0]]);
+      expect(secondGroup.partition.Undetermined).toEqual([records[1]]);
+      expect(secondGroup.partition.MultipleTaxaInTarget).toEqual([
         { record: records[2], target: TaxonSet.of(TaxonName.make("other")) },
       ]);
       expect(calls).toBe(2);
@@ -1124,8 +1165,7 @@ it.effect("threads grouping policy without sharing or caching repeated execution
         calls++;
         return Effect.succeed({
           answers: {
-            record0: {
-              _tag: "Classify",
+            record0: Classify({
               label: "member",
               probabilities: {
                 member: 0.7,
@@ -1134,7 +1174,7 @@ it.effect("threads grouping policy without sharing or caching repeated execution
                 undetermined: 0,
                 multipleTarget0: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -1147,11 +1187,13 @@ it.effect("threads grouping policy without sharing or caching repeated execution
     });
     const first = yield* program;
     const second = yield* program;
-    expect(first.groups[0]?.partition.Undetermined).toEqual([records[0]]);
-    expect(second.groups[0]?.partition.Undetermined).toEqual([records[0]]);
+    const firstGroup = Array.head(first.groups).pipe(Option.getOrThrow);
+    const secondGroup = Array.head(second.groups).pipe(Option.getOrThrow);
+    expect(firstGroup.partition.Undetermined).toEqual([records[0]]);
+    expect(secondGroup.partition.Undetermined).toEqual([records[0]]);
     expect(second).not.toBe(first);
     expect(second.groups).not.toBe(first.groups);
-    expect(second.groups[0]?.partition).not.toBe(first.groups[0]?.partition);
+    expect(secondGroup.partition).not.toBe(firstGroup.partition);
     expect(calls).toBe(2);
   }).pipe(Effect.provide(layer));
 });
@@ -1184,13 +1226,12 @@ it.effect("interrupts sibling batches on a window failure and launches no later 
         }),
       }),
     );
-    expect(
-      yield* Effect.flip(
-        Taxonomy.anyRecordBelongsTo(records, target, {
-          execution: CollectionExecution.make({ batchSize: 1, concurrency: 2 }),
-        }).pipe(Effect.provide(layer)),
-      ),
-    ).toBe(failure);
+    const error = yield* Effect.flip(
+      Taxonomy.anyRecordBelongsTo(records, target, {
+        execution: CollectionExecution.make({ batchSize: 1, concurrency: 2 }),
+      }).pipe(Effect.provide(layer)),
+    );
+    expect(error).toBe(failure);
     expect(calls).toBe(2);
     expect(interrupted).toBe(1);
   }),
@@ -1280,11 +1321,10 @@ it.effect("does not turn nonliteral empty expressions into collection shortcuts"
         });
         return Effect.succeed({
           answers: {
-            record0: {
-              _tag: "Classify",
+            record0: Classify({
               label: "undetermined",
               probabilities: { member: 0, notMember: 0, mixed: 0, undetermined: 1 },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -1294,7 +1334,8 @@ it.effect("does not turn nonliteral empty expressions into collection shortcuts"
   return Effect.gen(function* () {
     const partition = yield* Taxonomy.partitionRecordsByMembership([records[0]], expression);
     expect(partition.Undetermined).toEqual([records[0]]);
-    expect(yield* Taxonomy.anyRecordBelongsTo([records[0]], expression)).toEqual({
+    const membership = yield* Taxonomy.anyRecordBelongsTo([records[0]], expression);
+    expect(membership).toEqual({
       _tag: "Undetermined",
       quantifier: "any",
     });
@@ -1349,7 +1390,8 @@ it.effect.each([
     Option.getOrThrow,
   );
   return Effect.gen(function* () {
-    expect(yield* operation(records.slice(0, 2), target)).toEqual(expected);
+    const membership = yield* operation(records.slice(0, 2), target);
+    expect(membership).toEqual(expected);
   }).pipe(
     Effect.provide(
       Layer.effect(
@@ -1379,9 +1421,8 @@ for (const [quantifier, operation] of quantifiers) {
         DecisionModel.DecisionModel,
         DecisionModel.make({ decide: () => Effect.succeed(response(labels)) }),
       );
-      expect(yield* operation(records.slice(0, 3), target).pipe(Effect.provide(layer))).toEqual(
-        expected,
-      );
+      const membership = yield* operation(records.slice(0, 3), target).pipe(Effect.provide(layer));
+      expect(membership).toEqual(expected);
     }),
   );
 }
@@ -1394,17 +1435,18 @@ it.effect("uses default batches of 16 and independently applies policy to each a
       decide: ({ decisions }) => {
         sizes.push(Record.size(decisions));
         return Effect.succeed({
-          answers: Record.map(decisions, (): DecisionModel.ProviderClassifyAnswer => ({
-            _tag: "Classify",
-            label: "member",
-            probabilities: {
-              member: 0.75,
-              notMember: 0.25,
-              mixed: 0,
-              undetermined: 0,
-              multipleTarget0: 0,
-            },
-          })),
+          answers: Record.map(decisions, (): DecisionModel.ProviderClassifyAnswer =>
+            Classify({
+              label: "member",
+              probabilities: {
+                member: 0.75,
+                notMember: 0.25,
+                mixed: 0,
+                undetermined: 0,
+                multipleTarget0: 0,
+              },
+            }),
+          ),
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
       },
@@ -1445,12 +1487,15 @@ it.effect(
         DecisionModel.make({
           decide: Effect.fnUntraced(function* ({ decisions }) {
             const question = firstClassificationQuestion(decisions);
-            if (question.instructions.endsWith('Scientific name: "first sentinel"')) {
+            const instructions = question.instructions;
+            if (instructions.endsWith('Scientific name: "first sentinel"')) {
               expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
-              expect(decisions.record1).toMatchObject({
+              const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
+              const outsideQuestion = Record.get(decisions, "record2").pipe(Option.getOrThrow);
+              expect(sharedQuestion).toMatchObject({
                 instructions: expect.stringContaining('Scientific name: "shared"'),
               });
-              expect(decisions.record2).toMatchObject({
+              expect(outsideQuestion).toMatchObject({
                 instructions: expect.stringContaining('Scientific name: "outside"'),
               });
               yield* Deferred.succeed(firstStarted, undefined);
@@ -1458,12 +1503,14 @@ it.effect(
               completed.push("first");
               return response(["member", "member", "notMember"]);
             }
-            if (question.instructions.endsWith('Scientific name: "second sentinel"')) {
+            if (instructions.endsWith('Scientific name: "second sentinel"')) {
               expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
-              expect(decisions.record1).toMatchObject({
+              const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
+              const uncertainQuestion = Record.get(decisions, "record2").pipe(Option.getOrThrow);
+              expect(sharedQuestion).toMatchObject({
                 instructions: expect.stringContaining('Scientific name: "shared"'),
               });
-              expect(decisions.record2).toMatchObject({
+              expect(uncertainQuestion).toMatchObject({
                 instructions: expect.stringContaining('Scientific name: "uncertain"'),
               });
               yield* Deferred.succeed(secondStarted, undefined);
@@ -1472,9 +1519,10 @@ it.effect(
               yield* Deferred.succeed(secondFinished, undefined);
               return response(["mixed", "multipleTarget0", "undetermined"]);
             }
-            expect(question.instructions).toContain('Scientific name: "third sentinel"');
+            expect(instructions).toContain('Scientific name: "third sentinel"');
             expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
-            expect(decisions.record1).toMatchObject({
+            const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
+            expect(sharedQuestion).toMatchObject({
               instructions: expect.stringContaining('Scientific name: "shared"'),
             });
             yield* Deferred.succeed(thirdStarted, undefined);
@@ -1507,14 +1555,22 @@ it.effect(
         Undetermined: [uncertain],
         MultipleTaxaInTarget: [{ record: shared, target: TaxonSet.of(target) }],
       });
-      expect(partition.Member[0]).toBe(first);
-      expect(partition.Member[1]).toBe(shared);
-      expect(partition.Member[2]).toBe(third);
-      expect(partition.NotMember[0]).toBe(outside);
-      expect(partition.NotMember[1]).toBe(shared);
-      expect(partition.MixedMembership[0]).toBe(second);
-      expect(partition.Undetermined[0]).toBe(uncertain);
-      expect(partition.MultipleTaxaInTarget[0]?.record).toBe(shared);
+      const firstMember = Array.head(partition.Member).pipe(Option.getOrThrow);
+      const secondMember = Array.get(partition.Member, 1).pipe(Option.getOrThrow);
+      const thirdMember = Array.get(partition.Member, 2).pipe(Option.getOrThrow);
+      const firstNonMember = Array.head(partition.NotMember).pipe(Option.getOrThrow);
+      const secondNonMember = Array.get(partition.NotMember, 1).pipe(Option.getOrThrow);
+      const mixed = Array.head(partition.MixedMembership).pipe(Option.getOrThrow);
+      const unresolved = Array.head(partition.Undetermined).pipe(Option.getOrThrow);
+      const diagnosis = Array.head(partition.MultipleTaxaInTarget).pipe(Option.getOrThrow);
+      expect(firstMember).toBe(first);
+      expect(secondMember).toBe(shared);
+      expect(thirdMember).toBe(third);
+      expect(firstNonMember).toBe(outside);
+      expect(secondNonMember).toBe(shared);
+      expect(mixed).toBe(second);
+      expect(unresolved).toBe(uncertain);
+      expect(diagnosis.record).toBe(shared);
     }),
 );
 
@@ -1543,12 +1599,13 @@ it.effect.each(["failure", "interrupt"] as const)(
           decide: Effect.fnUntraced(
             function* ({ decisions }) {
               const question = firstClassificationQuestion(decisions);
-              if (question.instructions.endsWith('Scientific name: "A first"')) {
+              const instructions = question.instructions;
+              if (instructions.endsWith('Scientific name: "A first"')) {
                 // B must already be pending when A makes successful progress.
                 yield* Deferred.await(bStarted);
                 return response(["member"]);
               }
-              expect(question.instructions).toContain('Scientific name: "A second"');
+              expect(instructions).toContain('Scientific name: "A second"');
               yield* Deferred.succeed(aReachedFault, undefined);
               yield* Deferred.await(releaseFault);
               if (mode === "failure") return yield* failure;
@@ -1600,7 +1657,6 @@ it.effect.each(["failure", "interrupt"] as const)(
       const causeA = Exit.getCause(exitA).pipe(Option.getOrThrow);
       if (mode === "failure") {
         expect(causeA.reasons).toHaveLength(1);
-        expect(causeA.reasons[0]?._tag).toBe("Fail");
         expect(Cause.findErrorOption(causeA).pipe(Option.getOrThrow)).toBe(failure);
       } else expect(Cause.hasInterruptsOnly(causeA)).toBe(true);
       expect(aFinalized).toBe(2);
@@ -1615,7 +1671,8 @@ it.effect.each(["failure", "interrupt"] as const)(
         Undetermined: [],
         MultipleTaxaInTarget: [],
       });
-      expect(partitionB.MixedMembership[0]).toBe(bRecord);
+      const mixedB = Array.head(partitionB.MixedMembership).pipe(Option.getOrThrow);
+      expect(mixedB).toBe(bRecord);
       expect(bFinalized).toBe(1);
       const freshLayer = Layer.effect(
         DecisionModel.DecisionModel,
@@ -1634,8 +1691,10 @@ it.effect.each(["failure", "interrupt"] as const)(
           { record: aSecond, target: TaxonSet.of(target) },
         ],
       });
-      expect(fresh.MultipleTaxaInTarget[0]?.record).toBe(aFirst);
-      expect(fresh.MultipleTaxaInTarget[1]?.record).toBe(aSecond);
+      const firstDiagnosis = Array.head(fresh.MultipleTaxaInTarget).pipe(Option.getOrThrow);
+      const secondDiagnosis = Array.get(fresh.MultipleTaxaInTarget, 1).pipe(Option.getOrThrow);
+      expect(firstDiagnosis.record).toBe(aFirst);
+      expect(secondDiagnosis.record).toBe(aSecond);
       expect(aFinalized).toBe(2);
     }),
 );
@@ -1672,12 +1731,13 @@ it.effect.each(["failure", "interrupt"] as const)(
               if (node.record.scientificName === "before") return response(["member"]);
               expect(node.record.scientificName).toBe("middle");
               const question = firstClassificationQuestion(decisions);
-              if (question.instructions.endsWith('Scientific name: "first record"')) {
+              const instructions = question.instructions;
+              if (instructions.endsWith('Scientific name: "first record"')) {
                 yield* Deferred.await(middleBlocked);
                 if (mode === "failure") return yield* failure;
                 return yield* Effect.never;
               }
-              expect(question.instructions).toContain('Scientific name: "second record"');
+              expect(instructions).toContain('Scientific name: "second record"');
               yield* Deferred.succeed(middleBlocked, undefined);
               return yield* Effect.never;
             },
@@ -1711,7 +1771,6 @@ it.effect.each(["failure", "interrupt"] as const)(
       const cause = Exit.getCause(exit).pipe(Option.getOrThrow);
       if (mode === "failure") {
         expect(cause.reasons).toHaveLength(1);
-        expect(cause.reasons[0]?._tag).toBe("Fail");
         expect(Cause.findErrorOption(cause).pipe(Option.getOrThrow)).toBe(failure);
       } else expect(Cause.hasInterruptsOnly(cause)).toBe(true);
       expect(succeeded).toBe(false);
@@ -1730,7 +1789,8 @@ it.effect.each(["failure", "interrupt"] as const)(
               nodes: [node],
             } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
             freshSeen.push(node.record.scientificName);
-            expect(decisions.record0).toMatchObject({
+            const decision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+            expect(decision).toMatchObject({
               criteria: {
                 multipleTarget0: expect.stringContaining("Target taxon node 0 "),
               },
@@ -1746,9 +1806,12 @@ it.effect.each(["failure", "interrupt"] as const)(
         middle,
         expression,
       ]);
-      expect(fresh.groups[0]?.target).toBe(expression);
-      expect(fresh.groups[1]?.target).toBe(middle);
-      expect(fresh.groups[2]?.target).toBe(expression);
+      const firstGroup = Array.head(fresh.groups).pipe(Option.getOrThrow);
+      const middleGroup = Array.get(fresh.groups, 1).pipe(Option.getOrThrow);
+      const repeatedGroup = Array.get(fresh.groups, 2).pipe(Option.getOrThrow);
+      expect(firstGroup.target).toBe(expression);
+      expect(middleGroup.target).toBe(middle);
+      expect(repeatedGroup.target).toBe(expression);
       expect(Array.map(fresh.groups, (group) => group.partition)).toEqual([
         {
           Member: [],
@@ -1782,10 +1845,16 @@ it.effect.each(["failure", "interrupt"] as const)(
         },
       ]);
       for (const group of fresh.groups) {
-        expect(group.partition.MultipleTaxaInTarget[0]?.record).toBe(first);
-        expect(group.partition.MultipleTaxaInTarget[1]?.record).toBe(second);
+        const firstDiagnosis = Array.head(group.partition.MultipleTaxaInTarget).pipe(
+          Option.getOrThrow,
+        );
+        const secondDiagnosis = Array.get(group.partition.MultipleTaxaInTarget, 1).pipe(
+          Option.getOrThrow,
+        );
+        expect(firstDiagnosis.record).toBe(first);
+        expect(secondDiagnosis.record).toBe(second);
       }
-      expect(fresh.groups[0]?.partition).not.toBe(fresh.groups[2]?.partition);
+      expect(firstGroup.partition).not.toBe(repeatedGroup.partition);
       expect(seen).toEqual(["before", "before", "middle", "middle"]);
       expect(attempts).toBe(4);
       expect(finalized).toBe(4);

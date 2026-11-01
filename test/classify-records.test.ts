@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Deferred, Effect, Fiber, Layer, Option, Record, Schema } from "effect";
+import { Array, Data, Deferred, Effect, Fiber, Layer, Option, Record, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
@@ -11,14 +11,16 @@ import {
   Taxonomy,
 } from "../src/index.ts";
 
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
 const answer = (
   label: string,
   [sameTaxon, withinTaxon, noMatch, undetermined]: readonly [number, number, number, number],
-): DecisionModel.ProviderClassifyAnswer => ({
-  _tag: "Classify",
-  label,
-  probabilities: { sameTaxon, withinTaxon, noMatch, undetermined },
-});
+): DecisionModel.ProviderClassifyAnswer =>
+  Classify({
+    label,
+    probabilities: { sameTaxon, withinTaxon, noMatch, undetermined },
+  });
 
 const inputSchema = Schema.Struct({
   records: Schema.Array(Schema.String),
@@ -104,7 +106,8 @@ it.effect.each(["binary", "collection"] as const)(
       expect(first.answer.label).toBe("withinTaxon");
       expect(first.answer.probabilities.withinTaxon).toBe(0.96);
       expect(results.usage).toHaveLength(1);
-      expect(results.usage[0]).toMatchObject({ inputTokens: 101, outputTokens: 53 });
+      const usage = Array.head(results.usage).pipe(Option.getOrThrow);
+      expect(usage).toMatchObject({ inputTokens: 101, outputTokens: 53 });
     }).pipe(Effect.provide(layer));
   },
 );
@@ -143,8 +146,10 @@ it.effect("separates negative evidence from uncertainty and preserves rounded an
     ]);
     expect(matches.map((match) => match.support)).toEqual([0.1, 0.1, 0.85, 0.5, 1]);
     expect(result.records.map((row) => row.ranking.length)).toEqual([0, 0, 1, 0, 1]);
-    expect(matches[2]?.answer.label).toBe("noMatch");
-    expect(matches[4]?.answer.probabilities.withinTaxon).toBe(0.3000002);
+    const combined = Array.get(matches, 2).pipe(Option.getOrThrow);
+    const rounded = Array.get(matches, 4).pipe(Option.getOrThrow);
+    expect(combined.answer.label).toBe("noMatch");
+    expect(rounded.answer.probabilities.withinTaxon).toBe(0.3000002);
   }).pipe(Effect.provide(layer));
 });
 
@@ -226,8 +231,10 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
       result.records.map((row) => row.ranking.map((match) => match.taxon.record.scientificName)),
     ).toEqual([["Fungi", "Saccharomyces cerevisiae"], ["Fungi"], []]);
     for (const row of result.records) {
-      expect(row.taxa[0]?.taxon).toBe(fungi);
-      expect(row.taxa[1]?.taxon).toBe(species);
+      const first = Array.head(row.taxa).pipe(Option.getOrThrow);
+      const second = Array.get(row.taxa, 1).pipe(Option.getOrThrow);
+      expect(first.taxon).toBe(fungi);
+      expect(second.taxon).toBe(species);
     }
   }).pipe(Effect.provide(layer));
 });
@@ -275,15 +282,25 @@ it.effect(
       for (const row of result.records) {
         expect(row.record).toBe(record);
         expect(row.taxa.map((match) => match.taxon)).toEqual([genus, species, genus, species]);
-        expect(row.taxa[0]?.taxon).toBe(genus);
-        expect(row.taxa[2]?.taxon).toBe(genus);
-        expect(row.taxa[0]).not.toBe(row.taxa[2]);
+        const firstTaxon = Array.head(row.taxa).pipe(Option.getOrThrow);
+        const repeatedTaxon = Array.get(row.taxa, 2).pipe(Option.getOrThrow);
+        expect(firstTaxon.taxon).toBe(genus);
+        expect(repeatedTaxon.taxon).toBe(genus);
+        expect(firstTaxon).not.toBe(repeatedTaxon);
       }
-      expect(first.ranking).toEqual([first.taxa[0], first.taxa[1], first.taxa[3]]);
-      expect(last.ranking).toEqual([last.taxa[1], last.taxa[2], last.taxa[3]]);
-      expect(first.taxa[0]?.judgment._tag).toBe("Matched");
-      expect(last.taxa[0]?.judgment._tag).toBe("NotMatched");
-      expect(first.taxa[0]).not.toBe(last.taxa[0]);
+      const firstTaxa = [0, 1, 3].map((index) =>
+        Array.get(first.taxa, index).pipe(Option.getOrThrow),
+      );
+      const lastTaxa = [1, 2, 3].map((index) =>
+        Array.get(last.taxa, index).pipe(Option.getOrThrow),
+      );
+      const firstMatch = Array.head(first.taxa).pipe(Option.getOrThrow);
+      const lastMatch = Array.head(last.taxa).pipe(Option.getOrThrow);
+      expect(first.ranking).toEqual(firstTaxa);
+      expect(last.ranking).toEqual(lastTaxa);
+      expect(firstMatch.judgment._tag).toBe("Matched");
+      expect(lastMatch.judgment._tag).toBe("NotMatched");
+      expect(firstMatch).not.toBe(lastMatch);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -325,7 +342,9 @@ it.effect("does not repeatedly expand shared subtraction branches that offer no 
   );
   return Effect.gen(function* () {
     const result = yield* Taxonomy.classifyRecords([record], panel);
-    expect(result.records[0]?.ranking[0]?.taxon).toBe(fungi);
+    const row = Array.head(result.records).pipe(Option.getOrThrow);
+    const match = Array.head(row.ranking).pipe(Option.getOrThrow);
+    expect(match.taxon).toBe(fungi);
   }).pipe(Effect.provide(layer));
 });
 
@@ -350,7 +369,9 @@ it.effect("retains a shared taxon when it also occurs outside subtraction", () =
   );
   return Effect.gen(function* () {
     const result = yield* Taxonomy.classifyRecords([RecordLabel.make("subject")], panel);
-    expect(result.records[0]?.ranking[0]?.taxon).toBe(taxon);
+    const row = Array.head(result.records).pipe(Option.getOrThrow);
+    const match = Array.head(row.ranking).pipe(Option.getOrThrow);
+    expect(match.taxon).toBe(taxon);
   }).pipe(Effect.provide(layer));
 });
 
@@ -371,7 +392,9 @@ it.effect("classifies deeply nested panels without recursive source traversal", 
   );
   return Effect.gen(function* () {
     const result = yield* Taxonomy.classifyRecords([RecordLabel.make("subject")], panel);
-    expect(result.records[0]?.ranking[0]?.taxon).toBe(taxon);
+    const row = Array.head(result.records).pipe(Option.getOrThrow);
+    const match = Array.head(row.ranking).pipe(Option.getOrThrow);
+    expect(match.taxon).toBe(taxon);
   }).pipe(Effect.provide(layer));
 });
 
@@ -398,7 +421,7 @@ it.effect("preserves record and usage order when concurrent requests finish out 
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: Effect.fnUntraced(function* ({ state }) {
-          const input = Schema.decodeUnknownSync(inputSchema)(state);
+          const input = yield* Schema.decodeUnknownEffect(inputSchema)(state).pipe(Effect.orDie);
           expect(input.records).toHaveLength(1);
           expect(input.taxa).toEqual([
             { scientificName: "Saccharomyces" },
@@ -431,17 +454,19 @@ it.effect("preserves record and usage order when concurrent requests finish out 
     const result = yield* Taxonomy.classifyRecords(records, panel, {
       execution: CollectionExecution.make({ batchSize: 1, concurrency: 2 }),
     }).pipe(Effect.provide(layer));
-    expect(finished[0]).toBe(1);
+    const firstFinished = Array.head(finished).pipe(Option.getOrThrow);
+    expect(firstFinished).toBe(1);
     expect(maximum).toBe(2);
     expect(result.records.map((row) => row.record)).toEqual(records);
-    expect(result.records.map((row) => row.taxa[0]?.record.sampleId)).toEqual([
-      "first",
-      "second",
-      "third",
-    ]);
+    expect(
+      result.records.map((row) => Array.head(row.taxa).pipe(Option.getOrThrow).record.sampleId),
+    ).toEqual(["first", "second", "third"]);
     expect(result.usage.map((usage) => usage.inputTokens)).toEqual([1, 11, 21]);
     expect(result.usage.map((usage) => usage.outputTokens)).toEqual([2, 12, 22]);
-    for (const [index, row] of result.records.entries()) expect(row.record).toBe(records[index]);
+    for (const [index, row] of result.records.entries()) {
+      const original = Array.get(records, index).pipe(Option.getOrThrow);
+      expect(row.record).toBe(original);
+    }
   }),
 );
 
@@ -459,7 +484,7 @@ it.effect("reuses the default 16-record serial batches while keeping the full pa
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: Effect.fnUntraced(function* ({ state, decisions }) {
-          const input = Schema.decodeUnknownSync(inputSchema)(state);
+          const input = yield* Schema.decodeUnknownEffect(inputSchema)(state).pipe(Effect.orDie);
           sizes.push(input.records.length);
           heads.push(Record.size(decisions));
           expect(input.taxa).toEqual([

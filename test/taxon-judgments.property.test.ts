@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Arbitrary,
   Array,
+  Data,
   Effect,
   Iterable,
   Layer,
@@ -20,6 +21,8 @@ import {
   Taxonomy,
   TaxonSet,
 } from "../src/index.ts";
+
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 const options = { arbitrary: { runs: 100, size: 32, maxShrinks: 100, seed: "G2-G3" } };
 const text = Arbitrary.all({
@@ -160,11 +163,10 @@ function oneHotResponse(
 ) {
   return {
     answers: {
-      [key]: {
-        _tag: "Classify",
+      [key]: Classify({
         label,
         probabilities: Record.map(criteria, (_value, candidate) => (candidate === label ? 1 : 0)),
-      } satisfies DecisionModel.ProviderClassifyAnswer,
+      }),
     },
     usage: { inputTokens: undefined, outputTokens: undefined },
   };
@@ -205,13 +207,15 @@ const observeRankRecordEncoding = Effect.fnUntraced(function* (
       decide: ({ decisions }) => {
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected comparison");
-        const boundary = question.instructions.indexOf("\nRight record:\n");
+        const instructions = question.instructions;
+        const criteria = question.criteria;
+        const boundary = instructions.indexOf("\nRight record:\n");
         expect(boundary).toBeGreaterThan(0);
         observation = Option.some({
-          leftFields: decodeQuotedRecordFields(question.instructions.slice(0, boundary)),
-          rightFields: decodeQuotedRecordFields(question.instructions.slice(boundary)),
+          leftFields: decodeQuotedRecordFields(instructions.slice(0, boundary)),
+          rightFields: decodeQuotedRecordFields(instructions.slice(boundary)),
         });
-        return Effect.succeed(oneHotResponse("comparison", question.criteria, "undetermined"));
+        return Effect.succeed(oneHotResponse("comparison", criteria, "undetermined"));
       },
     }),
   );
@@ -252,8 +256,10 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
         )(state);
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected membership");
+        const instructions = question.instructions;
+        const criteria = question.criteria;
         const criterionNames = Array.map(["multipleTarget0", "multipleTarget1"], (key) => {
-          const criterion = Record.get(question.criteria, key).pipe(Option.getOrThrow);
+          const criterion = Record.get(criteria, key).pipe(Option.getOrThrow);
           const index = Option.fromNullOr(criterion.match(/^Target taxon node (\d+) /u)).pipe(
             Option.flatMap((match) => Array.get(match, 1)),
             Option.getOrThrow,
@@ -263,7 +269,7 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
           return node.record.scientificName;
         });
         observation = Option.some({
-          fields: decodeQuotedRecordFields(question.instructions),
+          fields: decodeQuotedRecordFields(instructions),
           targetNames: pipe(
             input.nodes,
             Array.filter(Schema.is(TaxonNode)),
@@ -271,7 +277,7 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
           ),
           criterionNames,
         });
-        return Effect.succeed(oneHotResponse("record0", question.criteria, label));
+        return Effect.succeed(oneHotResponse("record0", criteria, label));
       },
     }),
   );

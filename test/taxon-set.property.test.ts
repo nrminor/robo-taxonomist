@@ -1,8 +1,21 @@
 // Checks transport of public expressions, not constructor semantics or biological truth.
 import { expect, it } from "@effect/vitest";
-import { Arbitrary, Array, Effect, Layer, Match, Option, Predicate, Record, Schema } from "effect";
+import {
+  Arbitrary,
+  Array,
+  Data,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+} from "effect";
 import { DecisionModel } from "effect/ai";
 import { TaxonName, TaxonSet } from "../src/index.ts";
+
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 // Registration needs these generators initialized; private functions are below the tests.
 const operators = Schema.Literals([
@@ -235,13 +248,12 @@ const observeRequest = Effect.fnUntraced(function* (roots: {
           return yield* Effect.die("Expected classification");
         return {
           answers: {
-            relation: {
-              _tag: "Classify",
+            relation: Classify({
               label: "undetermined",
               probabilities: Record.map(question.criteria, (_value, key) =>
                 key === "undetermined" ? 1 : 0,
               ),
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         };

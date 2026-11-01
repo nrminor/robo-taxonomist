@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Effect, Layer, Option, Predicate, Record } from "effect";
+import { Array, Data, Effect, Layer, Option, Predicate, Record } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
@@ -10,6 +10,8 @@ import {
   Taxonomy,
 } from "../src/index.ts";
 
+const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
 it.effect("reports matching taxa without guessing whether they are one or several", () => {
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
@@ -17,8 +19,7 @@ it.effect("reports matching taxa without guessing whether they are one or severa
       decide: () =>
         Effect.succeed({
           answers: {
-            comparison: {
-              _tag: "Classify",
+            comparison: Classify({
               label: "equalSingle",
               probabilities: {
                 equalSingle: 0.45,
@@ -32,19 +33,18 @@ it.effect("reports matching taxa without guessing whether they are one or severa
                 multipleRight: 0,
                 multipleBoth: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         }),
     }),
   );
   return Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.sameSpecies(
-        RecordLabel.make("Left assignment"),
-        RecordLabel.make("Right assignment"),
-      ),
-    ).toEqual({ _tag: "SameTaxaAtRank", rank: "species" });
+    const comparison = yield* Taxonomy.sameSpecies(
+      RecordLabel.make("Left assignment"),
+      RecordLabel.make("Right assignment"),
+    );
+    expect(comparison).toEqual({ _tag: "SameTaxaAtRank", rank: "species" });
   }).pipe(Effect.provide(layer));
 });
 
@@ -73,21 +73,19 @@ it.effect("compares the original record descriptions at the requested rank", () 
         });
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
-        expect(question.instructions).toContain("species rank");
-        expect(question.instructions).toContain(
-          'Left record:\nRecord label: "Voucher A17 | Quercus robur"',
-        );
-        expect(question.instructions).toContain(
+        const instructions = question.instructions;
+        expect(instructions).toContain("species rank");
+        expect(instructions).toContain('Left record:\nRecord label: "Voucher A17 | Quercus robur"');
+        expect(instructions).toContain(
           'Right record:\nRecord label: "Voucher B42 | Quercus robur"',
         );
-        expect(question.instructions.split('"Voucher A17 | Quercus robur"')).toHaveLength(2);
-        expect(question.instructions.split('"Voucher B42 | Quercus robur"')).toHaveLength(2);
+        expect(instructions.split('"Voucher A17 | Quercus robur"')).toHaveLength(2);
+        expect(instructions.split('"Voucher B42 | Quercus robur"')).toHaveLength(2);
         expect(Record.keys(decisions)).toEqual(["comparison"]);
 
         return Effect.succeed({
           answers: {
-            comparison: {
-              _tag: "Classify",
+            comparison: Classify({
               label: "equalSingle",
               probabilities: {
                 equalSingle: 0.97,
@@ -101,7 +99,7 @@ it.effect("compares the original record descriptions at the requested rank", () 
                 multipleRight: 0,
                 multipleBoth: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -149,7 +147,8 @@ it.effect(
           const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
           if (!Predicate.isTagged(question, "Classify"))
             return Effect.die("Expected classification");
-          expect(question.instructions).not.toContain("caller-only");
+          const instructions = question.instructions;
+          expect(instructions).not.toContain("caller-only");
           for (const field of [
             "Record label",
             "Scientific name",
@@ -157,14 +156,13 @@ it.effect(
             "Taxon ID",
             "Taxonomy release",
           ]) {
-            expect(question.instructions.split(`${field}:`), field).toHaveLength(
+            expect(instructions.split(`${field}:`), field).toHaveLength(
               field === "Scientific name" ? 3 : 2,
             );
           }
           return Effect.succeed({
             answers: {
-              comparison: {
-                _tag: "Classify",
+              comparison: Classify({
                 label: "undetermined",
                 probabilities: {
                   equalSingle: 0,
@@ -178,7 +176,7 @@ it.effect(
                   multipleRight: 0,
                   multipleBoth: 0,
                 },
-              },
+              }),
             },
             usage: { inputTokens: undefined, outputTokens: undefined },
           });
@@ -187,7 +185,8 @@ it.effect(
     );
 
     return Effect.gen(function* () {
-      expect(yield* Taxonomy.sameGenus(first, second)).toEqual({
+      const comparison = yield* Taxonomy.sameGenus(first, second);
+      expect(comparison).toEqual({
         _tag: "Undetermined",
         rank: "genus",
       });
@@ -242,11 +241,11 @@ it.effect("builds fresh direct context for repeated and interleaved executions",
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify"))
           return Effect.die("Expected a classification");
-        seen.push(question.instructions);
+        const instructions = question.instructions;
+        seen.push(instructions);
         return Effect.succeed({
           answers: {
-            comparison: {
-              _tag: "Classify",
+            comparison: Classify({
               label: "equalSingle",
               probabilities: {
                 equalSingle: 1,
@@ -260,7 +259,7 @@ it.effect("builds fresh direct context for repeated and interleaved executions",
                 multipleRight: 0,
                 multipleBoth: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -296,7 +295,7 @@ const classificationLayer = (answer: DecisionModel.ProviderClassifyAnswer) =>
       decide: () =>
         Effect.succeed({
           answers: {
-            comparison: {
+            comparison: Classify({
               ...answer,
               probabilities: {
                 equalSingle: 0,
@@ -311,7 +310,7 @@ const classificationLayer = (answer: DecisionModel.ProviderClassifyAnswer) =>
                 multipleBoth: 0,
                 ...answer.probabilities,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         }),
@@ -323,18 +322,18 @@ it.effect.each([
   ["scientific notation", { equalSingle: 1e-7, equalMultiple: 0.7999999, properSubset: 0.2 }],
 ] as const)("accepts grouped support at its inclusive boundary: %s", ([_case, probabilities]) =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.sameSpecies(RecordLabel.make("A"), RecordLabel.make("B"), {
-        policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
-      }),
-    ).toEqual({ _tag: "SameTaxaAtRank", rank: "species" });
+    const comparison = yield* Taxonomy.sameSpecies(RecordLabel.make("A"), RecordLabel.make("B"), {
+      policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
+    });
+    expect(comparison).toEqual({ _tag: "SameTaxaAtRank", rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalMultiple",
-        probabilities,
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalMultiple",
+          probabilities,
+        }),
+      ),
     ),
   ),
 );
@@ -348,19 +347,19 @@ it.effect.each([
   { label: "disjoint", expected: "NoSharedTaxaAtRank" },
 ])("maps unit support for $label to $expected", ({ label, expected }) =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.sameSpecies(
-        RecordLabel.make("Left assignment"),
-        RecordLabel.make("Right assignment"),
-      ),
-    ).toEqual({ _tag: expected, rank: "species" });
+    const comparison = yield* Taxonomy.sameSpecies(
+      RecordLabel.make("Left assignment"),
+      RecordLabel.make("Right assignment"),
+    );
+    expect(comparison).toEqual({ _tag: expected, rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label,
-        probabilities: { [label]: 1 },
-      }),
+      classificationLayer(
+        Classify({
+          label,
+          probabilities: { [label]: 1 },
+        }),
+      ),
     ),
   ),
 );
@@ -409,14 +408,13 @@ it.effect.each([
   },
 ])("$behavior", ({ label, probabilities, policy, expected }) =>
   Effect.gen(function* () {
-    expect(
-      yield* Taxonomy.sameSpecies(
-        RecordLabel.make("Left assignment"),
-        RecordLabel.make("Right assignment"),
-        { policy },
-      ),
-    ).toEqual({ _tag: expected, rank: "species" });
-  }).pipe(Effect.provide(classificationLayer({ _tag: "Classify", label, probabilities }))),
+    const comparison = yield* Taxonomy.sameSpecies(
+      RecordLabel.make("Left assignment"),
+      RecordLabel.make("Right assignment"),
+      { policy },
+    );
+    expect(comparison).toEqual({ _tag: expected, rank: "species" });
+  }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
 it.effect("abstains when the leading group has less than half the support", () =>
@@ -430,11 +428,12 @@ it.effect("abstains when the leading group has less than half the support", () =
     expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalSingle",
-        probabilities: { equalSingle: 0.36, disjoint: 0.34, undetermined: 0.3 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalSingle",
+          probabilities: { equalSingle: 0.36, disjoint: 0.34, undetermined: 0.3 },
+        }),
+      ),
     ),
   ),
 );
@@ -450,11 +449,12 @@ it.effect("abstains rather than breaking a tied distribution", () =>
     expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalSingle",
-        probabilities: { equalSingle: 0.5, disjoint: 0.5, undetermined: 0 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalSingle",
+          probabilities: { equalSingle: 0.5, disjoint: 0.5, undetermined: 0 },
+        }),
+      ),
     ),
   ),
 );
@@ -471,11 +471,12 @@ it.effect("species convenience forwards a caller's minimum-margin requirement", 
     expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalSingle",
-        probabilities: { equalSingle: 0.75, disjoint: 0.25, undetermined: 0 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalSingle",
+          probabilities: { equalSingle: 0.75, disjoint: 0.25, undetermined: 0 },
+        }),
+      ),
     ),
   ),
 );
@@ -490,9 +491,11 @@ it.effect.each([
   { rank: "genus", compare: Taxonomy.sameGenus },
 ])("forwards policy at the $rank convenience's requested rank", ({ rank, compare }) =>
   Effect.gen(function* () {
-    expect(
-      yield* compare(RecordLabel.make("Voucher A17"), RecordLabel.make("Voucher B42")),
-    ).toEqual({
+    const defaultComparison = yield* compare(
+      RecordLabel.make("Voucher A17"),
+      RecordLabel.make("Voucher B42"),
+    );
+    expect(defaultComparison).toEqual({
       _tag: "NoSharedTaxaAtRank",
       rank,
     });
@@ -507,11 +510,12 @@ it.effect.each([
     expect(result).toEqual({ _tag: "Undetermined", rank });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "disjoint",
-        probabilities: { equalSingle: 0.02, disjoint: 0.97, undetermined: 0.01 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "disjoint",
+          probabilities: { equalSingle: 0.02, disjoint: 0.97, undetermined: 0.01 },
+        }),
+      ),
     ),
   ),
 );
@@ -549,7 +553,7 @@ it.effect.each([
     );
 
     expect(result).toEqual({ _tag: expected, rank: "species" });
-  }).pipe(Effect.provide(classificationLayer({ _tag: "Classify", label, probabilities }))),
+  }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
 it.effect.each([
@@ -575,7 +579,7 @@ it.effect.each([
       );
 
       expect(result).toEqual({ _tag: expected, rank: "species" });
-    }).pipe(Effect.provide(classificationLayer({ _tag: "Classify", label, probabilities }))),
+    }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
 it.effect.each([
@@ -595,11 +599,12 @@ it.effect.each([
       expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "species" });
     }).pipe(
       Effect.provide(
-        classificationLayer({
-          _tag: "Classify",
-          label: "equalSingle",
-          probabilities: { equalSingle: support, disjoint: alternative, undetermined: 0 },
-        }),
+        classificationLayer(
+          Classify({
+            label: "equalSingle",
+            probabilities: { equalSingle: support, disjoint: alternative, undetermined: 0 },
+          }),
+        ),
       ),
     ),
 );
@@ -627,11 +632,12 @@ it.effect.each([
     expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalSingle",
-        probabilities: { equalSingle: 0.6, disjoint: 0.4, undetermined: 0 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalSingle",
+          probabilities: { equalSingle: 0.6, disjoint: 0.4, undetermined: 0 },
+        }),
+      ),
     ),
   ),
 );
@@ -646,12 +652,13 @@ it.effect("does not use provider-defined confidence as an acceptance gate", () =
     expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "species" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalSingle",
-        confidence: 0,
-        probabilities: { equalSingle: 0.97, disjoint: 0.02, undetermined: 0.01 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalSingle",
+          confidence: 0,
+          probabilities: { equalSingle: 0.97, disjoint: 0.02, undetermined: 0.01 },
+        }),
+      ),
     ),
   ),
 );
@@ -680,15 +687,15 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
         });
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
-        expect(question.instructions).toContain("family rank");
-        expect(question.instructions.split("Taxonomy release:")).toHaveLength(2);
-        expect(question.instructions.split("Record label:")).toHaveLength(2);
-        expect(question.instructions.split("Scientific name:")).toHaveLength(2);
+        const instructions = question.instructions;
+        expect(instructions).toContain("family rank");
+        expect(instructions.split("Taxonomy release:")).toHaveLength(2);
+        expect(instructions.split("Record label:")).toHaveLength(2);
+        expect(instructions.split("Scientific name:")).toHaveLength(2);
 
         return Effect.succeed({
           answers: {
-            comparison: {
-              _tag: "Classify",
+            comparison: Classify({
               label: "undetermined",
               probabilities: {
                 equalSingle: 0,
@@ -702,7 +709,7 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
                 multipleRight: 0,
                 multipleBoth: 0,
               },
-            },
+            }),
           },
           usage: { inputTokens: undefined, outputTokens: undefined },
         });
@@ -765,18 +772,19 @@ it.effect("reports a left-side diagnosis even when the other record is unidentif
     expect(result).toEqual({ _tag: "MultipleTaxaAtRank", rank: "species", side: "left" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "multipleLeft",
-        probabilities: {
-          equalSingle: 0,
-          disjoint: 0,
-          undetermined: 0.05,
-          multipleLeft: 0.7,
-          multipleRight: 0.05,
-          multipleBoth: 0.2,
-        },
-      }),
+      classificationLayer(
+        Classify({
+          label: "multipleLeft",
+          probabilities: {
+            equalSingle: 0,
+            disjoint: 0,
+            undetermined: 0.05,
+            multipleLeft: 0.7,
+            multipleRight: 0.05,
+            multipleBoth: 0.2,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -794,11 +802,12 @@ it.effect.each([
     expect(result).toEqual({ _tag: "MultipleTaxaAtRank", rank: "genus", side });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label,
-        probabilities: { equalSingle: 0, disjoint: 0, undetermined: 0, [label]: 1 },
-      }),
+      classificationLayer(
+        Classify({
+          label,
+          probabilities: { equalSingle: 0, disjoint: 0, undetermined: 0, [label]: 1 },
+        }),
+      ),
     ),
   ),
 );
@@ -864,7 +873,7 @@ it.effect.each([
     );
 
     expect(result).toEqual(expected);
-  }).pipe(Effect.provide(classificationLayer({ _tag: "Classify", label, probabilities }))),
+  }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
 it.effect("uses the leading diagnosis side even when another side was selected", () =>
@@ -879,18 +888,19 @@ it.effect("uses the leading diagnosis side even when another side was selected",
     expect(result).toEqual({ _tag: "MultipleTaxaAtRank", rank: "species", side: "both" });
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "multipleLeft",
-        probabilities: {
-          equalSingle: 0,
-          disjoint: 0,
-          undetermined: 0.1,
-          multipleLeft: 0.3,
-          multipleRight: 0,
-          multipleBoth: 0.6,
-        },
-      }),
+      classificationLayer(
+        Classify({
+          label: "multipleLeft",
+          probabilities: {
+            equalSingle: 0,
+            disjoint: 0,
+            undetermined: 0.1,
+            multipleLeft: 0.3,
+            multipleRight: 0,
+            multipleBoth: 0.6,
+          },
+        }),
+      ),
     ),
   ),
 );
@@ -912,19 +922,20 @@ it.effect.each([
       expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
     }).pipe(
       Effect.provide(
-        classificationLayer({
-          _tag: "Classify",
-          label,
-          probabilities: {
-            equalSingle: 0,
-            disjoint: 0.05,
-            undetermined: 0.05,
-            multipleLeft: 0,
-            multipleRight: 0,
-            multipleBoth: 0.3,
-            [label]: 0.6,
-          },
-        }),
+        classificationLayer(
+          Classify({
+            label,
+            probabilities: {
+              equalSingle: 0,
+              disjoint: 0.05,
+              undetermined: 0.05,
+              multipleLeft: 0,
+              multipleRight: 0,
+              multipleBoth: 0.3,
+              [label]: 0.6,
+            },
+          }),
+        ),
       ),
     ),
 );
