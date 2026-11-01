@@ -14,7 +14,7 @@ const assignment = {
   assignmentId: "oak-species",
 };
 const species = TaxonSet.of(assignment);
-const panel = TaxonSet.union(oaks, species);
+const panel = TaxonSet.unionAll([oaks, species]);
 const record = { scientificName: TaxonName.make("Quercus robur"), abundance: 8 };
 const model = Layer.effect(
   DecisionModel.DecisionModel,

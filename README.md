@@ -234,7 +234,13 @@ const remaining = TaxonSet.complement(oaks, family);
 const empty = TaxonSet.empty();
 ```
 
-`union`, `intersection`, and `difference` each take two set expressions. Combine those expressions again to build a larger target. `symmetricDifference` describes organisms in exactly one input set, and `complement(set, universe)` subtracts the set from the explicitly supplied universe. In this example, `remaining` and `otherFamilyMembers` describe the same directed difference.
+`union`, `intersection`, and `difference` each take two set expressions. `symmetricDifference` describes organisms in exactly one input set, and `complement(set, universe)` subtracts the set from the explicitly supplied universe. In this example, `remaining` and `otherFamilyMembers` describe the same directed difference.
+
+For a collection of targets, use `unionAll` rather than repeatedly nesting binary unions:
+
+```ts
+const trees = TaxonSet.unionAll([oaks, beeches, TaxonSet.of(TaxonName.make("Betula"))]);
+```
 
 `TaxonSet.of` also accepts a record and keeps its fields:
 
@@ -249,7 +255,7 @@ const oakAssignment = {
 const oakSpecies = TaxonSet.of(oakAssignment);
 ```
 
-Each entry identifies one taxon. Use `union` to combine taxa. The model receives the identifying fields; your extra fields remain available in `taxon.record` on returned matches.
+Each entry identifies one taxon. Use `union` or `unionAll` to combine taxa. The model receives the identifying fields; your extra fields remain available in `taxon.record` on returned matches.
 
 To ask how the sets relate, run a relation question:
 

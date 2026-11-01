@@ -23,6 +23,84 @@ function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
   return question;
 }
 
+it("constructs an empty set from an empty collection", () => {
+  const first = TaxonSet.unionAll([]);
+  const second = TaxonSet.unionAll([]);
+  expect(first).toEqual({ _tag: "Empty" });
+  expect(second).not.toBe(first);
+});
+
+it("returns the original set for a singleton collection", () => {
+  const oak = TaxonSet.of(TaxonName.make("Quercus"));
+  expect(TaxonSet.unionAll([oak])).toBe(oak);
+});
+
+it("constructs one union retaining operand order, repetitions and supplied subtrees", () => {
+  const record = {
+    scientificName: TaxonName.make("Quercus"),
+    abundance: 7,
+    metadata: { sample: "A17", notes: [null, "caller"] },
+  };
+  const oak = TaxonSet.of(record);
+  const beech = TaxonSet.of(TaxonName.make("Fagus"));
+  const nested = TaxonSet.union(oak, beech);
+  const none = TaxonSet.empty();
+  const result = TaxonSet.unionAll([nested, oak, none, oak]);
+  expect(result).toEqual({ _tag: "Union", operands: [nested, oak, none, oak] });
+  if (!Predicate.isTagged(result, "Union")) throw new Error("Expected union");
+  expect(result.operands[0]).toBe(nested);
+  expect(result.operands[1]).toBe(oak);
+  expect(result.operands[2]).toBe(none);
+  expect(result.operands[3]).toBe(oak);
+  expect(oak.record).toBe(record);
+});
+
+it("captures a collection without retaining its mutable operand array", () => {
+  const oak = TaxonSet.of(TaxonName.make("Quercus"));
+  const beech = TaxonSet.of(TaxonName.make("Fagus"));
+  const inputs = [oak, beech];
+  const first = TaxonSet.unionAll(inputs);
+  const second = TaxonSet.unionAll(inputs);
+  inputs[0] = beech;
+  inputs.push(oak);
+  expect(first).not.toBe(second);
+  if (!Predicate.isTagged(first, "Union") || !Predicate.isTagged(second, "Union"))
+    throw new Error("Expected unions");
+  expect(first.operands).not.toBe(second.operands);
+  expect(first.operands).toHaveLength(2);
+  expect(first.operands[0]).toBe(oak);
+  expect(first.operands[1]).toBe(beech);
+});
+
+it("consumes an iterable once while retaining repeated occurrences", () => {
+  const oak = TaxonSet.of(TaxonName.make("Quercus"));
+  const beech = TaxonSet.of(TaxonName.make("Fagus"));
+  let iterations = 0;
+  const inputs = {
+    *[Symbol.iterator]() {
+      iterations++;
+      yield oak;
+      yield beech;
+      yield oak;
+    },
+  };
+  const result = TaxonSet.unionAll(inputs);
+  expect(iterations).toBe(1);
+  expect(result).toEqual({ _tag: "Union", operands: [oak, beech, oak] });
+});
+
+it("serializes ten thousand flat targets without creating a deeply nested expression", () => {
+  const inputs = Array.makeBy(10_000, (index) => TaxonSet.of(TaxonName.make(`Target ${index}`)));
+  const result = TaxonSet.unionAll(inputs);
+  const document = JSON.parse(JSON.stringify(result));
+  expect(document.operands).toHaveLength(10_000);
+  expect(document.operands[0]).toEqual({ _tag: "Taxon", record: { scientificName: "Target 0" } });
+  expect(document.operands[9_999]).toEqual({
+    _tag: "Taxon",
+    record: { scientificName: "Target 9999" },
+  });
+});
+
 it("preserves syntax with fresh parents and shared readonly children", () => {
   const oak = TaxonSet.of(TaxonName.make("Quercus"));
   const beech = TaxonSet.of(TaxonName.make("Fagus"));
@@ -163,6 +241,58 @@ it.effect.each(operations)(
         taxon: right,
       });
       expect(calls).toBe(1);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "uses collection-built unions in set relations and retains original clarification targets",
+  () => {
+    const oak = TaxonSet.of(TaxonName.make("Quercus"));
+    const beech = TaxonSet.of({ scientificName: TaxonName.make("Fagus"), panelEntry: "B" });
+    const birch = TaxonSet.of(TaxonName.make("Betula"));
+    const left = TaxonSet.unionAll([oak, beech, oak]);
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state, decisions }) => {
+          expect(state).toEqual({
+            nodes: [
+              { _tag: "Union", operands: [1, 2, 1] },
+              { _tag: "Taxon", record: { scientificName: "Quercus" } },
+              { _tag: "Taxon", record: { scientificName: "Fagus" } },
+              { _tag: "Taxon", record: { scientificName: "Betula" } },
+            ],
+            left: 0,
+            right: 3,
+          });
+          const question = relationQuestion(decisions);
+          return Effect.succeed({
+            answers: {
+              relation: {
+                _tag: "Classify",
+                label: "multipleLeft1",
+                probabilities: Record.map(question.criteria, (_value, key) =>
+                  key === "multipleLeft1" ? 1 : 0,
+                ),
+              },
+            },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          });
+        },
+      }),
+    );
+    return Effect.gen(function* () {
+      const result = yield* TaxonSet.overlaps(left, birch);
+      expect(result).toEqual({
+        _tag: "MultipleTaxaInSet",
+        relation: "overlap",
+        side: "left",
+        taxon: beech,
+      });
+      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+        throw new Error("Expected clarification");
+      expect(result.taxon).toBe(beech);
     }).pipe(Effect.provide(layer));
   },
 );

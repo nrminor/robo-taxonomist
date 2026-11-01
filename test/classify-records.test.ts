@@ -38,70 +38,76 @@ const boundedTaxon = (name: string) => {
 };
 
 // Supplied answers test classification contracts, not biological accuracy.
-it.effect("ranks several supported taxa while preserving original records and taxon nodes", () => {
-  const record = {
-    scientificName: TaxonName.make("Saccharomyces cerevisiae"),
-    sequenceAbundance: 8,
-    sampleId: "sample-17",
-  };
-  const genus = TaxonSet.of(TaxonName.make("Saccharomyces"));
-  const species = TaxonSet.of(TaxonName.make("Saccharomyces cerevisiae"));
-  const bacteria = TaxonSet.of(TaxonName.make("Lactobacillaceae"));
-  const panel = TaxonSet.union(genus, TaxonSet.union(species, bacteria));
-  const layer = Layer.effect(
-    DecisionModel.DecisionModel,
-    DecisionModel.make({
-      decide: ({ state }) => {
-        const input = Schema.decodeUnknownSync(inputSchema)(state);
-        expect(input.records).toEqual(['Scientific name: "Saccharomyces cerevisiae"']);
-        expect(input.taxa).toEqual([
-          { scientificName: "Saccharomyces" },
-          { scientificName: "Saccharomyces cerevisiae" },
-          { scientificName: "Lactobacillaceae" },
-        ]);
-        return Effect.succeed({
-          answers: {
-            r0t0: answer("withinTaxon", [0.01, 0.96, 0.01, 0.02]),
-            r0t1: answer("sameTaxon", [0.94, 0.01, 0.02, 0.03]),
-            r0t2: answer("noMatch", [0.01, 0.01, 0.96, 0.02]),
-          },
-          usage: { inputTokens: 101, outputTokens: 53 },
-        });
-      },
-    }),
-  );
+it.effect.each(["binary", "collection"] as const)(
+  "ranks supported taxa preserving original records and nodes (%s)",
+  (construction) => {
+    const record = {
+      scientificName: TaxonName.make("Saccharomyces cerevisiae"),
+      sequenceAbundance: 8,
+      sampleId: "sample-17",
+    };
+    const genus = TaxonSet.of(TaxonName.make("Saccharomyces"));
+    const species = TaxonSet.of(TaxonName.make("Saccharomyces cerevisiae"));
+    const bacteria = TaxonSet.of(TaxonName.make("Lactobacillaceae"));
+    const panel =
+      construction === "binary"
+        ? TaxonSet.union(genus, TaxonSet.union(species, bacteria))
+        : TaxonSet.unionAll([genus, species, bacteria]);
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state }) => {
+          const input = Schema.decodeUnknownSync(inputSchema)(state);
+          expect(input.records).toEqual(['Scientific name: "Saccharomyces cerevisiae"']);
+          expect(input.taxa).toEqual([
+            { scientificName: "Saccharomyces" },
+            { scientificName: "Saccharomyces cerevisiae" },
+            { scientificName: "Lactobacillaceae" },
+          ]);
+          return Effect.succeed({
+            answers: {
+              r0t0: answer("withinTaxon", [0.01, 0.96, 0.01, 0.02]),
+              r0t1: answer("sameTaxon", [0.94, 0.01, 0.02, 0.03]),
+              r0t2: answer("noMatch", [0.01, 0.01, 0.96, 0.02]),
+            },
+            usage: { inputTokens: 101, outputTokens: 53 },
+          });
+        },
+      }),
+    );
 
-  return Effect.gen(function* () {
-    const results = yield* Taxonomy.classifyRecords([record], panel, {
-      policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 }),
-    });
-    const row = Array.head(results.records).pipe(Option.getOrThrow);
-    const first = Array.head(row.taxa).pipe(Option.getOrThrow);
+    return Effect.gen(function* () {
+      const results = yield* Taxonomy.classifyRecords([record], panel, {
+        policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 }),
+      });
+      const row = Array.head(results.records).pipe(Option.getOrThrow);
+      const first = Array.head(row.taxa).pipe(Option.getOrThrow);
 
-    expect(results.panel).toBe(panel);
-    expect(row.record).toBe(record);
-    expect(row.taxa.map((match) => match.taxon)).toEqual([genus, species, bacteria]);
-    expect(first.taxon).toBe(genus);
-    expect(first.record).toBe(record);
-    expect(first.pipe((match) => match.record.sampleId)).toBe("sample-17");
-    expect(first.record.sequenceAbundance).toBe(8);
-    expect(row.taxa.map((match) => match.judgment._tag)).toEqual([
-      "Matched",
-      "Matched",
-      "NotMatched",
-    ]);
-    expect(row.ranking.map((match) => match.taxon.record.scientificName)).toEqual([
-      "Saccharomyces",
-      "Saccharomyces cerevisiae",
-    ]);
-    expect(row.ranking.map((match) => match.support)).toEqual([0.97, 0.95]);
-    expect(Array.head(row.ranking).pipe(Option.getOrThrow)).toBe(first);
-    expect(first.answer.label).toBe("withinTaxon");
-    expect(first.answer.probabilities.withinTaxon).toBe(0.96);
-    expect(results.usage).toHaveLength(1);
-    expect(results.usage[0]).toMatchObject({ inputTokens: 101, outputTokens: 53 });
-  }).pipe(Effect.provide(layer));
-});
+      expect(results.panel).toBe(panel);
+      expect(row.record).toBe(record);
+      expect(row.taxa.map((match) => match.taxon)).toEqual([genus, species, bacteria]);
+      expect(first.taxon).toBe(genus);
+      expect(first.record).toBe(record);
+      expect(first.pipe((match) => match.record.sampleId)).toBe("sample-17");
+      expect(first.record.sequenceAbundance).toBe(8);
+      expect(row.taxa.map((match) => match.judgment._tag)).toEqual([
+        "Matched",
+        "Matched",
+        "NotMatched",
+      ]);
+      expect(row.ranking.map((match) => match.taxon.record.scientificName)).toEqual([
+        "Saccharomyces",
+        "Saccharomyces cerevisiae",
+      ]);
+      expect(row.ranking.map((match) => match.support)).toEqual([0.97, 0.95]);
+      expect(Array.head(row.ranking).pipe(Option.getOrThrow)).toBe(first);
+      expect(first.answer.label).toBe("withinTaxon");
+      expect(first.answer.probabilities.withinTaxon).toBe(0.96);
+      expect(results.usage).toHaveLength(1);
+      expect(results.usage[0]).toMatchObject({ inputTokens: 101, outputTokens: 53 });
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("separates negative evidence from uncertainty and preserves rounded answers", () => {
   const records = ["negative", "unknown", "combined", "tie", "rounded"].map((label) =>

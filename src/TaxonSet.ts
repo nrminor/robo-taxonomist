@@ -69,7 +69,7 @@ export const empty = (): TaxonSet<never> => taxonSetSchema.cases.Empty.make({});
 
 /**
  * Build an expression for organisms belonging to the taxon identified by a name or record.
- * To combine several taxa, build each expression separately and use TaxonSet.union.
+ * To combine several taxa, build each expression separately and use TaxonSet.unionAll.
  * Preserve the supplied record and its identifying fields without normalization.
  *
  * @category constructors
@@ -101,6 +101,33 @@ export const union = <A extends TaxonomicRecord, B extends TaxonomicRecord>(
   left: TaxonSet<A>,
   right: TaxonSet<B>,
 ): TaxonSet<A | B> => new Union<A | B>({ operands: [left, right] });
+
+type RecordOfSet<S> = S extends TaxonSet<never> ? never : S extends TaxonSet<infer R> ? R : never;
+
+/**
+ * Build a union from a finite iterable of set expressions without nesting a binary union per item.
+ * An empty iterable produces a fresh empty set; a singleton returns its original expression.
+ * Otherwise, create one union with the supplied expressions as its direct children.
+ * Consume the iterable eagerly once and copy its operand container, retaining child references,
+ * supplied order, repeated occurrences, metadata and nesting without simplification.
+ * Records and child expressions are shared, not cloned or frozen.
+ *
+ * @category constructors
+ * @since 0.4.0
+ * @example
+ * import { TaxonName, TaxonSet } from "robo-taxonomist";
+ * const targets = ["Quercus", "Fagus", "Betula"].map((name) =>
+ *   TaxonSet.of(TaxonName.make(name)),
+ * );
+ * export const trees = TaxonSet.unionAll(targets);
+ */
+export function unionAll<S extends TaxonSet>(sets: Iterable<S>): TaxonSet<RecordOfSet<S>>;
+export function unionAll(sets: Iterable<TaxonSet>): TaxonSet {
+  const operands = [...sets];
+  if (!Array.isArrayNonEmpty(operands)) return empty();
+  if (operands.length === 1) return operands[0];
+  return new Union({ operands });
+}
 
 /**
  * Build an intersection expression for organisms in both input sets.

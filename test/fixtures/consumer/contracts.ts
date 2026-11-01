@@ -152,6 +152,20 @@ type AssignmentDiagnostic =
     }
   | undefined;
 type MixedTarget = typeof assignment | typeof identifiedTarget;
+const unionInputs = [assignedOaks, TaxonSet.of(identifiedTarget)] as const;
+const collectedPanel = TaxonSet.unionAll(unionInputs);
+const unionIterable: Iterable<TaxonSet.TaxonSet<MixedTarget>> = unionInputs;
+const iterablePanel = TaxonSet.unionAll(unionIterable);
+const collectedClassification = Taxonomy.classifyRecords(records, collectedPanel);
+const emptyCollection = TaxonSet.unionAll([]);
+const emptyIterable: Iterable<TaxonSet.TaxonSet<never>> = [TaxonSet.empty()];
+const emptyIterableUnion = TaxonSet.unionAll(emptyIterable);
+const collectedWithEmpty = TaxonSet.unionAll([TaxonSet.empty(), assignedOaks]);
+declare const narrowedDifference: Types.ExtractTag<
+  TaxonSet.TaxonSet<typeof assignment>,
+  "Difference"
+>;
+const collectedDifference = TaxonSet.unionAll([narrowedDifference]);
 type AssignedClassification = Effect.Success<typeof assignedClassification>;
 type MixedClassification = Effect.Success<typeof mixedClassification>;
 type MixedMatch = MixedClassification["records"][number]["ranking"][number];
@@ -219,6 +233,20 @@ export type Contracts = [
     >
   >,
   Assert<Equal<typeof mixedPanel, TaxonSet.TaxonSet<MixedTarget>>>,
+  Assert<Equal<typeof collectedPanel, TaxonSet.TaxonSet<MixedTarget>>>,
+  Assert<Equal<typeof iterablePanel, TaxonSet.TaxonSet<MixedTarget>>>,
+  Assert<Equal<typeof emptyCollection, TaxonSet.TaxonSet<never>>>,
+  Assert<Equal<typeof emptyIterableUnion, TaxonSet.TaxonSet<never>>>,
+  Assert<Equal<typeof collectedWithEmpty, TaxonSet.TaxonSet<typeof assignment>>>,
+  Assert<Equal<typeof collectedDifference, TaxonSet.TaxonSet<typeof assignment>>>,
+  Assert<
+    Equal<
+      Effect.Success<
+        typeof collectedClassification
+      >["records"][number]["taxa"][number]["taxon"]["record"],
+      MixedTarget
+    >
+  >,
   Assert<Equal<MixedClassification["panel"], TaxonSet.TaxonSet<MixedTarget>>>,
   Assert<Equal<MixedMatch, TaxonMatch<typeof specimen, MixedTarget>>>,
   Assert<Equal<MixedMatch["taxon"]["record"], MixedTarget>>,
