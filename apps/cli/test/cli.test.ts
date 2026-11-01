@@ -36,6 +36,67 @@ it.effect("compares identical labels without model configuration", () =>
   }),
 );
 
+it.effect("reports missing provider credentials on stderr without starting inference", () =>
+  Effect.gen(function* () {
+    const result = yield* run([
+      "compare",
+      "identity",
+      "Quercus",
+      "Fagus",
+      "--model",
+      "custom/model",
+    ]);
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("TYPESAFE_API_KEY");
+  }),
+);
+
+it.effect.each([
+  { path: ["compare", "identity"] },
+  { path: ["compare", "rank"] },
+  { path: ["cmp", "within"] },
+  { path: ["set", "relation"] },
+])("shows model-backed command help without configuration or credentials: $path", ({ path }) =>
+  Effect.gen(function* () {
+    const result = yield* run([...path, "--help"]);
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    for (const text of [
+      "--model",
+      "ROBO_TAXONOMIST_MODEL",
+      "TYPESAFE_API_KEY",
+      "--format",
+      "--no-header",
+    ]) {
+      expect(result.stdout).toContain(text);
+    }
+  }),
+);
+
+it.effect("requires model selection instead of inventing a default", () =>
+  Effect.gen(function* () {
+    const result = yield* run(["compare", "identity", "Quercus", "Fagus"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("ROBO_TAXONOMIST_MODEL");
+  }),
+);
+
+it.effect.each([
+  { args: ["compare", "identity", "Quercus", "Fagus", "--model", "   "] },
+  { args: ["compare", "identity", "Quercus", "Fagus", "Betula", "--model", "custom/model"] },
+  { args: ["compare", "containment", "Quercus", "Fagaceae", "Betula", "--model", "custom/model"] },
+  { args: ["compare", "rank", "A17", "B42", "--model", "custom/model"] },
+  { args: ["compare", "rank", "A17", "B42", "--rank", "strain", "--model", "custom/model"] },
+])("rejects invalid scalar arity or configuration without primary output: $args", ({ args }) =>
+  Effect.gen(function* () {
+    const result = yield* run(args);
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).not.toBe("");
+  }),
+);
+
 it.effect("constructs a symbolic taxon set without model configuration", () =>
   Effect.gen(function* () {
     const result = yield* run(["set", "create", "--target", "Quercus"]);

@@ -14,6 +14,7 @@
     "check": "pnpm run build && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
+    "@effect/ai-typesafe": "4.1.1",
     "@effect/platform-node": "4.1.1",
     "effect": "4.1.1",
     "robo-taxonomist": "workspace:*"

@@ -202,6 +202,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@effect/ai-typesafe':
+        specifier: 4.1.1
+        version: 4.1.1(effect@4.1.1)
       '@effect/platform-node':
         specifier: 4.1.1
         version: 4.1.1(effect@4.1.1)(redis@6.3.1)
@@ -356,6 +359,11 @@ packages:
   '@csstools/css-tokenizer@4.0.2':
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
+
+  '@effect/ai-typesafe@4.1.1':
+    resolution: {integrity: sha512-KfLaqJATYGcd1T0ov3IEwSPZEwpwF7hV1nopAta/l8SbrOiQrgMuHnxikkvn7S45j5aTtXI/1axmpRxFq9g7ww==}
+    peerDependencies:
+      effect: ^4.1.1
 
   '@effect/atom-react@4.1.1':
     resolution: {integrity: sha512-62YWG+Wg93SMYAbYx1zc74VE0u+MHWl5EthFXk0WUP7Kv1qb2Mvfg2C75jnp2oce7vN5WA9uiQZrgXjdqMYChw==}
@@ -2403,6 +2411,10 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.2':
     optional: true
+
+  '@effect/ai-typesafe@4.1.1(effect@4.1.1)':
+    dependencies:
+      effect: 4.1.1
 
   '@effect/atom-react@4.1.1(effect@4.1.1)(react@19.2.7)(scheduler@0.27.0)':
     dependencies:

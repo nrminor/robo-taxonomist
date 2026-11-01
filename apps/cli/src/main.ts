@@ -3,6 +3,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect, Match } from "effect";
 import { CliOutput, Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 import { cli } from "./cli.ts";
 
 const Output = CliOutput.layerPresenter({
@@ -21,6 +22,6 @@ const Output = CliOutput.layerPresenter({
 
 cli.pipe(
   Command.run({ version: "0.0.0" }),
-  Effect.provide([NodeServices.layer, Output]),
+  Effect.provide([NodeServices.layer, FetchHttpClient.layer, Output]),
   NodeRuntime.runMain,
 );
