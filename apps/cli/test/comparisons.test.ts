@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  Array,
   ConfigProvider,
   Effect,
   FileSystem,
   Layer,
   Match,
+  Option,
   Result,
   Schema,
   Sink,
@@ -14,7 +16,9 @@ import {
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestConsole } from "effect/testing";
+import { TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
+import * as Documents from "../src/documents.ts";
 
 const wireRequest = Schema.fromJsonString(
   Schema.Struct({
@@ -65,15 +69,14 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
 ) {
   const requests: Array<typeof wireRequest.Type> = [];
   const client = HttpClient.make((request) =>
-    Effect.sync(() => {
-      const body = Match.value(request.body).pipe(
-        Match.tag("Uint8Array", ({ body }) =>
-          Schema.decodeUnknownSync(wireRequest)(new TextDecoder().decode(body)),
-        ),
+    Effect.gen(function* () {
+      const text = Match.value(request.body).pipe(
+        Match.tag("Uint8Array", ({ body }) => new TextDecoder().decode(body)),
         Match.orElse(() => {
           throw new Error("Expected a JSON provider request");
         }),
       );
+      const body = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
       requests.push(body);
       return HttpClientResponse.fromWeb(
         request,
@@ -133,7 +136,8 @@ it.effect("compares identity through the configured TypeSafe protocol", () =>
     expect(result.stdout).toEqual(["judgment\tside", "SameTaxon\t"]);
     expect(result.stderr).toEqual([]);
     expect(result.requests).toHaveLength(1);
-    expect(result.requests[0]?.model).toBe("custom/model");
+    const request = Array.head(result.requests).pipe(Option.getOrThrow);
+    expect(request.model).toBe("custom/model");
   }),
 );
 
@@ -193,22 +197,30 @@ it.effect("omits the comparison TSV header when requested", () =>
 );
 
 it.effect.each([
-  { choice: "different", row: "DifferentTaxa\t", native: { _tag: "DifferentTaxa" } },
-  { choice: "undetermined", row: "Undetermined\t", native: { _tag: "Undetermined" } },
+  {
+    choice: "different",
+    row: "DifferentTaxa\t",
+    native: Documents.IdentityJudgment.cases.DifferentTaxa.make({}),
+  },
+  {
+    choice: "undetermined",
+    row: "Undetermined\t",
+    native: Documents.IdentityJudgment.cases.Undetermined.make({}),
+  },
   {
     choice: "multipleLeft",
     row: "MultipleTaxa\tleft",
-    native: { _tag: "MultipleTaxa", side: "left" },
+    native: Documents.IdentityJudgment.cases.MultipleTaxa.make({ side: "left" }),
   },
   {
     choice: "multipleRight",
     row: "MultipleTaxa\tright",
-    native: { _tag: "MultipleTaxa", side: "right" },
+    native: Documents.IdentityJudgment.cases.MultipleTaxa.make({ side: "right" }),
   },
   {
     choice: "multipleBoth",
     row: "MultipleTaxa\tboth",
-    native: { _tag: "MultipleTaxa", side: "both" },
+    native: Documents.IdentityJudgment.cases.MultipleTaxa.make({ side: "both" }),
   },
 ])(
   "retains native identity outcomes without turning them into failures: $choice",
@@ -251,7 +263,8 @@ it.effect.each([
       });
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.requests).toHaveLength(1);
-      expect(result.requests[0]?.model).toBe(expected);
+      const request = Array.head(result.requests).pipe(Option.getOrThrow);
+      expect(request.model).toBe(expected);
     }),
 );
 
@@ -388,7 +401,8 @@ it.effect("compares a directed set relation using the native operation", () =>
       "judgment\trelation\tside\tclarification_target",
       "Yes\tsubset\t\t",
     ]);
-    expect(result.requests[0]?.state).toEqual({
+    const request = Array.head(result.requests).pipe(Option.getOrThrow);
+    expect(request.state).toEqual({
       nodes: [
         { _tag: "Taxon", record: { scientificName: "Quercus" } },
         { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
@@ -431,24 +445,40 @@ it.effect("quotes delimiter-bearing clarification text and preserves it in struc
     );
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
-    expect(json.stdout).toEqual([
-      JSON.stringify({
-        _tag: "MultipleTaxaInSet",
-        relation: "subset",
-        side: "left",
-        taxon: { _tag: "Taxon", record: { scientificName: "Quercus\tFagus" } },
-      }),
-    ]);
+    const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus\tFagus") }),
+    });
+    const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
+      relation: "subset",
+      side: "left",
+      taxon: expectedTaxon,
+    });
+    expect(json.stdout).toEqual([JSON.stringify(expectedJudgment)]);
   }),
 );
 
 it.effect.each([
-  { relation: "subset", tag: "Yes" },
-  { relation: "proper-subset", tag: "Yes" },
-  { relation: "equivalent", tag: "No" },
-  { relation: "overlap", tag: "Yes" },
-  { relation: "disjoint", tag: "No" },
-])("preserves the native question and answer for set relation $relation", ({ relation, tag }) =>
+  {
+    relation: "subset",
+    native: Documents.SetRelationJudgment.cases.Yes.make({ relation: "subset" }),
+  },
+  {
+    relation: "proper-subset",
+    native: Documents.SetRelationJudgment.cases.Yes.make({ relation: "proper-subset" }),
+  },
+  {
+    relation: "equivalent",
+    native: Documents.SetRelationJudgment.cases.No.make({ relation: "equivalent" }),
+  },
+  {
+    relation: "overlap",
+    native: Documents.SetRelationJudgment.cases.Yes.make({ relation: "overlap" }),
+  },
+  {
+    relation: "disjoint",
+    native: Documents.SetRelationJudgment.cases.No.make({ relation: "disjoint" }),
+  },
+])("preserves the native question and answer for set relation $relation", ({ relation, native }) =>
   Effect.gen(function* () {
     const result = yield* invoke(
       [
@@ -485,7 +515,7 @@ it.effect.each([
       },
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([JSON.stringify({ _tag: tag, relation })]);
+    expect(result.stdout).toEqual([JSON.stringify(native)]);
     expect(result.requests).toHaveLength(1);
   }),
 );
@@ -552,15 +582,17 @@ it.effect("keeps ID-only clarification targets and metadata intact in JSON", () 
     expect(JSON.stringify(text.stderr)).toContain("--format json");
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
-    expect(json.stdout).toEqual([
-      JSON.stringify({
-        _tag: "MultipleTaxaInSet",
-        relation: "overlap",
-        side: "right",
-        taxon: { _tag: "Taxon", record },
-      }),
-    ]);
-    expect(json.requests[0]?.state).toEqual({
+    const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make(record),
+    });
+    const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
+      relation: "overlap",
+      side: "right",
+      taxon: expectedTaxon,
+    });
+    expect(json.stdout).toEqual([JSON.stringify(expectedJudgment)]);
+    const request = Array.head(json.requests).pipe(Option.getOrThrow);
+    expect(request.state).toEqual({
       nodes: [
         { _tag: "Taxon", record: { scientificName: "Quercus" } },
         { _tag: "Taxon", record: { taxonId: { taxonomy: "ncbi", id: "123", release: "2026" } } },
@@ -568,26 +600,34 @@ it.effect("keeps ID-only clarification targets and metadata intact in JSON", () 
       left: 0,
       right: 1,
     });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
   {
     choice: "properSuperset",
     probabilities: { properSuperset: 1 },
-    native: { _tag: "PartlyContained" },
+    native: Documents.ContainmentJudgment.cases.PartlyContained.make({}),
   },
-  { choice: "disjoint", probabilities: { disjoint: 1 }, native: { _tag: "Disjoint" } },
+  {
+    choice: "disjoint",
+    probabilities: { disjoint: 1 },
+    native: Documents.ContainmentJudgment.cases.Disjoint.make({}),
+  },
   {
     choice: "disjoint",
     probabilities: { disjoint: 0.5, properSuperset: 0.5 },
-    native: { _tag: "NotContained" },
+    native: Documents.ContainmentJudgment.cases.NotContained.make({}),
   },
-  { choice: "undetermined", probabilities: { undetermined: 1 }, native: { _tag: "Undetermined" } },
+  {
+    choice: "undetermined",
+    probabilities: { undetermined: 1 },
+    native: Documents.ContainmentJudgment.cases.Undetermined.make({}),
+  },
   {
     choice: "multipleBoth",
     probabilities: { multipleBoth: 1 },
-    native: { _tag: "MultipleTaxa", side: "both" },
+    native: Documents.ContainmentJudgment.cases.MultipleTaxa.make({ side: "both" }),
   },
 ])(
   "retains native containment judgments, including broader answers: $native",
@@ -616,7 +656,8 @@ it.effect.each([
       expect(result.stdout).toEqual([JSON.stringify(native)]);
       const text = yield* invoke([...args, "--no-header"], { reply });
       expect(Result.isSuccess(text.outcome)).toBe(true);
-      expect(text.stdout).toEqual([`${native._tag}\t${native.side ?? ""}`]);
+      const expectedSide = "side" in native ? native.side : "";
+      expect(text.stdout).toEqual([`${native._tag}\t${expectedSide}`]);
     }),
 );
 
@@ -624,47 +665,50 @@ it.effect.each([
   {
     choice: "equalMultiple",
     probabilities: { equalMultiple: 1 },
-    native: { _tag: "SameMultipleTaxaAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.SameMultipleTaxaAtRank.make({ rank: "species" }),
   },
   {
     choice: "equalSingle",
     probabilities: { equalSingle: 0.5, equalMultiple: 0.5 },
-    native: { _tag: "SameTaxaAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.SameTaxaAtRank.make({ rank: "species" }),
   },
   {
     choice: "properSubset",
     probabilities: { properSubset: 1 },
-    native: { _tag: "LeftTaxaWithinRightAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.LeftTaxaWithinRightAtRank.make({ rank: "species" }),
   },
   {
     choice: "properSuperset",
     probabilities: { properSuperset: 1 },
-    native: { _tag: "RightTaxaWithinLeftAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.RightTaxaWithinLeftAtRank.make({ rank: "species" }),
   },
   {
     choice: "partialOverlap",
     probabilities: { partialOverlap: 1 },
-    native: { _tag: "PartlySharedTaxaAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.PartlySharedTaxaAtRank.make({ rank: "species" }),
   },
   {
     choice: "disjoint",
     probabilities: { disjoint: 1 },
-    native: { _tag: "NoSharedTaxaAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.NoSharedTaxaAtRank.make({ rank: "species" }),
   },
   {
     choice: "disjoint",
     probabilities: { disjoint: 0.5, partialOverlap: 0.5 },
-    native: { _tag: "DifferentTaxaAtRank", rank: "species" },
+    native: Documents.RankJudgment.cases.DifferentTaxaAtRank.make({ rank: "species" }),
   },
   {
     choice: "undetermined",
     probabilities: { undetermined: 1 },
-    native: { _tag: "Undetermined", rank: "species" },
+    native: Documents.RankJudgment.cases.Undetermined.make({ rank: "species" }),
   },
   {
     choice: "multipleRight",
     probabilities: { multipleRight: 1 },
-    native: { _tag: "MultipleTaxaAtRank", rank: "species", side: "right" },
+    native: Documents.RankJudgment.cases.MultipleTaxaAtRank.make({
+      rank: "species",
+      side: "right",
+    }),
   },
 ])("retains native rank judgments and rank context: $native", ({ choice, probabilities, native }) =>
   Effect.gen(function* () {
@@ -694,7 +738,8 @@ it.effect.each([
     expect(result.stdout).toEqual([JSON.stringify(native)]);
     const text = yield* invoke([...args, "--no-header"], { reply });
     expect(Result.isSuccess(text.outcome)).toBe(true);
-    expect(text.stdout).toEqual([`${native._tag}\tspecies\t${native.side ?? ""}`]);
+    const expectedSide = "side" in native ? native.side : "";
+    expect(text.stdout).toEqual([`${native._tag}\tspecies\t${expectedSide}`]);
   }),
 );
 

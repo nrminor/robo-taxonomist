@@ -7,6 +7,7 @@ import {
   Layer,
   Logger,
   Match,
+  Record,
   Schema,
   Stream,
 } from "effect";
@@ -20,23 +21,21 @@ import {
 import { HttpApiClient } from "effect/http-api";
 import { RecordLabel, TaxonName } from "robo-taxonomist";
 import * as Api from "../src/api.ts";
+import * as Documents from "../src/documents.ts";
 import * as Model from "../src/model.ts";
 import * as Server from "../src/server.ts";
 
 const providerRequest = Schema.fromJsonString(Schema.Struct({ model: Schema.String }));
 
 const providerHttp = HttpClient.make((request) =>
-  Effect.sync(() => {
+  Effect.gen(function* () {
     const payload = Match.value(request.body).pipe(
-      Match.tagsExhaustive({
-        Uint8Array: ({ body }) => new TextDecoder().decode(body),
-        Empty: () => "",
-        Raw: () => "",
-        FormData: () => "",
-        Stream: () => "",
+      Match.tag("Uint8Array", ({ body }) => new TextDecoder().decode(body)),
+      Match.orElse(() => {
+        throw new Error("Expected a JSON provider request");
       }),
     );
-    const decoded = Schema.decodeUnknownSync(providerRequest)(payload);
+    const decoded = yield* Schema.decodeEffect(providerRequest)(payload).pipe(Effect.orDie);
 
     expect(decoded.model).toBe("fixture-model");
     expect(request.headers.authorization).toBe("Bearer fixture-key");
@@ -101,11 +100,15 @@ it.effect.each([
       const baseUrl = HttpServer.formatAddress(server.address);
       const record = RecordLabel.make("Voucher A17");
       const records = Array.from({ length: test.records }, () => record);
-      const taxon = { _tag: "Taxon", record: { scientificName: "Quercus" } };
+      const taxon = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+      });
       const target =
         test.targets === 1
           ? taxon
-          : { _tag: "Union", operands: Array.from({ length: test.targets }, () => taxon) };
+          : Documents.SetDocument.cases.Union.make({
+              operands: [taxon, taxon, ...Array.from({ length: test.targets - 2 }, () => taxon)],
+            });
 
       for (const path of [
         "/membership/partition",
@@ -271,13 +274,13 @@ it.effect("allows large flat inputs and ignores bracket characters inside JSON s
 
     const result = yield* client.sets.create({ payload: { targets } });
 
-    expect(result).toEqual({
-      _tag: "Union",
-      operands: targets.map((scientificName) => ({
-        _tag: "Taxon",
-        record: { scientificName },
-      })),
+    const taxon = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: target }),
     });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [taxon, taxon, ...targets.slice(2).map(() => taxon)],
+    });
+    expect(result).toEqual(expected);
   }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
 });
 
@@ -312,7 +315,7 @@ it.effect("serves pure and model-backed requests over a real loopback socket", (
 
     expect(baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
     expect(equality).toBe(true);
-    expect(identity).toEqual({ _tag: "Undetermined" });
+    expect(identity).toEqual(Documents.IdentityJudgment.cases.Undetermined.make({}));
   }).pipe(
     Effect.provide([running, FetchHttpClient.layer]),
     Effect.provideService(Logger.LogToStderr, true),
@@ -333,19 +336,20 @@ it.effect("serves generated OpenAPI and Scalar documents from the same running c
     const documentation = yield* documentationResponse.text;
 
     expect(specificationResponse.status).toBe(200);
-    expect(Object.keys(specification.paths)).toEqual(
-      expect.arrayContaining([
-        "/compare/labels",
-        "/compare/identity",
-        "/compare/rank",
-        "/compare/containment",
-        "/sets/create",
-        "/sets/union",
-        "/sets/intersection",
-        "/sets/difference",
-        "/sets/relation",
-      ]),
-    );
+    const expectedPaths = [
+      "/compare/labels",
+      "/compare/identity",
+      "/compare/rank",
+      "/compare/containment",
+      "/sets/create",
+      "/sets/union",
+      "/sets/intersection",
+      "/sets/difference",
+      "/sets/relation",
+    ];
+    for (const path of expectedPaths) {
+      expect(Record.has(specification.paths, path), path).toBe(true);
+    }
     expect(documentationResponse.status).toBe(200);
     expect(documentationResponse.headers["content-type"]).toContain("text/html");
     expect(documentation).toContain("/compare/identity");
@@ -386,7 +390,7 @@ it.effect(
       const result = yield* response.json;
 
       expect(response.status).toBe(200);
-      expect(result).toEqual({ _tag: "Undetermined" });
+      expect(result).toEqual(Documents.IdentityJudgment.cases.Undetermined.make({}));
     }).pipe(Effect.provide([running, FetchHttpClient.layer])),
 );
 

@@ -3,8 +3,10 @@ import { dirname } from "node:path";
 import { execPath } from "node:process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Stream } from "effect";
+import { Array, Effect, FileSystem, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { RecordLabel, TaxonName } from "robo-taxonomist";
+import * as Documents from "../src/documents.ts";
 import appPackage from "../package.json" with { type: "json" };
 
 const run = Effect.fn("CliTest.run")(
@@ -214,10 +216,10 @@ it.effect("constructs a symbolic taxon set without model configuration", () =>
     const result = yield* run(["set", "create", "--target", "Quercus"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Taxon",
-      record: { scientificName: "Quercus" },
+    const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
     });
+    expect(JSON.parse(result.stdout)).toEqual(expectedTaxon);
   }),
 );
 
@@ -234,14 +236,16 @@ it.effect("preserves repeated target occurrences and exact names in one flat uni
       " Quercus ",
     ]);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Union",
-      operands: [
-        { _tag: "Taxon", record: { scientificName: " Quercus " } },
-        { _tag: "Taxon", record: { scientificName: "Fagus" } },
-        { _tag: "Taxon", record: { scientificName: " Quercus " } },
-      ],
+    const expectedOak = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make(" Quercus ") }),
     });
+    const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagus") }),
+    });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [expectedOak, expectedBeech, expectedOak],
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expected);
   }),
 );
 
@@ -255,16 +259,17 @@ it.effect(
         "Quercus\n".repeat(10_000),
       );
       expect(result).toMatchObject({ code: 0, stderr: "" });
-      const document = JSON.parse(result.stdout);
+      const document = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Struct({ operands: Schema.Array(Schema.Json) })),
+      )(result.stdout);
       expect(document.operands).toHaveLength(10_000);
-      expect(document.operands[0]).toEqual({
-        _tag: "Taxon",
-        record: { scientificName: "Quercus" },
+      const first = Array.head(document.operands).pipe(Option.getOrThrow);
+      const last = Array.get(document.operands, 9_999).pipe(Option.getOrThrow);
+      const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
       });
-      expect(document.operands[9_999]).toEqual({
-        _tag: "Taxon",
-        record: { scientificName: "Quercus" },
-      });
+      expect(first).toEqual(expectedTaxon);
+      expect(last).toEqual(expectedTaxon);
       const restored = yield* run(
         ["set", "create", "--targets-file", "-", "--targets-format", "json"],
         undefined,
@@ -320,13 +325,16 @@ it.effect("reads ordinary newline targets from stdin without a format flag", () 
     );
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Union",
-      operands: [
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        { _tag: "Taxon", record: { scientificName: " Fagus " } },
-      ],
+    const expectedOak = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
     });
+    const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make(" Fagus ") }),
+    });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [expectedOak, expectedBeech],
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expected);
   }),
 );
 
@@ -364,15 +372,20 @@ it.effect(
         second,
       ]);
       expect(result).toMatchObject({ code: 0, stderr: "" });
-      expect(JSON.parse(result.stdout)).toEqual({
-        _tag: "Union",
-        operands: [
-          { _tag: "Taxon", record: { scientificName: first } },
-          { _tag: "Taxon", record: { scientificName: "Quercus" } },
-          { _tag: "Taxon", record: { scientificName: "Fagus" } },
-        ],
+      const expectedLiteral = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make(first) }),
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      const expectedOak = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+      });
+      const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagus") }),
+      });
+      const expected = Documents.SetDocument.cases.Union.make({
+        operands: [expectedLiteral, expectedOak, expectedBeech],
+      });
+      expect(JSON.parse(result.stdout)).toEqual(expected);
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -391,13 +404,19 @@ it.effect(
         JSON.stringify([record, record]),
       );
       expect(result).toMatchObject({ code: 0, stderr: "" });
-      expect(JSON.parse(result.stdout)).toEqual({
-        _tag: "Union",
+      const expectedRecord = Documents.RecordDocument.make({
+        taxonId: { taxonomy: "ncbi", id: "9606", release: "2026", curator: { name: "caller" } },
+        sample: "A17",
+        abundance: 7.5,
+        metadata: { flags: [true, null, "unchanged"] },
+      });
+      const expected = Documents.SetDocument.cases.Union.make({
         operands: [
-          { _tag: "Taxon", record },
-          { _tag: "Taxon", record },
+          Documents.SetDocument.cases.Taxon.make({ record: expectedRecord }),
+          Documents.SetDocument.cases.Taxon.make({ record: expectedRecord }),
         ],
       });
+      expect(JSON.parse(result.stdout)).toEqual(expected);
     }),
 );
 
@@ -423,10 +442,13 @@ it.effect("uses a named file's JSON suffix unless an explicit encoding overrides
     yield* fs.writeFileString(path, '[{"label":"Voucher A17","abundance":3}]');
     const detected = yield* run(["set", "create", "--targets-file", path]);
     expect(detected).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(detected.stdout)).toEqual({
-      _tag: "Taxon",
-      record: { label: "Voucher A17", abundance: 3 },
+    const expectedDetected = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        label: RecordLabel.make("Voucher A17"),
+        abundance: 3,
+      }),
     });
+    expect(JSON.parse(detected.stdout)).toEqual(expectedDetected);
     const overridden = yield* run([
       "set",
       "create",
@@ -436,11 +458,13 @@ it.effect("uses a named file's JSON suffix unless an explicit encoding overrides
       "text",
     ]);
     expect(overridden).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(overridden.stdout)).toEqual({
-      _tag: "Taxon",
-      record: { scientificName: '[{"label":"Voucher A17","abundance":3}]' },
+    const expectedOverridden = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        scientificName: TaxonName.make('[{"label":"Voucher A17","abundance":3}]'),
+      }),
     });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    expect(JSON.parse(overridden.stdout)).toEqual(expectedOverridden);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reloads generated multi-operand union artifacts through structured target stdin", () =>
@@ -476,11 +500,17 @@ it.effect("constructs a directed difference from explicit left and right targets
       "Quercus",
     ]);
     expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Difference",
-      left: { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
-      right: { _tag: "Taxon", record: { scientificName: "Quercus" } },
+    const expectedLeft = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagaceae") }),
     });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    const expectedDifference = Documents.SetDocument.cases.Difference.make({
+      left: expectedLeft,
+      right: expectedRight,
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expectedDifference);
   }),
 );
 
@@ -495,13 +525,13 @@ it.effect("unions two supplied set operands without simplifying repeated targets
       "Quercus",
     ]);
     expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Union",
-      operands: [
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-      ],
+    const expectedOak = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
     });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [expectedOak, expectedOak],
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expected);
   }),
 );
 
@@ -516,13 +546,16 @@ it.effect("intersects sets while retaining their native binary structure", () =>
       "Quercus",
     ]);
     expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Intersection",
-      operands: [
-        { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-      ],
+    const expectedLeft = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagaceae") }),
     });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    const expectedIntersection = Documents.SetDocument.cases.Intersection.make({
+      operands: [expectedLeft, expectedRight],
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expectedIntersection);
   }),
 );
 
@@ -549,14 +582,24 @@ it.effect("reads identifying target records from a JSONL file without dropping m
     yield* fs.writeFileString(path, `${JSON.stringify(first)}\n${JSON.stringify(second)}\n`);
     const result = yield* run(["set", "create", "--targets-file", path]);
     expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Union",
-      operands: [
-        { _tag: "Taxon", record: first },
-        { _tag: "Taxon", record: second },
-      ],
+    const expectedOak = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        scientificName: TaxonName.make("Quercus"),
+        notes: [1, null],
+      }),
     });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        label: RecordLabel.make("voucher"),
+        scientificName: TaxonName.make("Fagus"),
+        observed: { sample: "B" },
+      }),
+    });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [expectedOak, expectedBeech],
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expected);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reports unreadable target sources on stderr without emitting an artifact", () =>
@@ -569,7 +612,7 @@ it.effect("reports unreadable target sources on stderr without emitting an artif
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain(path);
     expect(result.stderr).toContain("Cannot read target source");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
@@ -610,11 +653,17 @@ it.effect("accepts the concise diff alias with the same directed operands", () =
       "Quercus",
     ]);
     expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Difference",
-      left: { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
-      right: { _tag: "Taxon", record: { scientificName: "Quercus" } },
+    const expectedLeft = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagaceae") }),
     });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    const expected = Documents.SetDocument.cases.Difference.make({
+      left: expectedLeft,
+      right: expectedRight,
+    });
+    expect(JSON.parse(result.stdout)).toEqual(expected);
   }),
 );
 
@@ -657,17 +706,26 @@ it.effect("composes and reloads nested artifacts while retaining metadata and op
       difference.stdout,
     );
     expect(intersection).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(intersection.stdout)).toEqual({
-      _tag: "Intersection",
-      operands: [
-        { _tag: "Taxon", record: { scientificName: "Fagus" } },
-        {
-          _tag: "Difference",
-          left: { _tag: "Taxon", record },
-          right: { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        },
-      ],
+    const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagus") }),
     });
+    const expectedFamily = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        scientificName: TaxonName.make("Fagaceae"),
+        metadata: { source: [null, "caller"] },
+      }),
+    });
+    const expectedOak = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    const expectedDifference = Documents.SetDocument.cases.Difference.make({
+      left: expectedFamily,
+      right: expectedOak,
+    });
+    const expectedIntersection = Documents.SetDocument.cases.Intersection.make({
+      operands: [expectedBeech, expectedDifference],
+    });
+    expect(JSON.parse(intersection.stdout)).toEqual(expectedIntersection);
     const restored = yield* run(
       ["set", "create", "--targets-file", "-", "--targets-format", "json"],
       undefined,
@@ -696,10 +754,12 @@ it.effect("does not sniff JSON-looking stdin when text encoding is the default",
       '[{"scientificName":"Quercus"}]\n',
     );
     expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      _tag: "Taxon",
-      record: { scientificName: '[{"scientificName":"Quercus"}]' },
+    const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        scientificName: TaxonName.make('[{"scientificName":"Quercus"}]'),
+      }),
     });
+    expect(JSON.parse(result.stdout)).toEqual(expectedTaxon);
   }),
 );
 
@@ -796,7 +856,7 @@ it.effect("runs the executable bin entry through its shebang", () =>
 
     const exitCode = yield* child.exitCode;
     expect(exitCode).toBe(0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("shows help without credentials or interaction and offers the opt-in wizard", () =>
@@ -818,17 +878,17 @@ it.effect.each([
 ])("keeps the $path command menu to one summary line per subcommand", ({ path, commands }) =>
   Effect.gen(function* () {
     const result = yield* run([...path, "--help"]);
-    const menu = result.stdout.split("SUBCOMMANDS\n")[1];
+    const menu = Array.get(result.stdout.split("SUBCOMMANDS\n"), 1).pipe(Option.getOrThrow);
 
     expect(result).toMatchObject({ code: 0, stderr: "" });
     expect(menu).toBeDefined();
     const entries = menu
-      ?.trimEnd()
+      .trimEnd()
       .split("\n")
       .filter((line) => line.trim() !== "");
     expect(entries).toHaveLength(commands.length);
     for (const command of commands) {
-      expect(entries?.some((line) => line.startsWith(`  ${command}`))).toBe(true);
+      expect(entries.some((line) => line.startsWith(`  ${command}`))).toBe(true);
     }
   }),
 );

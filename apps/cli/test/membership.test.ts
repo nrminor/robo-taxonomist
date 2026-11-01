@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  Array,
   ConfigProvider,
   Effect,
   FileSystem,
   Layer,
   Match,
+  Option,
+  Record,
   Result,
   Schema,
   Sink,
@@ -15,7 +18,9 @@ import {
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestConsole } from "effect/testing";
+import { TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
+import * as Documents from "../src/documents.ts";
 
 const wireRequest = Schema.fromJsonString(
   Schema.Struct({
@@ -35,20 +40,19 @@ const invoke = (
     return Effect.gen(function* () {
       const requests: (typeof wireRequest.Type)[] = [];
       const http = HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const text = Match.value(request.body).pipe(
-            Match.tagsExhaustive({
-              Uint8Array: ({ body }) => new TextDecoder().decode(body),
-              Empty: () => "",
-              Raw: () => "",
-              FormData: () => "",
-              Stream: () => "",
+            Match.tag("Uint8Array", ({ body }) => new TextDecoder().decode(body)),
+            Match.orElse(() => {
+              throw new Error("Expected a JSON provider request");
             }),
           );
-          const payload = Schema.decodeUnknownSync(wireRequest)(text);
-          const choices = replies[requests.length] ?? ["member"];
+          const payload = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
+          const choices = Array.get(replies, requests.length).pipe(
+            Option.getOrElse(() => ["member"]),
+          );
           requests.push(payload);
-          const answers = Object.fromEntries(
+          const answers = Record.fromEntries(
             choices.map((choice, index) => [
               `record${index}`,
               {
@@ -143,7 +147,7 @@ it.effect("partitions a plain record file without requiring an encoding flag", (
       "judgment\trecord\tclarification_target",
       "Member\tVoucher A17\t",
     ]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("retains identifying fields and arbitrary metadata from structured record files", () =>
@@ -169,8 +173,10 @@ it.effect("retains identifying fields and arbitrary metadata from structured rec
       "jsonl",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([JSON.stringify({ record, judgment: { _tag: "Member" } })]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    expect(result.stdout).toEqual([
+      JSON.stringify({ record, judgment: Documents.MembershipJudgment.cases.Member.make({}) }),
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("asks the native all-records quantifier instead of returning membership rows", () =>
@@ -249,10 +255,8 @@ it.effect(
       ]);
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.stdout).toEqual(["Member\tA17\t", "Member\tB42\t"]);
-      expect(result.requests.map(({ questions }) => Object.keys(questions))).toEqual([
-        ["record0"],
-        ["record0"],
-      ]);
+      const questionIdsByRequest = result.requests.map(({ questions }) => Record.keys(questions));
+      expect(questionIdsByRequest).toEqual([["record0"], ["record0"]]);
     }),
 );
 
@@ -280,9 +284,14 @@ it.effect("retains a quantifier clarification node in JSON after scanning the co
       [["undetermined"], ["multipleTarget0"]],
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([
-      '{"_tag":"MultipleTaxaInTarget","quantifier":"all","target":{"_tag":"Taxon","record":{"scientificName":"Quercus"}}}',
-    ]);
+    const expectedTarget = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
+      quantifier: "all",
+      target: expectedTarget,
+    });
+    expect(result.stdout).toEqual([JSON.stringify(expected)]);
     expect(result.requests).toHaveLength(2);
   }),
 );
@@ -326,19 +335,22 @@ it.effect("preserves all five native buckets, duplicate records and within-bucke
       [["member", "notMember", "mixed", "undetermined", "multipleTarget0", "member"]],
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout.map((line) => JSON.parse(String(line)))).toEqual([
-      { record: "A17", judgment: { _tag: "Member" } },
-      { record: "A17", judgment: { _tag: "Member" } },
-      { record: "B42", judgment: { _tag: "NotMember" } },
-      { record: "mixed", judgment: { _tag: "MixedMembership" } },
-      { record: "unknown", judgment: { _tag: "Undetermined" } },
-      {
-        record: "review",
-        judgment: {
-          _tag: "MultipleTaxaInTarget",
-          target: { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        },
-      },
+    const wire = yield* Effect.forEach(result.stdout, (line) =>
+      Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
+    );
+    const expectedTarget = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    const expectedClarification = Documents.MembershipJudgment.cases.MultipleTaxaInTarget.make({
+      target: expectedTarget,
+    });
+    expect(wire).toEqual([
+      { record: "A17", judgment: Documents.MembershipJudgment.cases.Member.make({}) },
+      { record: "A17", judgment: Documents.MembershipJudgment.cases.Member.make({}) },
+      { record: "B42", judgment: Documents.MembershipJudgment.cases.NotMember.make({}) },
+      { record: "mixed", judgment: Documents.MembershipJudgment.cases.MixedMembership.make({}) },
+      { record: "unknown", judgment: Documents.MembershipJudgment.cases.Undetermined.make({}) },
+      { record: "review", judgment: expectedClarification },
     ]);
     expect(result.requests).toHaveLength(1);
   }),
@@ -370,13 +382,16 @@ it.effect("uses literal-first then positional-file order without inspecting lite
       [["member", "member", "member", "member"]],
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout.map((line) => JSON.parse(String(line)).record)).toEqual([
+    const rows = yield* Effect.forEach(result.stdout, (line) =>
+      Schema.decodeEffect(Schema.fromJsonString(Schema.Struct({ record: Schema.Json })))(line),
+    );
+    expect(rows.map((row) => row.record)).toEqual([
       first,
       "  A17  ",
       "A17",
       { label: "B42", metadata: { abundance: 2 } },
     ]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
@@ -408,8 +423,10 @@ it.effect.each([
         "jsonl",
       ]);
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([JSON.stringify({ record, judgment: { _tag: "Member" } })]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      expect(result.stdout).toEqual([
+        JSON.stringify({ record, judgment: Documents.MembershipJudgment.cases.Member.make({}) }),
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
@@ -439,14 +456,14 @@ it.effect.each([
       expect(result.stdout).toEqual([]);
       expect(result.requests).toEqual([]);
       expect(JSON.stringify(result.stderr)).toContain(path);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
-  { command: "all", tag: "Yes" },
-  { command: "any", tag: "No" },
-  { command: "none", tag: "Yes" },
-])("retains native vacuous behavior on empty record inputs: $command", ({ command, tag }) =>
+  { command: "all", native: Documents.QuantifierJudgment.cases.Yes.make({ quantifier: "all" }) },
+  { command: "any", native: Documents.QuantifierJudgment.cases.No.make({ quantifier: "any" }) },
+  { command: "none", native: Documents.QuantifierJudgment.cases.Yes.make({ quantifier: "none" }) },
+])("retains native vacuous behavior on empty record inputs: $command", ({ command, native }) =>
   Effect.gen(function* () {
     const result = yield* invoke([
       "mem",
@@ -459,7 +476,7 @@ it.effect.each([
       "json",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([JSON.stringify({ _tag: tag, quantifier: command })]);
+    expect(result.stdout).toEqual([JSON.stringify(native)]);
     expect(result.requests).toEqual([]);
   }),
 );
@@ -494,9 +511,13 @@ it.effect("fails after an emitted prefix when a later record source cannot be re
       "jsonl",
     ]);
     expect(Result.isFailure(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual(['{"record":"A17","judgment":{"_tag":"Member"}}']);
+    const expectedRow = {
+      record: "A17",
+      judgment: Documents.MembershipJudgment.cases.Member.make({}),
+    };
+    expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
     expect(JSON.stringify(result.stderr)).toContain(missing);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reads all quantifier inputs before allowing a decisive early model answer", () =>
@@ -520,7 +541,7 @@ it.effect("reads all quantifier inputs before allowing a decisive early model an
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
     expect(result.requests).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("quotes delimiter-bearing quantifier clarification text", () =>
@@ -570,7 +591,9 @@ it.effect.each([
         text,
       );
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([JSON.stringify({ record, judgment: { _tag: "Member" } })]);
+      expect(result.stdout).toEqual([
+        JSON.stringify({ record, judgment: Documents.MembershipJudgment.cases.Member.make({}) }),
+      ]);
     }),
 );
 
@@ -624,7 +647,11 @@ it.effect(
         [["member"], []],
       );
       expect(Result.isFailure(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual(['{"record":"A17","judgment":{"_tag":"Member"}}']);
+      const expectedRow = {
+        record: "A17",
+        judgment: Documents.MembershipJudgment.cases.Member.make({}),
+      };
+      expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
       expect(JSON.stringify(result.stderr)).toContain("decision model request failed");
     }),
 );
@@ -659,12 +686,24 @@ it.effect("reports JSONL serialization limits as operational errors rather than 
 );
 
 it.effect.each([
-  { command: "all", choices: ["undetermined", "mixed"], tag: "No" },
-  { command: "any", choices: ["undetermined", "member"], tag: "Yes" },
-  { command: "none", choices: ["undetermined", "member"], tag: "No" },
+  {
+    command: "all",
+    choices: ["undetermined", "mixed"],
+    native: Documents.QuantifierJudgment.cases.No.make({ quantifier: "all" }),
+  },
+  {
+    command: "any",
+    choices: ["undetermined", "member"],
+    native: Documents.QuantifierJudgment.cases.Yes.make({ quantifier: "any" }),
+  },
+  {
+    command: "none",
+    choices: ["undetermined", "member"],
+    native: Documents.QuantifierJudgment.cases.No.make({ quantifier: "none" }),
+  },
 ])(
   "retains native decisive-answer ordering after uncertainty: $command",
-  ({ command, choices, tag }) =>
+  ({ command, choices, native }) =>
     Effect.gen(function* () {
       const result = yield* invoke(
         [
@@ -686,7 +725,7 @@ it.effect.each([
         choices.map((choice) => [choice]),
       );
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([JSON.stringify({ _tag: tag, quantifier: command })]);
+      expect(result.stdout).toEqual([JSON.stringify(native)]);
       expect(result.requests).toHaveLength(2);
     }),
 );
@@ -715,9 +754,14 @@ it.effect(
         [["multipleTarget0"], ["member"]],
       );
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([
-        '{"_tag":"MultipleTaxaInTarget","quantifier":"any","target":{"_tag":"Taxon","record":{"scientificName":"Quercus"}}}',
-      ]);
+      const expectedTarget = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+      });
+      const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
+        quantifier: "any",
+        target: expectedTarget,
+      });
+      expect(result.stdout).toEqual([JSON.stringify(expected)]);
       expect(result.requests).toHaveLength(1);
     }),
 );
@@ -771,7 +815,11 @@ it.effect("handles the empty target through the native primitive without a provi
       "jsonl",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual(['{"record":"A17","judgment":{"_tag":"NotMember"}}']);
+    const expectedRow = {
+      record: "A17",
+      judgment: Documents.MembershipJudgment.cases.NotMember.make({}),
+    };
+    expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
     expect(result.requests).toEqual([]);
   }),
 );

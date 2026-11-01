@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  Array,
   ConfigProvider,
   Effect,
   FileSystem,
   Layer,
   Match,
+  Option,
   Result,
   Schema,
   Sink,
@@ -15,7 +17,9 @@ import {
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestConsole } from "effect/testing";
+import { TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
+import * as Documents from "../src/documents.ts";
 
 const fixtureReply = {
   model: "fixture-model",
@@ -44,18 +48,16 @@ const invoke = (args: readonly string[], replies: readonly object[] = [fixtureRe
       let requests = 0;
       const payloads: (typeof wireRequest.Type)[] = [];
       const http = HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const text = Match.value(request.body).pipe(
-            Match.tagsExhaustive({
-              Uint8Array: ({ body }) => new TextDecoder().decode(body),
-              Empty: () => "",
-              Raw: () => "",
-              FormData: () => "",
-              Stream: () => "",
+            Match.tag("Uint8Array", ({ body }) => new TextDecoder().decode(body)),
+            Match.orElse(() => {
+              throw new Error("Expected a JSON provider request");
             }),
           );
-          payloads.push(Schema.decodeUnknownSync(wireRequest)(text));
-          const reply = replies[requests] ?? fixtureReply;
+          const payload = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
+          payloads.push(payload);
+          const reply = Array.get(replies, requests).pipe(Option.getOrElse(() => fixtureReply));
           requests++;
           return HttpClientResponse.fromWeb(
             request,
@@ -148,7 +150,10 @@ it.effect(
           confidence: 1,
         },
       };
-      expect(result.stdout.map((line) => JSON.parse(String(line)))).toEqual([
+      const wire = yield* Effect.forEach(result.stdout, (line) =>
+        Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
+      );
+      expect(wire).toEqual([
         {
           panel: taxon,
           records: [{ record: "Voucher A17", taxa: [match], ranking: [match] }],
@@ -196,9 +201,15 @@ it.effect("emits one complete empty result with the supplied panel when there ar
       "jsonl",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout.map((line) => JSON.parse(String(line)))).toEqual([
+    const wire = yield* Effect.forEach(result.stdout, (line) =>
+      Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
+    );
+    const expectedPanel = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    });
+    expect(wire).toEqual([
       {
-        panel: { _tag: "Taxon", record: { scientificName: "Quercus" } },
+        panel: expectedPanel,
         records: [],
         usage: [],
       },
@@ -286,16 +297,22 @@ it.effect.each([
       expect(text.stdout).toEqual([`A17\tQuercus\t${judgment}\t0\t`]);
       const json = yield* invoke([...args, "--format", "jsonl"], [reply]);
       expect(Result.isSuccess(json.outcome)).toBe(true);
-      expect(json.stdout.map((line) => JSON.parse(String(line)))).toEqual([
+      const wire = yield* Effect.forEach(json.stdout, (line) =>
+        Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
+      );
+      const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+      });
+      expect(wire).toEqual([
         {
-          panel: { _tag: "Taxon", record: { scientificName: "Quercus" } },
+          panel: expectedTaxon,
           records: [
             {
               record: "A17",
               taxa: [
                 {
                   record: "A17",
-                  taxon: { _tag: "Taxon", record: { scientificName: "Quercus" } },
+                  taxon: expectedTaxon,
                   support: 0,
                   judgment: { _tag: judgment },
                   answer: { label: choice, probabilities, confidence: 0.75 },
@@ -365,21 +382,26 @@ it.effect(
       ]);
       const json = yield* invoke([...args, "--format", "jsonl"], [reply]);
       expect(Result.isSuccess(json.outcome)).toBe(true);
-      const result = JSON.parse(String(json.stdout[0]));
-      expect(result.panel).toEqual({
-        _tag: "Union",
-        operands: [
-          { _tag: "Taxon", record: { scientificName: "Quercus" } },
-          { _tag: "Taxon", record: { scientificName: "Quercus" } },
-          { _tag: "Taxon", record: { scientificName: "Fagus" } },
-        ],
+      const line = Array.head(json.stdout).pipe(Option.getOrThrow);
+      const wire = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line);
+      const result = yield* Schema.decodeUnknownEffect(Documents.Classification)(wire);
+      expect(result).toEqual(wire);
+      const expectedOak = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
       });
+      const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagus") }),
+      });
+      const expectedPanel = Documents.SetDocument.cases.Union.make({
+        operands: [expectedOak, expectedOak, expectedBeech],
+      });
+      expect(result.panel).toEqual(expectedPanel);
       expect(result.records).toHaveLength(2);
-      expect(result.records[0].taxa.map((match: { support: number }) => match.support)).toEqual([
-        0.75, 0.75, 0,
-      ]);
-      expect(result.records[0].ranking).toEqual(result.records[0].taxa.slice(0, 2));
-      expect(result.records[1]).toEqual(result.records[0]);
+      const first = Array.get(result.records, 0).pipe(Option.getOrThrow);
+      const second = Array.get(result.records, 1).pipe(Option.getOrThrow);
+      expect(first.taxa.map((match) => match.support)).toEqual([0.75, 0.75, 0]);
+      expect(first.ranking).toEqual(first.taxa.slice(0, 2));
+      expect(second).toEqual(first);
     }),
 );
 
@@ -388,20 +410,23 @@ it.effect("keeps record and target identifier metadata and symbolic panel topolo
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
     const path = `${directory}/panel.json`;
-    const record = {
+    const record = Documents.RecordDocument.make({
       taxonId: { taxonomy: "ncbi", id: "123", release: "2026", source: "caller" },
       abundance: 0.37,
       metadata: [null, true, "A17"],
-    };
-    const target = {
+    });
+    const target = Documents.RecordDocument.make({
       taxonId: { taxonomy: "gbif", id: "456", revision: ["caller"] },
       metadata: { label: "panel entry" },
-    };
-    const panel = {
-      _tag: "Difference",
-      left: { _tag: "Taxon", record: target },
-      right: { _tag: "Taxon", record: { scientificName: "Fagus", excluded: true } },
-    };
+    });
+    const included = Documents.SetDocument.cases.Taxon.make({ record: target });
+    const excluded = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        scientificName: TaxonName.make("Fagus"),
+        excluded: true,
+      }),
+    });
+    const panel = Documents.SetDocument.cases.Difference.make({ left: included, right: excluded });
     yield* fs.writeFileString(path, JSON.stringify(panel));
     const result = yield* invoke(
       [
@@ -420,16 +445,22 @@ it.effect("keeps record and target identifier metadata and symbolic panel topolo
       JSON.stringify(record) + "\n",
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    const decoded = JSON.parse(String(result.stdout[0]));
+    const line = Array.head(result.stdout).pipe(Option.getOrThrow);
+    const wire = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line);
+    const decoded = yield* Schema.decodeUnknownEffect(Documents.Classification)(wire);
+    expect(decoded).toEqual(wire);
+    const row = Array.head(decoded.records).pipe(Option.getOrThrow);
+    const match = Array.head(row.taxa).pipe(Option.getOrThrow);
+    const payload = Array.head(result.payloads).pipe(Option.getOrThrow);
     expect(decoded.panel).toEqual(panel);
-    expect(decoded.records[0].record).toEqual(record);
-    expect(decoded.records[0].taxa[0].record).toEqual(record);
-    expect(decoded.records[0].taxa[0].taxon.record).toEqual(target);
-    expect(decoded.records[0].ranking).toEqual(decoded.records[0].taxa);
-    expect(JSON.stringify(result.payloads[0]?.state)).not.toContain("abundance");
-    expect(JSON.stringify(result.payloads[0]?.state)).not.toContain("metadata");
-    expect(JSON.stringify(result.payloads[0]?.state)).not.toContain("revision");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    expect(row.record).toEqual(record);
+    expect(match.record).toEqual(record);
+    expect(match.taxon.record).toEqual(target);
+    expect(row.ranking).toEqual(row.taxa);
+    expect(JSON.stringify(payload.state)).not.toContain("abundance");
+    expect(JSON.stringify(payload.state)).not.toContain("metadata");
+    expect(JSON.stringify(payload.state)).not.toContain("revision");
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([1, 2])(
@@ -451,17 +482,26 @@ it.effect.each([1, 2])(
         String(concurrency),
       ]);
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      const groups = result.stdout.map((line) => JSON.parse(String(line)));
+      const groups = yield* Effect.forEach(result.stdout, (line) =>
+        Schema.decodeEffect(Schema.fromJsonString(Documents.Classification))(line),
+      );
       expect(groups.map((group) => group.records.length)).toEqual(
         concurrency === 1 ? [1, 1, 1] : [2, 1],
       );
-      expect(
-        groups.flatMap((group) => group.records.map((row: { record: string }) => row.record)),
-      ).toEqual(["A17", "B42", "C88"]);
+      expect(groups.flatMap((group) => group.records.map((row) => row.record))).toEqual([
+        "A17",
+        "B42",
+        "C88",
+      ]);
       expect(groups.map((group) => group.usage.length)).toEqual(
         concurrency === 1 ? [1, 1, 1] : [2, 1],
       );
-      expect(groups.every((group) => group.panel.record.scientificName === "Quercus")).toBe(true);
+      expect(
+        groups.every(
+          (group) =>
+            group.panel._tag === "Taxon" && group.panel.record.scientificName === "Quercus",
+        ),
+      ).toBe(true);
       expect(result.requests).toBe(3);
     }),
 );
@@ -480,9 +520,13 @@ it.effect("retains all records with empty outcomes when the panel offers no taxa
       "jsonl",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout.map((line) => JSON.parse(String(line)))).toEqual([
+    const wire = yield* Effect.forEach(result.stdout, (line) =>
+      Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
+    );
+    const expectedPanel = Documents.SetDocument.cases.Empty.make({});
+    expect(wire).toEqual([
       {
-        panel: { _tag: "Empty" },
+        panel: expectedPanel,
         records: [
           { record: "A17", taxa: [], ranking: [] },
           { record: "A17", taxa: [], ranking: [] },
@@ -529,7 +573,12 @@ it.effect("does not emit a result for a failed group after a completed JSONL pre
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toHaveLength(1);
-    expect(JSON.parse(String(result.stdout[0])).records[0].record).toBe("A17");
+    const line = Array.head(result.stdout).pipe(Option.getOrThrow);
+    const document = yield* Schema.decodeEffect(Schema.fromJsonString(Documents.Classification))(
+      line,
+    );
+    const row = Array.head(document.records).pipe(Option.getOrThrow);
+    expect(row.record).toBe("A17");
     expect(JSON.stringify(result.stderr)).toContain("decision model request failed");
     expect(result.requests).toBe(2);
   }),
@@ -556,7 +605,12 @@ it.effect("preserves only the completed prefix when a later record source fails"
     ]);
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toHaveLength(1);
-    expect(JSON.parse(String(result.stdout[0])).records[0].record).toBe("A17");
+    const line = Array.head(result.stdout).pipe(Option.getOrThrow);
+    const document = yield* Schema.decodeEffect(Schema.fromJsonString(Documents.Classification))(
+      line,
+    );
+    const row = Array.head(document.records).pipe(Option.getOrThrow);
+    expect(row.record).toBe("A17");
     expect(JSON.stringify(result.stderr)).toContain(missing);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ConfigProvider, Deferred, Effect, Fiber, Layer, Match, Ref, Schema } from "effect";
+import { ConfigProvider, Deferred, Effect, Fiber, Layer, Match, Record, Ref, Schema } from "effect";
 import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { TestClock } from "effect/testing";
@@ -15,10 +15,10 @@ it.effect("checks HTTP record membership against an empty target without model i
     const record = RecordLabel.make("Voucher A17");
 
     const result = yield* client.membership.check({
-      payload: { record, target: { _tag: "Empty" } },
+      payload: { record, target: Documents.SetDocument.cases.Empty.make({}) },
     });
 
-    expect(result).toEqual({ _tag: "NotMember" });
+    expect(result).toEqual(Documents.MembershipJudgment.cases.NotMember.make({}));
   }).pipe(
     Effect.provide([
       Server.membership().pipe(Layer.provide(fixtureProvider({})), Layer.provideMerge(bounds)),
@@ -38,7 +38,7 @@ it.effect("returns all five native HTTP partition buckets with repeated identify
     const result = yield* client.membership.partition({
       payload: {
         records: [record, record],
-        target: { _tag: "Empty" },
+        target: Documents.SetDocument.cases.Empty.make({}),
       },
     });
 
@@ -65,10 +65,10 @@ it.effect.each([
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["membership"]);
     const result = yield* client.membership[quantifier]({
-      payload: { records: [], target: { _tag: "Empty" } },
+      payload: { records: [], target: Documents.SetDocument.cases.Empty.make({}) },
     });
 
-    expect(result).toEqual({ _tag: tag, quantifier });
+    expect(result).toEqual(Documents.QuantifierJudgment.cases[tag].make({ quantifier }));
   }).pipe(
     Effect.provide([
       Server.membership().pipe(Layer.provide(fixtureProvider({})), Layer.provideMerge(bounds)),
@@ -156,46 +156,38 @@ it.effect(
       const http = HttpClient.make(
         Effect.fnUntraced(function* (request) {
           const text = Match.value(request.body).pipe(
-            Match.tagsExhaustive({
-              Uint8Array: ({ body }) => new TextDecoder().decode(body),
-              Empty: () => "",
-              Raw: () => "",
-              FormData: () => "",
-              Stream: () => "",
+            Match.tag("Uint8Array", ({ body }) => new TextDecoder().decode(body)),
+            Match.orElse(() => {
+              throw new Error("Expected a JSON provider request");
             }),
           );
-          const payload = yield* Schema.decodeUnknownEffect(wireRequest)(text).pipe(Effect.orDie);
-          const keys = Object.keys(payload.questions);
-          questionCounts.push(keys.length);
+          const payload = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
+          const questionCount = Record.size(payload.questions);
+          questionCounts.push(questionCount);
           calls++;
           active++;
           peak = Math.max(peak, active);
           if (calls === 2) yield* Deferred.succeed(firstWindow, undefined);
           yield* Deferred.await(firstWindow);
-          const answers = Object.fromEntries(
-            keys.map((key) => {
-              const choice = key.endsWith("t2")
-                ? "noMatch"
-                : key.endsWith("t3")
-                  ? "undetermined"
-                  : "withinTaxon";
-              return [
-                key,
-                {
-                  type: "choice",
-                  choice,
-                  confidence: 1,
-                  probabilities: {
-                    sameTaxon: 0,
-                    withinTaxon: 0,
-                    noMatch: 0,
-                    undetermined: 0,
-                    [choice]: 1,
-                  },
-                },
-              ];
-            }),
-          );
+          const answers = Record.map(payload.questions, (_question, questionId) => {
+            const choice = questionId.endsWith("t2")
+              ? "noMatch"
+              : questionId.endsWith("t3")
+                ? "undetermined"
+                : "withinTaxon";
+            return {
+              type: "choice",
+              choice,
+              confidence: 1,
+              probabilities: {
+                sameTaxon: 0,
+                withinTaxon: 0,
+                noMatch: 0,
+                undetermined: 0,
+                [choice]: 1,
+              },
+            };
+          });
           const response = new Response(JSON.stringify({ model: "fixture-model", answers }), {
             headers: { "content-type": "application/json" },
           });
@@ -269,7 +261,7 @@ it.effect(
 
 const membershipReply = (choices: readonly string[]) => ({
   model: "fixture-model",
-  answers: Object.fromEntries(
+  answers: Record.fromEntries(
     choices.map((choice, index) => [
       `record${index}`,
       {
@@ -290,8 +282,16 @@ const membershipReply = (choices: readonly string[]) => ({
 });
 
 it.effect.each([
-  { records: [], panel: { _tag: "Taxon", record: { scientificName: TaxonName.make("Quercus") } } },
-  { records: [RecordLabel.make("A"), RecordLabel.make("A")], panel: { _tag: "Empty" } },
+  {
+    records: [],
+    panel: Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
+    }),
+  },
+  {
+    records: [RecordLabel.make("A"), RecordLabel.make("A")],
+    panel: Documents.SetDocument.cases.Empty.make({}),
+  },
 ] as const)(
   "preserves native empty classification framing over HTTP: $panel._tag",
   ({ records, panel }) => {
@@ -349,12 +349,13 @@ it.effect(
 
       const result = yield* client.membership.partition({ payload: { records, target } });
 
+      const expectedTarget = Documents.SetDocument.cases.Taxon.make({ record: target });
       expect(result).toEqual({
         Member: [first, first],
         NotMember: ["B"],
         MixedMembership: ["C"],
         Undetermined: ["D"],
-        MultipleTaxaInTarget: [{ record: "E", target: { _tag: "Taxon", record: target } }],
+        MultipleTaxaInTarget: [{ record: "E", target: expectedTarget }],
       });
     }).pipe(Effect.provide([membershipHandlers, HttpServer.layerServices]));
   },
@@ -381,7 +382,7 @@ it.effect.each([
         },
       });
 
-      expect(result).toEqual({ _tag: tag, quantifier });
+      expect(result).toEqual(Documents.QuantifierJudgment.cases[tag].make({ quantifier }));
     }).pipe(Effect.provide([membershipHandlers, HttpServer.layerServices]));
   },
 );
@@ -404,11 +405,14 @@ it.effect(
         },
       });
 
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInTarget",
-        quantifier: "any",
-        target: { _tag: "Taxon", record: { scientificName: target } },
+      const expectedTarget = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: target }),
       });
+      const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
+        quantifier: "any",
+        target: expectedTarget,
+      });
+      expect(result).toEqual(expected);
     }).pipe(Effect.provide([membershipHandlers, HttpServer.layerServices]));
   },
 );
@@ -455,7 +459,7 @@ it.effect(
       const result = yield* client.classification.classify({
         payload: { records: [record], panel },
       });
-      const taxon = { _tag: "Taxon", record: panel };
+      const taxon = Documents.SetDocument.cases.Taxon.make({ record: panel });
       const match = {
         record,
         taxon,
@@ -492,12 +496,18 @@ it.effect("compares exact labels through the generated HTTP client and request c
 it.effect("returns a native unresolved identity judgment as a successful HTTP response", () =>
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["comparisons"]);
-    const left = { scientificName: TaxonName.make("Quercus"), metadata: { sample: "A17" } };
-    const right = { label: RecordLabel.make("oak voucher"), metadata: { sample: "B42" } };
+    const left = Documents.RecordDocument.make({
+      scientificName: TaxonName.make("Quercus"),
+      metadata: { sample: "A17" },
+    });
+    const right = Documents.RecordDocument.make({
+      label: RecordLabel.make("oak voucher"),
+      metadata: { sample: "B42" },
+    });
 
     const result = yield* client.comparisons.identity({ payload: { left, right } });
 
-    expect(result).toEqual({ _tag: "Undetermined" });
+    expect(result).toEqual(Documents.IdentityJudgment.cases.Undetermined.make({}));
   }).pipe(Effect.provide([handlers, HttpServer.layerServices])),
 );
 
@@ -565,7 +575,7 @@ it.effect("answers directed inner-to-outer containment through the HTTP contract
 
     const result = yield* client.comparisons.containment({ payload: { inner, outer } });
 
-    expect(result).toEqual({ _tag: "Contained" });
+    expect(result).toEqual(Documents.ContainmentJudgment.cases.Contained.make({}));
   }).pipe(Effect.provide([containmentHandlers, HttpServer.layerServices]));
 });
 
@@ -610,7 +620,7 @@ it.effect(
         query: { rank: "genus" },
       });
 
-      expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "genus" });
+      expect(result).toEqual(Documents.RankJudgment.cases.SameTaxonAtRank.make({ rank: "genus" }));
     }).pipe(Effect.provide([rankHandlers, HttpServer.layerServices]));
   },
 );
@@ -628,17 +638,19 @@ it.effect(
 
       const result = yield* client.sets.create({ payload: { targets: [name, record, name] } });
 
-      expect(result).toEqual({
-        _tag: "Union",
-        operands: [
-          { _tag: "Taxon", record: { scientificName: "Quercus" } },
-          {
-            _tag: "Taxon",
-            record: { label: "beech voucher", metadata: { curator: "caller", abundance: 0.37 } },
-          },
-          { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        ],
+      const expectedOak = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({ scientificName: name }),
       });
+      const expectedVoucher = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({
+          label: RecordLabel.make("beech voucher"),
+          metadata: { curator: "caller", abundance: 0.37 },
+        }),
+      });
+      const expected = Documents.SetDocument.cases.Union.make({
+        operands: [expectedOak, expectedVoucher, expectedOak],
+      });
+      expect(result).toEqual(expected);
     }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
 
@@ -653,13 +665,19 @@ it.effect("unions two HTTP operands without requiring a generated artifact for l
 
     const result = yield* client.sets.union({ payload: { left, right } });
 
-    expect(result).toEqual({
-      _tag: "Union",
-      operands: [
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        { _tag: "Taxon", record: { label: "beech voucher", metadata: ["caller"] } },
-      ],
+    const expectedLeft = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: left }),
     });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        label: RecordLabel.make("beech voucher"),
+        metadata: ["caller"],
+      }),
+    });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [expectedLeft, expectedRight],
+    });
+    expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
 
@@ -675,13 +693,20 @@ it.effect("does not mistake a record's caller-supplied tag metadata for a set ex
 
     const result = yield* client.sets.union({ payload: { left, right } });
 
-    expect(result).toEqual({
-      _tag: "Union",
-      operands: [
-        { _tag: "Taxon", record: { label: "Voucher A17", _tag: "Empty", metadata: ["caller"] } },
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-      ],
+    const expectedLeft = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({
+        label: RecordLabel.make("Voucher A17"),
+        _tag: "Empty",
+        metadata: ["caller"],
+      }),
     });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: right }),
+    });
+    const expected = Documents.SetDocument.cases.Union.make({
+      operands: [expectedLeft, expectedRight],
+    });
+    expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
 
@@ -695,19 +720,22 @@ it.effect("intersects operands while preserving supplied artifact topology", () 
 
     const result = yield* client.sets.intersection({ payload: { left, right } });
 
-    expect(result).toEqual({
-      _tag: "Intersection",
-      operands: [
-        {
-          _tag: "Union",
-          operands: [
-            { _tag: "Taxon", record: { scientificName: "Quercus" } },
-            { _tag: "Taxon", record: { scientificName: "Fagus" } },
-          ],
-        },
-        { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
-      ],
+    const expectedOak = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: oak }),
     });
+    const expectedBeech = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: beech }),
+    });
+    const expectedLeft = Documents.SetDocument.cases.Union.make({
+      operands: [expectedOak, expectedBeech],
+    });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: right }),
+    });
+    const expected = Documents.SetDocument.cases.Intersection.make({
+      operands: [expectedLeft, expectedRight],
+    });
+    expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
 
@@ -719,11 +747,17 @@ it.effect("preserves left and right in a directed set difference", () =>
 
     const result = yield* client.sets.difference({ payload: { left, right } });
 
-    expect(result).toEqual({
-      _tag: "Difference",
-      left: { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
-      right: { _tag: "Taxon", record: { scientificName: "Quercus" } },
+    const expectedLeft = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: left }),
     });
+    const expectedRight = Documents.SetDocument.cases.Taxon.make({
+      record: Documents.RecordDocument.make({ scientificName: right }),
+    });
+    const expected = Documents.SetDocument.cases.Difference.make({
+      left: expectedLeft,
+      right: expectedRight,
+    });
+    expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
 
@@ -741,7 +775,7 @@ it.effect("asks a native set relation using a query option and directed operand 
       query: { relation: "subset" },
     });
 
-    expect(result).toEqual({ _tag: "Yes", relation: "subset" });
+    expect(result).toEqual(Documents.SetRelationJudgment.cases.Yes.make({ relation: "subset" }));
   }).pipe(Effect.provide([relationHandlers, HttpServer.layerServices]));
 });
 
@@ -762,7 +796,7 @@ it.effect.each([
 
     const result = yield* client.sets.relation({ payload: { left, right }, query: { relation } });
 
-    expect(result).toEqual({ _tag: tag, relation });
+    expect(result).toEqual(Documents.SetRelationJudgment.cases[tag].make({ relation }));
   }).pipe(Effect.provide([relationHandlers, HttpServer.layerServices]));
 });
 
@@ -801,18 +835,18 @@ it.effect(
         query: { relation: "overlap" },
       });
 
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInSet",
+      const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
+        record: Documents.RecordDocument.make({
+          taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
+          metadata: { sample: ["A17", null] },
+        }),
+      });
+      const expected = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
         relation: "overlap",
         side: "right",
-        taxon: {
-          _tag: "Taxon",
-          record: {
-            taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
-            metadata: { sample: ["A17", null] },
-          },
-        },
+        taxon: expectedTaxon,
       });
+      expect(result).toEqual(expected);
     }).pipe(Effect.provide([relationHandlers, HttpServer.layerServices]));
   },
 );
