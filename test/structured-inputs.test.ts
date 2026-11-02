@@ -17,7 +17,7 @@ const modelLayer = (
         const instructions: string[] = [];
         const answers = Record.map(decisions, (question): DecisionModel.ProviderClassifyAnswer => {
           if (!Predicate.isTagged(question, "Classify")) throw new Error("Expected classification");
-          const instruction = question.instructions;
+          const instruction = Schema.decodeUnknownSync(Schema.String)(question.instructions);
           instructions.push(instruction);
           expect(Record.keys(question.criteria)).toContain(label);
           return Classify({

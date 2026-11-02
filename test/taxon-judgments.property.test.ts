@@ -207,8 +207,10 @@ const observeRankRecordEncoding = Effect.fnUntraced(function* (
       decide: ({ decisions }) => {
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected comparison");
-        const instructions = question.instructions;
-        const criteria = question.criteria;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+        const criteria = Record.map(question.criteria, (criterion) =>
+          Schema.decodeUnknownSync(Schema.String)(criterion),
+        );
         const boundary = instructions.indexOf("\nRight record:\n");
         expect(boundary).toBeGreaterThan(0);
         observation = Option.some({
@@ -256,8 +258,10 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
         )(state);
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected membership");
-        const instructions = question.instructions;
-        const criteria = question.criteria;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+        const criteria = Record.map(question.criteria, (criterion) =>
+          Schema.decodeUnknownSync(Schema.String)(criterion),
+        );
         const criterionNames = Array.map(["multipleTarget0", "multipleTarget1"], (key) => {
           const criterion = Record.get(criteria, key).pipe(Option.getOrThrow);
           const index = Option.fromNullOr(criterion.match(/^Target taxon node (\d+) /u)).pipe(

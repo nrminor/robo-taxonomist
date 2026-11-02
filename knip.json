@@ -4,7 +4,10 @@
     ".": {
       "project": ["src/**/*.ts", "test/**/*.ts", "!test/fixtures/**"]
     },
-    "sites/demo": {
+    "apps/cli": {
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "apps/demo": {
       "project": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]
     }
   },

@@ -145,6 +145,13 @@ it.each([
     offersRetry: false,
     message: "Fix the model tool's input before you try again.",
   },
+  {
+    description: "a non-retryable invalid provider response",
+    reason: PublicModelReason.cases.InvalidResponseError.make({}),
+    retryable: false,
+    offersRetry: false,
+    message: "Could not use the model's reply. Contact the site administrator.",
+  },
 ])(
   "respects retry policy for $description",
   async ({ reason, retryable, offersRetry, message }) => {

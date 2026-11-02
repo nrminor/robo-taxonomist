@@ -264,7 +264,7 @@ it.effect("snapshots original record occurrences before consuming later quantifi
       decide: ({ decisions }) => {
         const question = firstClassificationQuestion(decisions);
         expect(Record.keys(decisions)).toEqual(["record0"]);
-        const instructions = question.instructions;
+        const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
         facts.push(instructions);
         // Caller-owned mutation verifies that later batches use the original snapshot.
         if (facts.length === 1) input[1] = RecordLabel.make("replacement second");
@@ -542,7 +542,9 @@ it.effect("reconstructs partitions in input order after batches finish in revers
         decide: Effect.fnUntraced(function* ({ decisions }) {
           calls++;
           const question = firstClassificationQuestion(decisions);
-          const instructions = question.instructions;
+          const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+            question.instructions,
+          ).pipe(Effect.orDie);
           const index = instructions.endsWith('Scientific name: "F"')
             ? 2
             : instructions.endsWith('Scientific name: "C"')
@@ -648,7 +650,9 @@ it.effect.each(quantifiers)(
           decide: Effect.fnUntraced(function* ({ decisions }) {
             calls++;
             const question = firstClassificationQuestion(decisions);
-            const instructions = question.instructions;
+            const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+              question.instructions,
+            ).pipe(Effect.orDie);
             const index = instructions.endsWith('Record label: "first"') ? 0 : 1;
             expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
             for (const [local, name] of (index === 0
@@ -1487,7 +1491,9 @@ it.effect(
         DecisionModel.make({
           decide: Effect.fnUntraced(function* ({ decisions }) {
             const question = firstClassificationQuestion(decisions);
-            const instructions = question.instructions;
+            const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+              question.instructions,
+            ).pipe(Effect.orDie);
             if (instructions.endsWith('Scientific name: "first sentinel"')) {
               expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
               const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
@@ -1599,7 +1605,9 @@ it.effect.each(["failure", "interrupt"] as const)(
           decide: Effect.fnUntraced(
             function* ({ decisions }) {
               const question = firstClassificationQuestion(decisions);
-              const instructions = question.instructions;
+              const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                question.instructions,
+              ).pipe(Effect.orDie);
               if (instructions.endsWith('Scientific name: "A first"')) {
                 // B must already be pending when A makes successful progress.
                 yield* Deferred.await(bStarted);
@@ -1731,7 +1739,9 @@ it.effect.each(["failure", "interrupt"] as const)(
               if (node.record.scientificName === "before") return response(["member"]);
               expect(node.record.scientificName).toBe("middle");
               const question = firstClassificationQuestion(decisions);
-              const instructions = question.instructions;
+              const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                question.instructions,
+              ).pipe(Effect.orDie);
               if (instructions.endsWith('Scientific name: "first record"')) {
                 yield* Deferred.await(middleBlocked);
                 if (mode === "failure") return yield* failure;

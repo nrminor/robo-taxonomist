@@ -22,6 +22,7 @@ const publicReason = Match.type<AiError.AiErrorReason>().pipe(
     ContentPolicyError: () => PublicModelReason.cases.ContentPolicyError.make({}),
     InvalidRequestError: () => PublicModelReason.cases.InvalidRequestError.make({}),
     InternalProviderError: () => PublicModelReason.cases.InternalProviderError.make({}),
+    InvalidResponseError: () => PublicModelReason.cases.InvalidResponseError.make({}),
     NetworkError: () => PublicModelReason.cases.NetworkError.make({}),
     InvalidOutputError: () => PublicModelReason.cases.InvalidOutputError.make({}),
     StructuredOutputError: () => PublicModelReason.cases.StructuredOutputError.make({}),
