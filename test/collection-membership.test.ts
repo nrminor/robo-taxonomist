@@ -437,7 +437,7 @@ for (const [quantifier, operation] of quantifiers) {
             execution: CollectionExecution.make({ batchSize: 2, concurrency: 1 }),
           }),
         );
-        expect(error.reason._tag).toBe("InvalidOutputError");
+        expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
         expect(calls).toBe(1);
       }).pipe(Effect.provide(layer));
     },
@@ -893,7 +893,10 @@ for (const [kind, operation] of operations) {
           Effect.provide(layer),
           Effect.flip,
         );
-        expect(error.reason._tag).toBe(mode === "failure" ? "UnknownError" : "InvalidOutputError");
+        expect(error).toMatchObject({
+          _tag: "AiError",
+          reason: { _tag: mode === "failure" ? "UnknownError" : "InvalidOutputError" },
+        });
         if (mode === "failure") expect(error).toBe(failure);
         expect(succeeded).toBe(false);
         expect(calls).toBe(2);
@@ -1368,8 +1371,30 @@ it.effect("rejects invalid original records/targets before transporting their ba
     ];
     for (const operation of invalidRecords) {
       const error = yield* Effect.flip(operation);
-      expect(error.reason._tag).toBe("InvalidUserInputError");
+      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
     }
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reports a cyclic target from graph compilation before transport", () => {
+  const cyclic = TaxonSet.union(TaxonSet.empty(), TaxonSet.empty());
+  // Deliberate mutation exercises cycle rejection beyond the public constructors.
+  Reflect.set(cyclic, "operands", [cyclic]);
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({ decide: () => Effect.die("Unexpected transport") }),
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      Taxonomy.anyRecordBelongsTo([RecordLabel.make("subject")], cyclic),
+    );
+    expect(error).toMatchObject({
+      _tag: "AiError",
+      module: "TaxonSetGraph",
+      method: "compile",
+      reason: { _tag: "InvalidUserInputError" },
+    });
   }).pipe(Effect.provide(layer));
 });
 

@@ -1,9 +1,10 @@
 // Compile only, against package exports after build; never executed by Vitest.
-import { Effect, type Array, type Types } from "effect";
+import { Effect, Schema, type Array, type Types } from "effect";
 import type { AiError, Decision, DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
 import {
   AcceptancePolicy,
+  Errors,
   RecordLabel,
   TaxonId,
   TaxonName,
@@ -14,7 +15,7 @@ import {
   type RecordsGroupedByTaxa,
   type RankComparisonJudgment,
   type TaxonomicRank,
-  type TaxonIdentityJudgment,
+  TaxonIdentityJudgment,
   type TaxonContainmentJudgment,
   type TaxonMembershipJudgment,
   type TaxonMatch,
@@ -30,7 +31,7 @@ type UnionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Union">["operands"];
 type IntersectionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Intersection">["operands"];
 type Judgment<T, A> =
   Equal<Effect.Success<T>, A> extends true
-    ? Equal<Effect.Error<T>, AiError.AiError> extends true
+    ? Equal<Effect.Error<T>, Errors.TaxonomyError> extends true
       ? Equal<Effect.Services<T>, DecisionModel.DecisionModel>
       : false
     : false;
@@ -269,7 +270,7 @@ export type Contracts = [
     >
   >,
   Assert<Equal<Classified["usage"], readonly DecisionModel.DecisionUsage[]>>,
-  Assert<Equal<Effect.Error<typeof classified>, AiError.AiError>>,
+  Assert<Equal<Effect.Error<typeof classified>, Errors.TaxonomyError>>,
   Assert<Equal<Effect.Services<typeof classified>, DecisionModel.DecisionModel>>,
   Assert<Equal<ClassifiedMatch["support"] extends number ? true : false, true>>,
   Assert<Equal<number extends ClassifiedMatch["support"] ? true : false, false>>,
@@ -333,6 +334,17 @@ export type Contracts = [
     >
   >,
 ];
+
+export const identityFixture = TaxonIdentityJudgment.cases.SameTaxon.make({});
+export const decodeIdentity = Schema.decodeUnknownEffect(TaxonIdentityJudgment);
+export const inputHandled = identity.pipe(Effect.catchTag("InvalidInput", (error) => error.cause));
+export type ErrorContractChecks = [
+  Assert<Equal<Effect.Error<typeof inputHandled>, Schema.SchemaError | AiError.AiError>>,
+  Assert<Equal<Errors.InvalidInput["cause"], Schema.SchemaError>>,
+  Assert<Equal<Effect.Success<ReturnType<typeof decodeIdentity>>, TaxonIdentityJudgment>>,
+];
+// @ts-expect-error The schema retains the existing side literals.
+export const rejectedIdentity = TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "neither" });
 
 // Keep every tag and child valid except the deeply nested numeric scientific name.
 // Otherwise a widened outer tag could mask the recursive-declaration regression.

@@ -13,12 +13,7 @@ import {
 } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import { panels, records } from "../src/lib/catalog.ts";
-import {
-  ClassificationFailure,
-  MatchJudgment,
-  PanelResponse,
-  PublicModelReason,
-} from "../src/lib/contract.ts";
+import { MatchJudgment, PanelResponse } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
@@ -290,6 +285,11 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let calls = 0;
+      const original = new AiError.AiError({
+        module: "fixture",
+        method: "decide",
+        reason: new AiError.RateLimitError({}),
+      });
       const model = Layer.effect(
         DecisionModel.DecisionModel,
         Effect.gen(function* () {
@@ -299,15 +299,7 @@ it.effect(
             decide: (definition, options) =>
               Effect.suspend(() => {
                 calls++;
-                return calls === 9
-                  ? Effect.fail(
-                      new AiError.AiError({
-                        module: "fixture",
-                        method: "decide",
-                        reason: new AiError.RateLimitError({}),
-                      }),
-                    )
-                  : fixture.decide(definition, options);
+                return calls === 9 ? Effect.fail(original) : fixture.decide(definition, options);
               }),
           });
         }),
@@ -316,12 +308,7 @@ it.effect(
         const broad = yield* classifyPanel("broad");
         const focused = yield* classifyPanel("focused");
         const failure = yield* classifyPanel("broad", true).pipe(Effect.flip);
-        expect(failure).toEqual(
-          ClassificationFailure.cases.ModelFailure.make({
-            reason: PublicModelReason.cases.RateLimitError.make({}),
-            retryable: true,
-          }),
-        );
+        expect(failure).toBe(original);
         expect(calls).toBe(9);
         const cachedFocused = yield* classifyPanel("focused");
         expect(cachedFocused).toBe(focused);

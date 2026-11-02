@@ -50,7 +50,7 @@ const identity = Command.make(
     ),
   },
   Effect.fn("Cli.compareIdentity")(function* ({ left, right, format, noHeader }) {
-    const result = yield* Taxonomy.sameTaxon(left, right).pipe(Effect.mapError(Model.modelFailure));
+    const result = yield* Taxonomy.sameTaxon(left, right);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeComparison(result, noHeader),
@@ -59,7 +59,7 @@ const identity = Command.make(
     );
 
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withShortDescription("Compare taxonomic identities."),
   Command.withDescription("Ask whether two taxonomic names refer to the same taxon."),
@@ -93,9 +93,7 @@ const containment = Command.make(
     ),
   },
   Effect.fn("Cli.compareContainment")(function* ({ inner, outer, format, noHeader }) {
-    const result = yield* Taxonomy.taxonWithin(inner, outer).pipe(
-      Effect.mapError(Model.modelFailure),
-    );
+    const result = yield* Taxonomy.taxonWithin(inner, outer);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeComparison(result, noHeader),
@@ -104,7 +102,7 @@ const containment = Command.make(
     );
 
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withAlias("within"),
   Command.withShortDescription("Check whether one taxon falls within another."),
@@ -146,9 +144,7 @@ const rank = Command.make(
     ),
   },
   Effect.fn("Cli.compareRank")(function* ({ left, right, rank, format, noHeader }) {
-    const result = yield* Taxonomy.sameTaxonAtRank(left, right, rank).pipe(
-      Effect.mapError(Model.modelFailure),
-    );
+    const result = yield* Taxonomy.sameTaxonAtRank(left, right, rank);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeRank(result, noHeader),
@@ -157,7 +153,7 @@ const rank = Command.make(
     );
 
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withShortDescription("Compare records at a taxonomic rank."),
   Command.withDescription("Compare two record labels at the specified taxonomic rank."),

@@ -1,8 +1,24 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { Array, ConfigProvider, Layer, ManagedRuntime, Option, Record, Schema } from "effect";
-import { FetchHttpClient } from "effect/http";
+import {
+  Array,
+  Cause,
+  Clock,
+  ConfigProvider,
+  Context,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Record,
+  Redacted,
+  Schema,
+} from "effect";
+import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import { TaxonName, Taxonomy } from "robo-taxonomist";
 import {
   ClassificationFailure,
   MatchJudgment,
@@ -11,6 +27,7 @@ import {
 } from "../src/lib/contract.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
+import * as ClefModel from "../src/server/clef-model.ts";
 
 vi.mock("server-only", () => ({}));
 
@@ -44,9 +61,58 @@ const liveConfig = {
   CLOUDFLARE_API_TOKEN: token,
 };
 
+class RequestId extends Context.Service<RequestId, string>()("test/ClefRequestId") {}
+
+it.effect.each([false, true])(
+  "retains HTTP cause annotations and accompanying interruption (%s)",
+  (interrupted) =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) => {
+        const error = new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, cause: "offline" }),
+        });
+        const reasons: Cause.Reason<HttpClientError.HttpClientError>[] = [
+          Cause.makeFailReason(error),
+        ];
+        if (interrupted) reasons.push(Cause.makeInterruptReason(73));
+        return Effect.failCause(
+          Cause.annotate(Cause.fromReasons(reasons), Context.make(RequestId, "request-17")),
+        );
+      });
+      const result = yield* Taxonomy.sameTaxon(
+        TaxonName.make("Quercus"),
+        TaxonName.make("Fagus"),
+      ).pipe(
+        Effect.provide(
+          ClefModel.clefModelLayer({ accountId, apiToken: Redacted.make(token) }).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(result.cause.reasons.map((reason) => reason._tag)).toEqual(
+          interrupted ? ["Fail", "Interrupt"] : ["Fail"],
+        );
+        expect(Option.getOrThrow(Cause.findErrorOption(result.cause))).toMatchObject({
+          _tag: "AiError",
+          reason: { _tag: "NetworkError" },
+        });
+        for (const reason of result.cause.reasons) {
+          expect(Context.getOrUndefined(Cause.reasonAnnotations(reason), RequestId)).toBe(
+            "request-17",
+          );
+        }
+        if (interrupted) expect(Cause.interruptors(result.cause)).toEqual(new Set([73]));
+      }
+    }),
+);
+
 const configuredRuntime = (
   fetch: typeof globalThis.fetch,
   config: Readonly<Record<string, string>> = liveConfig,
+  clock: Clock.Clock = Effect.runSync(Clock.Clock),
 ) =>
   ManagedRuntime.make(
     ConfiguredPanelResults.pipe(
@@ -54,6 +120,7 @@ const configuredRuntime = (
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
       ),
       Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config))),
+      Layer.provideMerge(Layer.succeed(Clock.Clock, clock)),
     ),
   );
 
@@ -247,6 +314,86 @@ it.each([
     }
   },
 );
+
+it("preserves a Clef Retry-After delay in the safe response without retrying", async () => {
+  const fetch = vi.fn(
+    async () =>
+      new Response("SECRET provider body", {
+        status: 429,
+        headers: { "Retry-After": "17", "X-Secret": "SECRET header" },
+      }),
+  );
+  const runtime = configuredRuntime(fetch);
+  try {
+    const response = await makeHandlers(runtime).classifyHttp(requestPanel());
+    expect(response.status).toBe(503);
+    const wire = await response.text();
+    expect(wire).not.toContain("SECRET");
+    expect(
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+    ).toEqual(
+      ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.RateLimitError.make({ retryAfterMs: 17000 }),
+        retryable: true,
+      }),
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+it.each([
+  { header: "Sun, 06 Nov 1994 08:49:37 GMT", retryAfterMs: 17000 },
+  { header: "Sunday, 06-Nov-94 08:49:37 GMT", retryAfterMs: 17000 },
+  { header: "Sun Nov  6 08:49:37 1994", retryAfterMs: 17000 },
+  { header: "Sun, 06 Nov 1994 08:49:19 GMT", retryAfterMs: 0 },
+  { header: "not a date", retryAfterMs: undefined },
+  { header: "Sun, 31 Feb 2094 08:49:37 GMT", retryAfterMs: undefined },
+  { header: "1.5", retryAfterMs: undefined },
+  { header: "-1", retryAfterMs: undefined },
+])("interprets Retry-After $header using the Effect clock", async ({ header, retryAfterMs }) => {
+  const now = DateTime.toEpochMillis(DateTime.makeUnsafe("1994-11-06T08:49:20Z"));
+  const nanos = BigInt(now) * 1_000_000n;
+  const liveClock = Effect.runSync(Clock.Clock);
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => now,
+    currentTimeMillis: Effect.succeed(now),
+    currentTimeNanosUnsafe: () => nanos,
+    currentTimeNanos: Effect.succeed(nanos),
+    monotonicTimeNanosUnsafe: () => nanos,
+    monotonicTimeNanos: Effect.succeed(nanos),
+    sleep: (duration) => liveClock.sleep(duration),
+  };
+  const fetch = vi.fn(
+    async () =>
+      new Response("SECRET", {
+        status: 429,
+        headers: { "Retry-After": header },
+      }),
+  );
+  const runtime = configuredRuntime(fetch, liveConfig, clock);
+  try {
+    const response = await makeHandlers(runtime).classifyHttp(requestPanel());
+    expect(response.status).toBe(503);
+    const wire = await response.text();
+    expect(wire).not.toContain("SECRET");
+    const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+      JSON.parse(wire),
+    );
+    expect(failure).toEqual(
+      ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.RateLimitError.make(
+          retryAfterMs === undefined ? {} : { retryAfterMs },
+        ),
+        retryable: true,
+      }),
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally {
+    await runtime.dispose();
+  }
+});
 
 it("sanitizes transport failures without retrying", async () => {
   const fetch = vi.fn(() => Promise.reject(new Error(`SECRET transport ${token}`)));

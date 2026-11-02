@@ -2,7 +2,6 @@ import { Cache, Context, Duration, Effect, Exit, Layer, Schema } from "effect";
 import { CollectionExecution, RecordLabel, TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
 import { PanelId, panels, records } from "../lib/catalog.ts";
 import { ClassificationFailure, MatchJudgment, PanelResponse } from "../lib/contract.ts";
-import { publicModelFailure } from "../lib/failures.ts";
 import { FixtureModel } from "./fixture-model.ts";
 
 const inputs = records.map((record) =>
@@ -21,9 +20,7 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
     (set, target) => TaxonSet.union(set, TaxonSet.of(TaxonName.make(target.name))),
     TaxonSet.empty(),
   );
-  const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution }).pipe(
-    Effect.mapError(publicModelFailure),
-  );
+  const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution });
   return yield* Schema.decodeUnknownEffect(PanelResponse)({
     panelId,
     rows: result.records.map((row) => ({
@@ -39,8 +36,10 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
         answer: match.answer,
       })),
     })),
-  }).pipe(Effect.mapError(() => ClassificationFailure.cases.InternalFailure.make({})));
+  });
 });
+
+type LookupFailure = Effect.Error<ReturnType<typeof lookup>>;
 
 /**
  * Panel classification service caching successful, schema-validated results indefinitely per layer instance.
@@ -53,7 +52,7 @@ export class PanelResults extends Context.Service<
     readonly classify: (
       panelId: PanelId,
       refresh?: boolean,
-    ) => Effect.Effect<PanelResponse, ClassificationFailure>;
+    ) => Effect.Effect<PanelResponse, LookupFailure>;
   }
 >()("@robo-taxonomist/demo/PanelResults") {
   /** Build the cache using the caller-supplied decision model, including live adapters. */

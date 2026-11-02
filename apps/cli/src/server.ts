@@ -6,7 +6,7 @@ import { DecisionModel } from "effect/ai";
 import { CliError, Command, Flag } from "effect/cli";
 import { HttpIncomingMessage, HttpRouter, HttpServerError, HttpServerRequest } from "effect/http";
 import { HttpApiBuilder, HttpApiScalar } from "effect/http-api";
-import { CollectionExecution, TaxonSet, Taxonomy } from "robo-taxonomist";
+import { CollectionExecution, TaxonSet, Taxonomy, type Errors } from "robo-taxonomist";
 import * as Api from "./api.ts";
 import * as Documents from "./documents.ts";
 import * as Model from "./model.ts";
@@ -108,7 +108,14 @@ export const requestBounds = (limits = defaultRequestLimits) => {
   );
 };
 
-const modelFailure = () => new Api.ModelFailure({ message: "The decision model request failed" });
+const taxonomyFailure = (error: Errors.TaxonomyError) =>
+  Match.value(error).pipe(
+    Match.tagsExhaustive({
+      InvalidInput: () =>
+        new Api.InvalidInput({ message: "The supplied taxonomic input is invalid" }),
+      AiError: () => new Api.ModelFailure({ message: "The decision model request failed" }),
+    }),
+  );
 
 const setDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetDocument));
 const relationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetRelationJudgment));
@@ -190,19 +197,19 @@ export const comparisons = HttpApiBuilder.group(
       .handle("identity", ({ payload }) =>
         Taxonomy.sameTaxon(payload.left, payload.right).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
-          Effect.mapError(modelFailure),
+          Effect.mapError(taxonomyFailure),
         ),
       )
       .handle("containment", ({ payload }) =>
         Taxonomy.taxonWithin(payload.inner, payload.outer).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
-          Effect.mapError(modelFailure),
+          Effect.mapError(taxonomyFailure),
         ),
       )
       .handle("rank", ({ payload, query }) =>
         Taxonomy.sameTaxonAtRank(payload.left, payload.right, query.rank).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
-          Effect.mapError(modelFailure),
+          Effect.mapError(taxonomyFailure),
         ),
       );
   }),
@@ -270,7 +277,7 @@ export const sets = HttpApiBuilder.group(
           const operation = operations[query.relation];
           const result = yield* operation(left, right).pipe(
             Effect.provideService(DecisionModel.DecisionModel, model),
-            Effect.mapError(modelFailure),
+            Effect.mapError(taxonomyFailure),
           );
 
           return yield* relationDocument(result).pipe(Effect.mapError(outputFailure));
@@ -299,7 +306,7 @@ export const membership = (limits = defaultCollectionLimits) =>
         const target = yield* operandSet(payload.target);
         const result = yield* operation(payload.records, target, { execution }).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
-          Effect.mapError(modelFailure),
+          Effect.mapError(taxonomyFailure),
         );
 
         return yield* quantifierDocument(result).pipe(Effect.mapError(outputFailure));
@@ -313,7 +320,7 @@ export const membership = (limits = defaultCollectionLimits) =>
             const target = yield* operandSet(payload.target);
             const result = yield* Taxonomy.recordBelongsTo(payload.record, target).pipe(
               Effect.provideService(DecisionModel.DecisionModel, model),
-              Effect.mapError(modelFailure),
+              Effect.mapError(taxonomyFailure),
             );
 
             return yield* membershipDocument(result).pipe(Effect.mapError(outputFailure));
@@ -328,7 +335,7 @@ export const membership = (limits = defaultCollectionLimits) =>
               execution,
             }).pipe(
               Effect.provideService(DecisionModel.DecisionModel, model),
-              Effect.mapError(modelFailure),
+              Effect.mapError(taxonomyFailure),
             );
 
             return yield* partitionDocument(result).pipe(Effect.mapError(outputFailure));
@@ -361,7 +368,7 @@ export const classification = (limits = defaultCollectionLimits) =>
             execution,
           }).pipe(
             Effect.provideService(DecisionModel.DecisionModel, model),
-            Effect.mapError(modelFailure),
+            Effect.mapError(taxonomyFailure),
           );
 
           return yield* classificationDocument(result).pipe(Effect.mapError(outputFailure));

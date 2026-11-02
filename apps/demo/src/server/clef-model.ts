@@ -1,7 +1,13 @@
 import "server-only";
-import { Data, Effect, Layer, Redacted, Schema } from "effect";
+import { Clock, Data, Effect, Layer, Match, Option, Redacted, Result, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
+import {
+  Headers,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 const tokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -39,34 +45,71 @@ const invalidOutput = () =>
     }),
   });
 
-const httpError = (error: HttpClientError.HttpClientError): AiError.AiError => {
-  const reason = error.reason;
-  switch (reason._tag) {
-    case "TransportError":
-    case "EncodeError":
-    case "InvalidUrlError": {
-      const network = AiError.NetworkError.fromRequestError(reason);
-      return AiError.make({
-        module: "ClefModel",
-        method: "decide",
-        reason: new AiError.NetworkError({
-          reason: network.reason,
-          method: network.method,
-          url: network.url,
-          description: "Clef HTTP request failed",
-        }),
-      });
-    }
-    case "StatusCodeError":
-      return AiError.make({
-        module: "ClefModel",
-        method: "decide",
-        reason: AiError.reasonFromHttpStatus({ status: reason.response.status }),
-      });
-    default:
-      return invalidOutput();
-  }
+const httpReason = (
+  response: HttpClientResponse.HttpClientResponse,
+  now: number,
+): AiError.AiErrorReason => {
+  const http = { response: { status: response.status, headers: response.headers } };
+  const reason = AiError.reasonFromHttpStatus({ status: response.status, http });
+
+  return Match.value(reason).pipe(
+    Match.tags({
+      RateLimitError: (rateLimit) => {
+        const header = Headers.get(response.headers, "retry-after");
+        const parsedHeader = Option.flatMap(header, (value) => {
+          const parsed = Headers.parseRetryAfter(value);
+          return Result.getSuccess(parsed);
+        });
+
+        return Option.match(parsedHeader, {
+          onNone: () => rateLimit,
+          onSome: (value) => {
+            const retryAfter = Headers.retryAfterDelay(value, now);
+
+            return new AiError.RateLimitError({
+              http: rateLimit.http,
+              metadata: rateLimit.metadata,
+              retryAfter,
+            });
+          },
+        });
+      },
+    }),
+    Match.orElse((reason) => reason),
+  );
 };
+
+const httpError = (error: HttpClientError.HttpClientError, now: number): AiError.AiError =>
+  Match.value(error.reason).pipe(
+    Match.tag("TransportError", "EncodeError", "InvalidUrlError", (requestError) => {
+      const network = AiError.NetworkError.fromRequestError(requestError);
+      const reason = new AiError.NetworkError({
+        reason: network.reason,
+        method: network.method,
+        url: network.url,
+        description: "Clef HTTP request failed",
+      });
+
+      return AiError.make({
+        module: "ClefModel",
+        method: "decide",
+        reason,
+      });
+    }),
+    Match.tagsExhaustive({
+      StatusCodeError: (statusError) => {
+        const reason = httpReason(statusError.response, now);
+
+        return AiError.make({
+          module: "ClefModel",
+          method: "decide",
+          reason,
+        });
+      },
+      DecodeError: invalidOutput,
+      EmptyBodyError: invalidOutput,
+    }),
+  );
 
 /**
  * Live Cloudflare Clef adapter requiring an HTTP client and server-side credentials.
@@ -147,12 +190,16 @@ export const clefModelLayer = (options: {
             }),
           ),
         );
-        const response = yield* client.execute(request).pipe(Effect.mapError(httpError));
+        const clock = yield* Clock.Clock;
+        const response = yield* client
+          .execute(request)
+          .pipe(Effect.mapError((error) => httpError(error, clock.currentTimeMillisUnsafe())));
         if (response.status < 200 || response.status >= 300) {
+          const now = yield* Clock.currentTimeMillis;
           return yield* AiError.make({
             module: "ClefModel",
             method: "decide",
-            reason: AiError.reasonFromHttpStatus({ status: response.status }),
+            reason: httpReason(response, now),
           });
         }
         const body = yield* response.json.pipe(Effect.mapError(invalidOutput));

@@ -19,6 +19,7 @@ import {
 import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
+  Errors,
   RecordLabel,
   TaxonId,
   TaxonomicRecord,
@@ -574,7 +575,7 @@ const recordA = RecordLabel.make("A");
 type Judgment = TaxonIdentityJudgment | TaxonContainmentJudgment | TaxonMembershipJudgment;
 const modelOperations: readonly (readonly [
   string,
-  () => Effect.Effect<Judgment, AiError.AiError, DecisionModel.DecisionModel>,
+  () => Effect.Effect<Judgment, Errors.TaxonomyError, DecisionModel.DecisionModel>,
 ])[] = [
   ["identity", () => Taxonomy.sameTaxon(nameA, nameB)],
   ["containment", () => Taxonomy.taxonWithin(nameA, nameB)],
@@ -650,7 +651,7 @@ it.effect(
     return Effect.gen(function* () {
       const requests: readonly Effect.Effect<
         Judgment,
-        AiError.AiError,
+        Errors.TaxonomyError,
         DecisionModel.DecisionModel
       >[] = [
         // @ts-expect-error Untyped caller with blank name.
@@ -666,7 +667,7 @@ it.effect(
       ];
       for (const request of requests) {
         const error = yield* Effect.flip(request);
-        expect(error.reason._tag).toBe("InvalidUserInputError");
+        expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
       }
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -692,6 +693,7 @@ it.effect.each(modelOperations)("preserves provider failure for %s", ([_key, ope
   return Effect.gen(function* () {
     const error = yield* Effect.flip(operation());
     expect(error).toBe(failure);
+    expect(Schema.is(Errors.TaxonomyError)(error)).toBe(true);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -710,7 +712,7 @@ for (const [key, operation] of modelOperations) {
         }),
       );
       const error = yield* Effect.flip(operation().pipe(Effect.provide(layer)));
-      expect(error.reason._tag).toBe("InvalidOutputError");
+      expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
     }),
   );
 }

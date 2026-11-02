@@ -28,9 +28,7 @@ const check = Command.make(
 
     const targetFormat = Option.getOrUndefined(target.format);
     const set = yield* Inputs.loadTargets(target.targets, target.files, targetFormat);
-    const judgment = yield* Taxonomy.recordBelongsTo(record, set).pipe(
-      Effect.mapError(Model.modelFailure),
-    );
+    const judgment = yield* Taxonomy.recordBelongsTo(record, set);
     const entries = Stream.succeed({ record, judgment });
 
     const render = Match.value(format).pipe(
@@ -41,7 +39,7 @@ const check = Command.make(
     );
 
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withShortDescription("Check one record's membership."),
   Command.withDescription("Check one record label against a target set."),
@@ -91,11 +89,7 @@ const partition = Command.make(
 
     const partitions = records.pipe(
       Stream.grouped(groupSize),
-      Stream.mapEffect((group) =>
-        Taxonomy.partitionRecordsByMembership(group, set, { execution }).pipe(
-          Effect.mapError(Model.modelFailure),
-        ),
-      ),
+      Stream.mapEffect((group) => Taxonomy.partitionRecordsByMembership(group, set, { execution })),
     );
 
     const render = Match.value(format).pipe(
@@ -106,7 +100,7 @@ const partition = Command.make(
     );
 
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withAlias("part"),
   Command.withShortDescription("Group records by membership outcome."),
@@ -172,9 +166,7 @@ const quantifier = (
       const recordFormat = Option.getOrUndefined(input.format);
       const recordStream = Inputs.loadRecords(input.records, input.files, recordFormat);
       const records = yield* Stream.runCollect(recordStream);
-      const result = yield* operation(records, set, { execution }).pipe(
-        Effect.mapError(Model.modelFailure),
-      );
+      const result = yield* operation(records, set, { execution });
 
       const render = Match.value(format).pipe(
         Match.literalsExhaustive({
@@ -184,7 +176,7 @@ const quantifier = (
       );
 
       yield* render;
-    }),
+    }, Effect.mapError(Model.cliFailure)),
   ).pipe(
     Command.withShortDescription(description),
     Command.withDescription(

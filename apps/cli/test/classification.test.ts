@@ -579,7 +579,7 @@ it.effect("does not emit a result for a failed group after a completed JSONL pre
     );
     const row = Array.head(document.records).pipe(Option.getOrThrow);
     expect(row.record).toBe("A17");
-    expect(JSON.stringify(result.stderr)).toContain("decision model request failed");
+    expect(JSON.stringify(result.stderr)).toContain("unusable answer");
     expect(result.requests).toBe(2);
   }),
 );

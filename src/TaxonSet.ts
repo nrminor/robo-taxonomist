@@ -1,4 +1,3 @@
-import * as AiError from "effect/ai/AiError";
 import * as Decision from "effect/ai/Decision";
 import * as DecisionModel from "effect/ai/DecisionModel";
 import * as Array from "effect/Array";
@@ -12,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import type * as Types from "effect/Types";
 import { defaultPolicy, select, type AcceptancePolicy, type Scored } from "./AcceptancePolicy.ts";
+import * as Errors from "./errors.ts";
 import {
   Difference,
   Intersection,
@@ -252,21 +252,17 @@ type SetRelationFn = <A extends TaxonomicRecord, B extends TaxonomicRecord>(
   left: TaxonSet<A>,
   right: TaxonSet<B>,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonSetRelationJudgment<A | B>, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<
+  TaxonSetRelationJudgment<A | B>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 
 const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRecord>(input: {
   readonly left: TaxonSet<R>;
   readonly right: TaxonSet<R>;
 }) {
-  const compiled = yield* TaxonSetGraph.compile(input).pipe(
-    Effect.mapError((reason) =>
-      AiError.make({
-        module: "TaxonSet",
-        method: "makeRelationQuestion",
-        reason,
-      }),
-    ),
-  );
+  const compiled = yield* TaxonSetGraph.compile(input);
   const taxa = {
     leftTaxa: compiled.taxa.left,
     rightTaxa: compiled.taxa.right,
@@ -274,15 +270,7 @@ const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRec
   const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
-  }).pipe(
-    Effect.mapError((error) =>
-      AiError.make({
-        module: "TaxonSet",
-        method: "makeRelationQuestion",
-        reason: new AiError.InvalidUserInputError({ description: error.message }),
-      }),
-    ),
-  );
+  }).pipe(Effect.mapError(Errors.InvalidInput.from));
   const leftTaxonChoices = Record.fromEntries(
     Array.map(
       taxa.leftTaxa,

@@ -1,7 +1,8 @@
 import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
-import { Config, Layer, Schema } from "effect";
+import { Config, Layer, Match, Schema } from "effect";
 import { DecisionModel, type AiError } from "effect/ai";
 import { CliError, Flag } from "effect/cli";
+import { type Errors } from "robo-taxonomist";
 
 const modelName = Schema.String.check(
   Schema.isPattern(/\S/u, { expected: "nonblank model identifier" }),
@@ -32,10 +33,52 @@ export const modelLayer = (model: string) =>
     ),
   );
 
-/** Turn a provider failure into a CLI diagnostic without exposing provider details. */
-export const modelFailure = (cause: AiError.AiError) =>
-  new CliError.UserError({
-    cause,
-    userMessage:
-      "The decision model request failed; check credentials, selected model and provider availability",
-  });
+const unusableAnswer = "The decision model returned an unusable answer; check the selected model";
+
+const modelMessage = (error: AiError.AiError) =>
+  Match.value(error.reason).pipe(
+    Match.tag(
+      "AuthenticationError",
+      () => "The model provider rejected authentication; check TYPESAFE_API_KEY",
+    ),
+    Match.tag(
+      "RateLimitError",
+      () => "The model provider is rate-limiting requests; wait before trying again",
+    ),
+    Match.tag(
+      "QuotaExhaustedError",
+      () => "The model provider quota is exhausted; check your provider account",
+    ),
+    Match.tag(
+      "NetworkError",
+      () => "Cannot reach the model provider; check your network connection",
+    ),
+    Match.tag(
+      "ContentPolicyError",
+      () => "The model provider declined the request under its content policy",
+    ),
+    Match.tag(
+      "InvalidUserInputError",
+      () => "The taxonomic input could not be processed; check the supplied records and sets",
+    ),
+    Match.tag("InvalidOutputError", () => unusableAnswer),
+    Match.tag("InvalidResponseError", () => unusableAnswer),
+    Match.tag("StructuredOutputError", () => unusableAnswer),
+    Match.orElse(
+      () => "The decision model request failed; check the selected model and provider availability",
+    ),
+  );
+
+/** Translate taxonomy failures once while retaining their causes for inspection. */
+export const cliFailure = (error: Errors.TaxonomyError | CliError.UserError) =>
+  Match.value(error).pipe(
+    Match.tagsExhaustive({
+      InvalidInput: (cause) =>
+        new CliError.UserError({
+          cause,
+          userMessage: "Check the supplied taxonomic identifying fields",
+        }),
+      AiError: (cause) => new CliError.UserError({ cause, userMessage: modelMessage(cause) }),
+      UserError: (cause) => cause,
+    }),
+  );

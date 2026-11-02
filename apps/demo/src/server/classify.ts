@@ -28,7 +28,12 @@ const classifyRequest = Effect.fn("classifyRequest")(function* (request: Request
   return yield* classifyPanel(input.panelId, input.refresh);
 });
 
-const toHttpResponse = (exit: Exit.Exit<PanelResponse, ClassificationFailure>): Response =>
+const toHttpResponse = (
+  exit: Exit.Exit<
+    PanelResponse,
+    Effect.Error<ReturnType<typeof classifyRequest>> | ClassificationFailure
+  >,
+): Response =>
   Exit.match(exit, {
     onSuccess: (value) =>
       Response.json(encodeSuccess(value), {
