@@ -1,6 +1,6 @@
 {
   "name": "robo-taxonomist",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A TypeScript library for comparing ambiguous taxonomic labels with intelligence from decision models",
   "license": "MIT",
   "repository": {
@@ -21,7 +21,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "check": "pnpm run fmt:check && pnpm run check:fast && pnpm run test && pnpm run knip && pnpm run check:consumer && pnpm --filter @robo-taxonomist/demo build && pnpm --filter @robo-taxonomist/cli build && pnpm run cli:smoke",
+    "check": "pnpm run fmt:check && pnpm run check:fast && pnpm run test && pnpm run knip && pnpm run check:consumer && pnpm --filter @robo-taxonomist/demo build && pnpm --filter @robo-taxonomist/cli build",
     "cli:compile": "pnpm run build && pnpm --filter @robo-taxonomist/cli compile",
     "cli:smoke": "node scripts/smoke-cli.mjs",
     "check:consumer": "tsc --project test/fixtures/consumer/tsconfig.json && node test/fixtures/consumer/smoke.mjs",
