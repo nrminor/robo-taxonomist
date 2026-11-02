@@ -492,9 +492,9 @@ await Effect.runPromise(
 );
 ```
 
-An operation that reports `Undetermined` has completed successfully. Invalid inputs and provider failures travel through the Effect error channel. Model-backed library operations report `AiError`; validation performed with a schema's `.makeEffect` can also introduce a schema error into your larger program.
+An operation that reports `Undetermined` has completed successfully. Invalid inputs and provider failures travel through the Effect error channel. Library schema validation reports `Errors.InvalidInput`, retaining the original `SchemaError` in `cause`; model-interface failures propagate unchanged as `AiError`. Validation performed with a schema's `.makeEffect` can also introduce a schema-validation failure into your larger program.
 
-For a service or command that needs to handle provider failure explicitly, inspect the typed error rather than substituting an empty successful result:
+For a service or command that needs to represent failure explicitly, preserve the typed error rather than substituting an empty successful result:
 
 ```ts
 import { Effect } from "effect";
@@ -505,13 +505,13 @@ const membershipResult = Taxonomy.recordBelongsTo(
   TaxonName.make("Quercus"),
 ).pipe(
   Effect.match({
-    onFailure: (error) => ({ status: "failed", reason: error.reason._tag }),
+    onFailure: (error) => ({ status: "failed", error }),
     onSuccess: (judgment) => ({ status: "completed", judgment }),
   }),
 );
 ```
 
-This retains the distinction between a failed request and a completed taxonomic judgment. Choose what to log or expose from an error at your application's boundary; provider errors can carry request or response details. Interruption and unexpected defects are also distinct from a successful `Undetermined` judgment.
+This retains the distinction between a failed request and a completed taxonomic judgment. Choose what to log or expose from an error at your application's boundary; errors can carry supplied input or provider request and response details. Interruption and unexpected defects are also distinct from a successful `Undetermined` judgment.
 
 ### Batching and concurrency
 

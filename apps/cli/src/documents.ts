@@ -1,6 +1,6 @@
 import { Schema, type Data } from "effect";
 import { DecisionModel } from "effect/ai";
-import { RecordLabel, TaxonId, TaxonName, TaxonSet } from "robo-taxonomist";
+import { RecordLabel, TaxonId, TaxonIdentityJudgment, TaxonName, TaxonSet } from "robo-taxonomist";
 
 const jsonFields = Schema.Record(Schema.String, Schema.Json);
 const identifier = Schema.StructWithRest(TaxonId, [jsonFields]);
@@ -90,12 +90,10 @@ const quantifier = Schema.Literals(["all", "any", "none"]);
 const taxonDocument = SetDocument.cases.Taxon;
 
 /** Describe whether two taxonomic assignments identify the same taxon. */
-export const IdentityJudgment = Schema.TaggedUnion({
-  SameTaxon: {},
-  DifferentTaxa: {},
-  Undetermined: {},
-  MultipleTaxa: { side },
-}).annotate({ identifier: "IdentityJudgment", description: "A judgment about taxon identity." });
+export const IdentityJudgment = TaxonIdentityJudgment.annotate({
+  identifier: "IdentityJudgment",
+  description: "A judgment about taxon identity.",
+});
 
 /** Describe whether one taxon's organisms belong to another taxon. */
 export const ContainmentJudgment = Schema.TaggedUnion({

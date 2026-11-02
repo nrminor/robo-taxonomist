@@ -1,9 +1,19 @@
 import { expect, it } from "@effect/vitest";
 import { Array, Data, Effect, Layer, Option, Predicate, Record, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
-import { RecordLabel, TaxonId, TaxonName, TaxonSet, Taxonomy } from "../src/index.ts";
+import { Errors, RecordLabel, TaxonId, TaxonName, TaxonSet, Taxonomy } from "../src/index.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
+it.effect("retains the schema error and issue when converting an input failure", () =>
+  Effect.gen(function* () {
+    const original = yield* Schema.decodeEffect(RecordLabel)(" ").pipe(Effect.flip);
+    const error = Errors.InvalidInput.from(original);
+    expect(error.cause).toBe(original);
+    expect(error.cause.issue).toBe(original.issue);
+    expect(Schema.is(Errors.TaxonomyError)(error)).toBe(true);
+  }),
+);
 
 // Exercise the real DecisionModel contract with deterministic transport, not biological accuracy.
 const modelLayer = (
@@ -134,7 +144,11 @@ it.effect(
       ];
       for (const failure of failures) {
         const error = yield* failure;
-        expect(error.reason._tag).toBe("InvalidUserInputError");
+        expect(error._tag).toBe("InvalidInput");
+        expect(Schema.isSchemaError(error.cause)).toBe(true);
+        if (!Schema.isSchemaError(error.cause)) throw new Error("Expected a retained schema error");
+        expect(error.cause.issue).toBeDefined();
+        expect(error.cause.message).toContain("taxonId");
       }
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));

@@ -3,6 +3,13 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effec
 import { RecordLabel, TaxonName } from "robo-taxonomist";
 import * as Documents from "./documents.ts";
 
+/** Report invalid taxonomic input without exposing its validation cause. */
+export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
+  "InvalidInput",
+  { message: Schema.String },
+  { description: "The supplied taxonomic input is invalid.", httpApiStatus: 400 },
+) {}
+
 /** Report a model request failure without exposing provider details. */
 export class ModelFailure extends Schema.TaggedError<ModelFailure>()(
   "ModelFailure",
@@ -137,18 +144,18 @@ const comparisons = HttpApiGroup.make("comparisons").add(
   HttpApiEndpoint.post("identity", "/compare/identity", {
     payload: Schema.Struct({ left: assignment, right: assignment }),
     success: Documents.IdentityJudgment,
-    error: ModelFailure,
+    error: [InvalidInput, ModelFailure],
   }),
   HttpApiEndpoint.post("containment", "/compare/containment", {
     payload: Schema.Struct({ inner: assignment, outer: assignment }),
     success: Documents.ContainmentJudgment,
-    error: ModelFailure,
+    error: [InvalidInput, ModelFailure],
   }),
   HttpApiEndpoint.post("rank", "/compare/rank", {
     payload: Schema.Struct({ left: record, right: record }),
     query: { rank: Documents.TaxonomicRank },
     success: Documents.RankJudgment,
-    error: ModelFailure,
+    error: [InvalidInput, ModelFailure],
   }),
 );
 
@@ -177,7 +184,7 @@ const sets = HttpApiGroup.make("sets").add(
     payload: setPair,
     query: { relation: Documents.SetRelation },
     success: Documents.SetRelationJudgment,
-    error: [InvalidSet, ModelFailure, OutputFailure],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure],
   }),
 );
 
@@ -185,27 +192,27 @@ const membership = HttpApiGroup.make("membership").add(
   HttpApiEndpoint.post("check", "/membership/check", {
     payload: Schema.Struct({ record: Documents.RecordInput, target: SetOperand }),
     success: Documents.MembershipJudgment,
-    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure, CollectionLimit],
   }),
   HttpApiEndpoint.post("partition", "/membership/partition", {
     payload: CollectionInput,
     success: Documents.MembershipPartition,
-    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure, CollectionLimit],
   }),
   HttpApiEndpoint.post("all", "/membership/all", {
     payload: CollectionInput,
     success: Documents.QuantifierJudgment,
-    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure, CollectionLimit],
   }),
   HttpApiEndpoint.post("any", "/membership/any", {
     payload: CollectionInput,
     success: Documents.QuantifierJudgment,
-    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure, CollectionLimit],
   }),
   HttpApiEndpoint.post("none", "/membership/none", {
     payload: CollectionInput,
     success: Documents.QuantifierJudgment,
-    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure, CollectionLimit],
   }),
 );
 
@@ -213,7 +220,7 @@ const classification = HttpApiGroup.make("classification").add(
   HttpApiEndpoint.post("classify", "/classify", {
     payload: Schema.Struct({ records: Schema.Array(Documents.RecordInput), panel: SetOperand }),
     success: Documents.Classification,
-    error: [InvalidSet, ModelFailure, OutputFailure, CollectionLimit],
+    error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure, CollectionLimit],
   }),
 );
 

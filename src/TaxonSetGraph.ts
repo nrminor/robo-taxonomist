@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+import * as Errors from "./errors.ts";
 import { TaxonomicRecord, taxonSetSchema, type Expression, type Taxon } from "./schemas.ts";
 
 const fields = Schema.Union([
@@ -55,7 +56,7 @@ type CompileFn = <K extends string, R extends TaxonomicRecord>(
     readonly taxa: Readonly<Record<K, readonly Taxon<R>[]>>;
     readonly nodeIds: Pick<WeakMap<Expression, number>, "get">;
   },
-  AiError.InvalidUserInputError
+  Errors.TaxonomyError
 >;
 
 /**
@@ -76,11 +77,11 @@ export const compile: CompileFn = Effect.fnUntraced(function* <
   const originals: Expression<R>[] = [];
   const intern = Effect.fnUntraced(function* (
     source: Expression<R>,
-  ): Effect.fn.Return<number, AiError.InvalidUserInputError> {
+  ): Effect.fn.Return<number, Errors.InvalidInput> {
     const previous = references.get(source);
     if (previous !== undefined) return previous;
     const node = yield* Schema.decodeEffect(sourceNodeSchema, { reportInput: false })(source).pipe(
-      Effect.mapError((error) => new AiError.InvalidUserInputError({ description: error.message })),
+      Effect.mapError(Errors.InvalidInput.from),
     );
     const id = Graph.addNode(mutable, node);
     originals.push(source);
@@ -134,10 +135,13 @@ export const compile: CompileFn = Effect.fnUntraced(function* <
       }),
     ),
   );
-  if (!Graph.isAcyclic(graph))
-    return yield* new AiError.InvalidUserInputError({
+  if (!Graph.isAcyclic(graph)) {
+    const reason = new AiError.InvalidUserInputError({
       description: "Taxon-set expression contains a cycle.",
     });
+
+    return yield* AiError.make({ module: "TaxonSetGraph", method: "compile", reason });
+  }
   const roots = Record.map(sources, (source) =>
     Option.fromUndefinedOr(references.get(source)).pipe(Option.getOrThrow),
   );

@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
-import { Array, Data, Effect, Layer, Option } from "effect";
+import { Array, Data, Effect, Layer, Option, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
-import { TaxonId, TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
+import {
+  Errors,
+  TaxonIdentityJudgment,
+  TaxonId,
+  TaxonName,
+  TaxonSet,
+  Taxonomy,
+} from "robo-taxonomist";
 
 const oaks = TaxonSet.of(TaxonName.make("Quercus"));
 
 assert.equal(TaxonSet.union(oaks, oaks)._tag, "Union");
+assert.equal(Taxonomy.TaxonIdentityJudgment, TaxonIdentityJudgment);
+assert.deepEqual(
+  Schema.decodeUnknownSync(TaxonIdentityJudgment)({ _tag: "MultipleTaxa", side: "left" }),
+  TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "left" }),
+);
 
 const assignment = {
   scientificName: TaxonName.make("Quercus robur"),
@@ -50,6 +62,15 @@ const model = Layer.effect(
 const classified = await Effect.runPromise(
   Taxonomy.classifyRecords([record], panel).pipe(Effect.provide(model)),
 );
+const invalid = await Effect.runPromise(
+  Taxonomy.sameTaxon({ taxonId: { taxonomy: "ncbi", id: "" } }, TaxonName.make("Quercus")).pipe(
+    Effect.flip,
+    Effect.provide(model),
+  ),
+);
+assert.equal(Schema.is(Errors.TaxonomyError)(invalid), true);
+assert.equal(invalid._tag, "InvalidInput");
+assert.equal(Schema.isSchemaError(invalid.cause), true);
 assert.equal(classified.panel, panel);
 const row = Array.head(classified.records).pipe(Option.getOrThrow);
 const firstTaxon = Array.head(row.taxa).pipe(Option.getOrThrow);

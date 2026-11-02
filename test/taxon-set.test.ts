@@ -550,7 +550,7 @@ it.effect.each([
       return branch;
     },
   ],
-] as const)("rejects a nominal expression with %s before transport", ([_case, make]) => {
+] as const)("rejects a nominal expression with %s before transport", ([scenario, make]) => {
   const expression = make();
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
@@ -562,9 +562,16 @@ it.effect.each([
     const error = yield* Effect.flip(
       TaxonSet.overlaps(expression, TaxonSet.of(TaxonName.make("B"))),
     );
-    expect(error.module).toBe("TaxonSet");
-    expect(error.method).toBe("makeRelationQuestion");
-    expect(error.reason._tag).toBe("InvalidUserInputError");
+    if (scenario === "cycle") {
+      expect(error).toMatchObject({
+        _tag: "AiError",
+        module: "TaxonSetGraph",
+        method: "compile",
+        reason: { _tag: "InvalidUserInputError" },
+      });
+    } else {
+      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+    }
   }).pipe(Effect.provide(layer));
 });
 
@@ -975,8 +982,7 @@ it.effect.each(operations)(
         // @ts-expect-error Malformed untyped expression lacks the right operand.
         operation(malformed, TaxonSet.of(TaxonName.make("A"))),
       );
-      expect(error.reason._tag).toBe("InvalidUserInputError");
-      expect(error.module).toBe("TaxonSet");
+      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));
   },
@@ -1023,7 +1029,7 @@ it.effect.each(operations)("rejects a missing answer for %s", ([_relation, opera
       }),
     );
     const error = yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)));
-    expect(error.reason._tag).toBe("InvalidOutputError");
+    expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
   }),
 );
 

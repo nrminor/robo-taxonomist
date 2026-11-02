@@ -569,7 +569,7 @@ it.effect("fails when a requested taxon answer is missing", () => {
     const failure = yield* Effect.flip(
       Taxonomy.classifyRecords([RecordLabel.make("subject")], panel),
     );
-    expect(failure.reason._tag).toBe("InvalidOutputError");
+    expect(failure).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
   }).pipe(Effect.provide(layer));
 });
 
@@ -583,8 +583,16 @@ it.effect("rejects malformed records and cyclic or nonnominal panels before tran
     DecisionModel.make({ decide: () => Effect.die("No provider request expected") }),
   );
   return Effect.gen(function* () {
-    const invalid = [
+    const cycleFailure = yield* Effect.flip(
       Taxonomy.classifyRecords([RecordLabel.make("subject")], cyclic),
+    );
+    expect(cycleFailure).toMatchObject({
+      _tag: "AiError",
+      module: "TaxonSetGraph",
+      method: "compile",
+      reason: { _tag: "InvalidUserInputError" },
+    });
+    const invalid = [
       // @ts-expect-error Untyped input lacks an identifying description.
       Taxonomy.classifyRecords([{}], taxon),
       // @ts-expect-error Untyped input bypasses the record-label schema.
@@ -594,7 +602,7 @@ it.effect("rejects malformed records and cyclic or nonnominal panels before tran
     ];
     for (const operation of invalid) {
       const failure = yield* Effect.flip(operation);
-      expect(failure.reason._tag).toBe("InvalidUserInputError");
+      expect(failure).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
     }
   }).pipe(Effect.provide(layer));
 });

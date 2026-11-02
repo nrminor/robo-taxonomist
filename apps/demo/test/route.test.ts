@@ -3,15 +3,97 @@ import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
 import { Deferred, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
+import { Errors } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { POST } from "../src/app/api/classify/route.ts";
 import { makeHandlers } from "../src/server/classify.ts";
-import { PanelResults } from "../src/server/panel-results.ts";
+import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
 vi.mock("server-only", () => ({}));
 vi.stubEnv("DEMO_MODEL", "fixture");
 afterAll(() => vi.unstubAllEnvs());
+
+it.effect("treats invalid server catalog input as a safe internal failure", () =>
+  Effect.gen(function* () {
+    const cause = yield* Schema.decodeUnknownEffect(Schema.Finite)("SECRET catalog").pipe(
+      Effect.flip,
+    );
+    const original = new Errors.InvalidInput({ cause });
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        ManagedRuntime.make(
+          Layer.succeed(PanelResults, {
+            classify: () => Effect.fail(original),
+          }),
+        ),
+      ),
+      (runtime) => runtime.disposeEffect,
+    );
+    const internal = yield* Effect.promise(() =>
+      runtime.runPromise(Effect.flip(classifyPanel("broad"))),
+    );
+    expect(internal).toBe(original);
+    expect(original.cause).toBe(cause);
+    const response = yield* Effect.promise(() =>
+      makeHandlers(runtime).classifyHttp(
+        new Request("http://localhost/api/classify", {
+          method: "POST",
+          body: JSON.stringify({ panelId: "broad" }),
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    const wire = yield* Effect.promise(() => response.text());
+    expect(wire).not.toContain("SECRET");
+    const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
+      JSON.parse(wire),
+    );
+    expect(failure).toEqual(ClassificationFailure.cases.InternalFailure.make({}));
+  }),
+);
+
+it.effect("preserves the provider error until the HTTP boundary", () =>
+  Effect.gen(function* () {
+    const original = new AiError.AiError({
+      module: "SECRET provider",
+      method: "decide",
+      reason: new AiError.RateLimitError({ metadata: { body: "SECRET body" } }),
+    });
+    const model = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({ decide: () => Effect.fail(original) }),
+    );
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
+      (runtime) => runtime.disposeEffect,
+    );
+    const error = yield* Effect.promise(() =>
+      runtime.runPromise(Effect.flip(classifyPanel("broad"))),
+    );
+    expect(error).toBe(original);
+    const response = yield* Effect.promise(() =>
+      makeHandlers(runtime).classifyHttp(
+        new Request("http://localhost/api/classify", {
+          method: "POST",
+          body: JSON.stringify({ panelId: "broad" }),
+        }),
+      ),
+    );
+    expect(response.status).toBe(503);
+    const wire = yield* Effect.promise(() => response.text());
+    expect(wire).not.toContain("SECRET");
+    const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
+      JSON.parse(wire),
+    );
+    expect(failure).toEqual(
+      ClassificationFailure.cases.ModelFailure.make({
+        reason: PublicModelReason.cases.RateLimitError.make({}),
+        retryable: true,
+      }),
+    );
+  }),
+);
 
 const observedFixture = (before: () => Effect.Effect<void, AiError.AiError>) =>
   Layer.effect(

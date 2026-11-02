@@ -165,9 +165,7 @@ const relation = Command.make(
       overlap: TaxonSet.overlaps,
       disjoint: TaxonSet.disjoint,
     };
-    const result = yield* operations[relation](leftSet, rightSet).pipe(
-      Effect.mapError(Model.modelFailure),
-    );
+    const result = yield* operations[relation](leftSet, rightSet);
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeRelation(result, noHeader),
@@ -175,7 +173,7 @@ const relation = Command.make(
       }),
     );
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withAlias("rel"),
   Command.withShortDescription("Test a relationship between two sets."),

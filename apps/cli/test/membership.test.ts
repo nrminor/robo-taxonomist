@@ -652,7 +652,7 @@ it.effect(
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       };
       expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
-      expect(JSON.stringify(result.stderr)).toContain("decision model request failed");
+      expect(JSON.stringify(result.stderr)).toContain("unusable answer");
     }),
 );
 

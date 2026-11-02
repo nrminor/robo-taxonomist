@@ -38,11 +38,7 @@ export const classify = Command.make(
     const groups = records.pipe(
       Stream.grouped(groupSize),
       Stream.orElseIfEmpty(() => Stream.succeed<readonly Inputs.InputRecord[]>([])),
-      Stream.mapEffect((group) =>
-        Taxonomy.classifyRecords(group, panel, { execution }).pipe(
-          Effect.mapError(Model.modelFailure),
-        ),
-      ),
+      Stream.mapEffect((group) => Taxonomy.classifyRecords(group, panel, { execution })),
     );
 
     const render = Match.value(format).pipe(
@@ -53,7 +49,7 @@ export const classify = Command.make(
     );
 
     yield* render;
-  }),
+  }, Effect.mapError(Model.cliFailure)),
 ).pipe(
   Command.withAlias("cls"),
   Command.withShortDescription("Classify records against a target panel."),

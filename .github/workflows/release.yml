@@ -45,6 +45,9 @@ jobs:
       - name: Check source and tooling
         run: mise run check
 
+      - name: Smoke-test standalone CLI
+        run: mise run cli:smoke
+
       - name: Pack library
         run: mise run pack
 

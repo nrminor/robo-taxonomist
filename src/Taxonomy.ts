@@ -24,6 +24,7 @@ import {
   type Scored,
 } from "./AcceptancePolicy.ts";
 import type { TaxonSet } from "./TaxonSet.ts";
+import * as Errors from "./errors.ts";
 import {
   CollectionExecution,
   RecordLabel,
@@ -135,13 +136,13 @@ type CompareRecordsAtRankFn = (
   right: RecordInput,
   rank: TaxonomicRank,
   options?: JudgmentOptions,
-) => Effect.Effect<RankComparisonJudgment, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<RankComparisonJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 
 type CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
   options?: JudgmentOptions,
-) => Effect.Effect<RankComparisonJudgment, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<RankComparisonJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -328,15 +329,7 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
       left,
       right,
       rank,
-    }).pipe(
-      Effect.mapError((error) =>
-        AiError.make({
-          module: "Taxonomy",
-          method: "sameTaxonAtRank",
-          reason: new AiError.InvalidUserInputError({ description: error.message }),
-        }),
-      ),
-    );
+    }).pipe(Effect.mapError(Errors.InvalidInput.from));
     const definition = makeRankComparisonQuestion(encoded);
     const { answers } = yield* DecisionModel.decide(definition, { input: null });
 
@@ -482,7 +475,16 @@ export const sameGenus: CompareRecordsFn = (
   options: JudgmentOptions = {},
 ) => sameTaxonAtRank(left, right, "genus", options);
 
-const identityJudgmentSchema = Schema.TaggedUnion({
+/**
+ * Construct or validate an identity judgment using the same cases returned by sameTaxon.
+ *
+ * @category schemas
+ * @since 0.4.0
+ * @example
+ * import { TaxonIdentityJudgment } from "robo-taxonomist";
+ * export const same = TaxonIdentityJudgment.cases.SameTaxon.make({});
+ */
+export const TaxonIdentityJudgment = Schema.TaggedUnion({
   SameTaxon: {},
   DifferentTaxa: {},
   MultipleTaxa: { side: Schema.Literals(["left", "right", "both"]) },
@@ -510,13 +512,13 @@ const identityJudgmentSchema = Schema.TaggedUnion({
  *   }),
  * );
  */
-export type TaxonIdentityJudgment = typeof identityJudgmentSchema.Type;
+export type TaxonIdentityJudgment = typeof TaxonIdentityJudgment.Type;
 
 type CompareTaxaFn = (
   left: TaxonName | TaxonomicRecord,
   right: TaxonName | TaxonomicRecord,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonIdentityJudgment, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<TaxonIdentityJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 
 const scalarInputSchema = Schema.Struct({ left: TaxonomicRecord, right: TaxonomicRecord });
 const asTaxonomicRecord = (input: TaxonName | TaxonomicRecord): TaxonomicRecord =>
@@ -557,18 +559,18 @@ const interpretIdentity = (answer: IdentityAnswer, policy: AcceptancePolicy) => 
     answer.label === "undetermined" ||
     !accepts(answer.probabilities[answer.label], alternatives, policy)
   )
-    return identityJudgmentSchema.cases.Undetermined.make({});
+    return TaxonIdentityJudgment.cases.Undetermined.make({});
   return Match.value(answer.label).pipe(
-    Match.when("same", () => identityJudgmentSchema.cases.SameTaxon.make({})),
-    Match.when("different", () => identityJudgmentSchema.cases.DifferentTaxa.make({})),
+    Match.when("same", () => TaxonIdentityJudgment.cases.SameTaxon.make({})),
+    Match.when("different", () => TaxonIdentityJudgment.cases.DifferentTaxa.make({})),
     Match.when("multipleLeft", () =>
-      identityJudgmentSchema.cases.MultipleTaxa.make({ side: "left" }),
+      TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "left" }),
     ),
     Match.when("multipleRight", () =>
-      identityJudgmentSchema.cases.MultipleTaxa.make({ side: "right" }),
+      TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "right" }),
     ),
     Match.when("multipleBoth", () =>
-      identityJudgmentSchema.cases.MultipleTaxa.make({ side: "both" }),
+      TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "both" }),
     ),
     Match.exhaustive,
   );
@@ -593,15 +595,7 @@ export const sameTaxon: CompareTaxaFn = Effect.fn("Taxonomy.sameTaxon")(function
   const encoded = yield* Schema.encodeEffect(scalarInputSchema)({
     left: asTaxonomicRecord(left),
     right: asTaxonomicRecord(right),
-  }).pipe(
-    Effect.mapError((error) =>
-      AiError.make({
-        module: "Taxonomy",
-        method: "sameTaxon",
-        reason: new AiError.InvalidUserInputError({ description: error.message }),
-      }),
-    ),
-  );
+  }).pipe(Effect.mapError(Errors.InvalidInput.from));
   const { answers } = yield* DecisionModel.decide(makeIdentityQuestion(encoded), { input: null });
   return interpretIdentity(answers.identity, options.policy ?? defaultPolicy);
 });
@@ -645,7 +639,7 @@ type TaxonWithinFn = (
   inner: TaxonName | TaxonomicRecord,
   outer: TaxonName | TaxonomicRecord,
   options?: JudgmentOptions,
-) => Effect.Effect<TaxonContainmentJudgment, AiError.AiError, DecisionModel.DecisionModel>;
+) => Effect.Effect<TaxonContainmentJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 
 const makeContainmentQuestion = (input: typeof scalarInputSchema.Encoded) =>
   Decision.make({
@@ -753,15 +747,7 @@ export const taxonWithin: TaxonWithinFn = Effect.fn("Taxonomy.taxonWithin")(func
   const encoded = yield* Schema.encodeEffect(scalarInputSchema)({
     left: asTaxonomicRecord(inner),
     right: asTaxonomicRecord(outer),
-  }).pipe(
-    Effect.mapError((error) =>
-      AiError.make({
-        module: "Taxonomy",
-        method: "taxonWithin",
-        reason: new AiError.InvalidUserInputError({ description: error.message }),
-      }),
-    ),
-  );
+  }).pipe(Effect.mapError(Errors.InvalidInput.from));
   const { answers } = yield* DecisionModel.decide(makeContainmentQuestion(encoded), {
     input: null,
   });
@@ -822,21 +808,15 @@ const isTaxonSet = <T extends TaxonomicRecord>(target: T | TaxonSet<T>): target 
 const prepareMembershipTarget = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
   target: MembershipTarget<T>,
 ) {
-  const invalid = (description: string) =>
-    AiError.make({
-      module: "Taxonomy",
-      method: "makeMembershipBatchQuestion",
-      reason: new AiError.InvalidUserInputError({ description }),
-    });
   if (!Predicate.isString(target) && !isTaxonSet(target)) {
     yield* Schema.encodeEffect(TaxonomicRecord)(target).pipe(
-      Effect.mapError((error) => invalid(error.message)),
+      Effect.mapError(Errors.InvalidInput.from),
     );
   }
   let expression: TaxonSet<T | { readonly scientificName: TaxonName }>;
   if (Predicate.isString(target)) {
     const scientificName = yield* Schema.decodeEffect(TaxonName)(target).pipe(
-      Effect.mapError((error) => invalid(error.message)),
+      Effect.mapError(Errors.InvalidInput.from),
     );
     expression = new Taxon({ record: { scientificName } });
   } else {
@@ -845,20 +825,12 @@ const prepareMembershipTarget = Effect.fnUntraced(function* <T extends Taxonomic
   const compiled = yield* TaxonSetGraph.compile<
     "target",
     T | { readonly scientificName: TaxonName }
-  >({ target: expression }).pipe(
-    Effect.mapError((reason) =>
-      AiError.make({
-        module: "Taxonomy",
-        method: "makeMembershipBatchQuestion",
-        reason,
-      }),
-    ),
-  );
+  >({ target: expression });
   const targetTaxa = compiled.taxa.target;
   const input = yield* Schema.encodeEffect(TaxonSetGraph.membershipTargetSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
-  }).pipe(Effect.mapError((error) => invalid(error.message)));
+  }).pipe(Effect.mapError(Errors.InvalidInput.from));
   const membershipChoices = {
     member: "Everything represented by the record belongs.",
     notMember: "Everything represented by the record is outside.",
@@ -887,13 +859,7 @@ const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
   prepared: Effect.Success<ReturnType<typeof prepareMembershipTarget>>,
 ) {
   const encoded = yield* Schema.encodeEffect(batchRecordsSchema)(records).pipe(
-    Effect.mapError((error) =>
-      AiError.make({
-        module: "Taxonomy",
-        method: "makeMembershipBatchQuestion",
-        reason: new AiError.InvalidUserInputError({ description: error.message }),
-      }),
-    ),
+    Effect.mapError(Errors.InvalidInput.from),
   );
   return Decision.make({
     input: Schema.toEncoded(TaxonSetGraph.membershipTargetSchema),
@@ -979,22 +945,26 @@ export function recordBelongsTo<T extends TaxonomicRecord>(
   record: RecordInput,
   target: T | TaxonSet<T>,
   options?: JudgmentOptions,
-): Effect.Effect<TaxonMembershipJudgment<T>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<TaxonMembershipJudgment<T>, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 export function recordBelongsTo(
   record: RecordInput,
   target: TaxonName,
   options?: JudgmentOptions,
-): Effect.Effect<TaxonMembershipJudgment<Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<TaxonMembershipJudgment<Named>, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 export function recordBelongsTo<T extends TaxonomicRecord = TaxonomicRecord>(
   record: RecordInput,
   target: MembershipTarget<T>,
   options?: JudgmentOptions,
-): Effect.Effect<TaxonMembershipJudgment<T | Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  TaxonMembershipJudgment<T | Named>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function recordBelongsTo(
   record: RecordInput,
   target: MembershipTarget,
   options?: JudgmentOptions,
-): Effect.Effect<TaxonMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel> {
+): Effect.Effect<TaxonMembershipJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel> {
   return recordBelongsToEffect(record, target, options);
 }
 
@@ -1170,7 +1140,7 @@ type ClassifyRecordsFn = <R extends RecordInput, T extends TaxonomicRecord = Tax
     }[];
     readonly usage: readonly DecisionModel.DecisionUsage[];
   },
-  AiError.AiError,
+  Errors.TaxonomyError,
   DecisionModel.DecisionModel
 >;
 
@@ -1206,17 +1176,7 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
   R extends RecordInput,
   T extends TaxonomicRecord,
 >(records: readonly R[], panel: TaxonSet<T>, options: CollectionOptions = {}) {
-  const invalid = (description: string) =>
-    AiError.make({
-      module: "Taxonomy",
-      method: "classifyRecords",
-      reason: new AiError.InvalidUserInputError({ description }),
-    });
-  const graph = yield* TaxonSetGraph.compile({ panel }).pipe(
-    Effect.mapError((reason) =>
-      AiError.make({ module: "Taxonomy", method: "classifyRecords", reason }),
-    ),
-  );
+  const graph = yield* TaxonSetGraph.compile({ panel });
   if (records.length === 0) return { panel, records: [], usage: [] };
   const panelTaxa = taxaOf(panel);
   if (panelTaxa.length === 0) {
@@ -1231,7 +1191,7 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
   const execution = options.execution ?? defaultCollectionExecution;
   const classifyBatch = Effect.fnUntraced(function* (batch: readonly R[]) {
     const encoded = yield* Schema.encodeEffect(Schema.Array(recordInputSchema))(batch).pipe(
-      Effect.mapError((error) => invalid(error.message)),
+      Effect.mapError(Errors.InvalidInput.from),
     );
     const rows = batch.map((record, row) => ({
       record,
@@ -1254,7 +1214,7 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
     });
     const encodedTaxa = yield* Schema.encodeEffect(Schema.Array(TaxonomicRecord))(
       panelTaxa.map((taxon) => taxon.record),
-    ).pipe(Effect.mapError((error) => invalid(error.message)));
+    ).pipe(Effect.mapError(Errors.InvalidInput.from));
     const response = yield* DecisionModel.decide(definition, {
       input: {
         instructions: taxonMatchInstructions,
@@ -1399,12 +1359,20 @@ export function partitionRecordsByMembership<A extends RecordInput, T extends Ta
   records: readonly A[],
   target: T | TaxonSet<T>,
   options?: CollectionOptions,
-): Effect.Effect<RecordMembershipPartition<A, T>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  RecordMembershipPartition<A, T>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function partitionRecordsByMembership<A extends RecordInput>(
   records: readonly A[],
   target: TaxonName,
   options?: CollectionOptions,
-): Effect.Effect<RecordMembershipPartition<A, Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  RecordMembershipPartition<A, Named>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function partitionRecordsByMembership<
   A extends RecordInput,
   T extends TaxonomicRecord = TaxonomicRecord,
@@ -1414,14 +1382,14 @@ export function partitionRecordsByMembership<
   options?: CollectionOptions,
 ): Effect.Effect<
   RecordMembershipPartition<A, T | Named>,
-  AiError.AiError,
+  Errors.TaxonomyError,
   DecisionModel.DecisionModel
 >;
 export function partitionRecordsByMembership<A extends RecordInput>(
   records: readonly A[],
   target: MembershipTarget,
   options?: CollectionOptions,
-): Effect.Effect<RecordMembershipPartition<A>, AiError.AiError, DecisionModel.DecisionModel> {
+): Effect.Effect<RecordMembershipPartition<A>, Errors.TaxonomyError, DecisionModel.DecisionModel> {
   return partitionRecordsByMembershipEffect(records, target, options);
 }
 
@@ -1519,12 +1487,12 @@ export function groupRecordsByTaxa<A extends RecordInput, T extends TaxonomicRec
   records: readonly A[],
   targets: readonly (T | TaxonSet<T>)[],
   options?: CollectionOptions,
-): Effect.Effect<RecordsGroupedByTaxa<A, T>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<RecordsGroupedByTaxa<A, T>, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 export function groupRecordsByTaxa<A extends RecordInput>(
   records: readonly A[],
   targets: readonly TaxonName[],
   options?: CollectionOptions,
-): Effect.Effect<RecordsGroupedByTaxa<A, Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<RecordsGroupedByTaxa<A, Named>, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 export function groupRecordsByTaxa<
   A extends RecordInput,
   T extends TaxonomicRecord = TaxonomicRecord,
@@ -1532,12 +1500,16 @@ export function groupRecordsByTaxa<
   records: readonly A[],
   targets: readonly MembershipTarget<T>[],
   options?: CollectionOptions,
-): Effect.Effect<RecordsGroupedByTaxa<A, T | Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  RecordsGroupedByTaxa<A, T | Named>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function groupRecordsByTaxa<A extends RecordInput>(
   records: readonly A[],
   targets: readonly MembershipTarget[],
   options?: CollectionOptions,
-): Effect.Effect<RecordsGroupedByTaxa<A>, AiError.AiError, DecisionModel.DecisionModel> {
+): Effect.Effect<RecordsGroupedByTaxa<A>, Errors.TaxonomyError, DecisionModel.DecisionModel> {
   return groupRecordsByTaxaEffect(records, targets, options);
 }
 
@@ -1618,7 +1590,7 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
   options: CollectionOptions = {},
 ): Effect.fn.Return<
   CollectionMembershipJudgment<T | { readonly scientificName: TaxonName }>,
-  AiError.AiError,
+  Errors.TaxonomyError,
   DecisionModel.DecisionModel
 > {
   if (!Array.isReadonlyArrayNonEmpty(records)) return completedScanJudgment(quantifier);
@@ -1749,26 +1721,34 @@ export function allRecordsBelongTo<T extends TaxonomicRecord>(
   records: readonly RecordInput[],
   target: T | TaxonSet<T>,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment<T>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  CollectionMembershipJudgment<T>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function allRecordsBelongTo(
   records: readonly RecordInput[],
   target: TaxonName,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment<Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  CollectionMembershipJudgment<Named>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function allRecordsBelongTo<T extends TaxonomicRecord = TaxonomicRecord>(
   records: readonly RecordInput[],
   target: MembershipTarget<T>,
   options?: CollectionOptions,
 ): Effect.Effect<
   CollectionMembershipJudgment<T | Named>,
-  AiError.AiError,
+  Errors.TaxonomyError,
   DecisionModel.DecisionModel
 >;
 export function allRecordsBelongTo(
   records: readonly RecordInput[],
   target: MembershipTarget,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel> {
+): Effect.Effect<CollectionMembershipJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel> {
   return allRecordsBelongToEffect(records, target, options);
 }
 
@@ -1795,26 +1775,34 @@ export function anyRecordBelongsTo<T extends TaxonomicRecord>(
   records: readonly RecordInput[],
   target: T | TaxonSet<T>,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment<T>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  CollectionMembershipJudgment<T>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function anyRecordBelongsTo(
   records: readonly RecordInput[],
   target: TaxonName,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment<Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  CollectionMembershipJudgment<Named>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function anyRecordBelongsTo<T extends TaxonomicRecord = TaxonomicRecord>(
   records: readonly RecordInput[],
   target: MembershipTarget<T>,
   options?: CollectionOptions,
 ): Effect.Effect<
   CollectionMembershipJudgment<T | Named>,
-  AiError.AiError,
+  Errors.TaxonomyError,
   DecisionModel.DecisionModel
 >;
 export function anyRecordBelongsTo(
   records: readonly RecordInput[],
   target: MembershipTarget,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel> {
+): Effect.Effect<CollectionMembershipJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel> {
   return anyRecordBelongsToEffect(records, target, options);
 }
 
@@ -1841,26 +1829,34 @@ export function noRecordBelongsTo<T extends TaxonomicRecord>(
   records: readonly RecordInput[],
   target: T | TaxonSet<T>,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment<T>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  CollectionMembershipJudgment<T>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function noRecordBelongsTo(
   records: readonly RecordInput[],
   target: TaxonName,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment<Named>, AiError.AiError, DecisionModel.DecisionModel>;
+): Effect.Effect<
+  CollectionMembershipJudgment<Named>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+>;
 export function noRecordBelongsTo<T extends TaxonomicRecord = TaxonomicRecord>(
   records: readonly RecordInput[],
   target: MembershipTarget<T>,
   options?: CollectionOptions,
 ): Effect.Effect<
   CollectionMembershipJudgment<T | Named>,
-  AiError.AiError,
+  Errors.TaxonomyError,
   DecisionModel.DecisionModel
 >;
 export function noRecordBelongsTo(
   records: readonly RecordInput[],
   target: MembershipTarget,
   options?: CollectionOptions,
-): Effect.Effect<CollectionMembershipJudgment, AiError.AiError, DecisionModel.DecisionModel> {
+): Effect.Effect<CollectionMembershipJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel> {
   return noRecordBelongsToEffect(records, target, options);
 }
 

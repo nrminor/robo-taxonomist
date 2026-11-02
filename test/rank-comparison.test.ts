@@ -223,9 +223,7 @@ it.effect("validates the original rank and operands before provider transport", 
     ];
     for (const request of invalidRequests) {
       const error = yield* Effect.flip(request);
-      expect(error.module).toBe("Taxonomy");
-      expect(error.method).toBe("sameTaxonAtRank");
-      expect(error.reason._tag).toBe("InvalidUserInputError");
+      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
     }
     expect(calls).toBe(0);
   }).pipe(Effect.provide(modelLayer));
@@ -750,7 +748,7 @@ it.effect("keeps invalid provider output in the error channel", () =>
       Taxonomy.sameSpecies(RecordLabel.make("Voucher A17"), RecordLabel.make("Voucher B42")),
     );
 
-    expect(error.reason._tag).toBe("InvalidOutputError");
+    expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
   }).pipe(
     Effect.provide(
       classificationLayer({

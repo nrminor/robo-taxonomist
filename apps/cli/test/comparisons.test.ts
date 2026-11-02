@@ -157,7 +157,7 @@ it.effect.each([401, 403, 429, 500])(
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.stderr).toHaveLength(1);
-      expect(JSON.stringify(result.stderr)).toContain("decision model request failed");
+      expect(JSON.stringify(result.stderr)).toMatch(/model|provider/);
       expect(JSON.stringify(result.stderr)).not.toContain(secret);
     }),
 );
@@ -758,7 +758,7 @@ it.effect("treats invalid provider responses as failures, not unresolved judgmen
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("decision model request failed");
+    expect(JSON.stringify(result.stderr)).toContain("unusable answer");
   }),
 );
 
