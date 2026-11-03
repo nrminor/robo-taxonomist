@@ -18,13 +18,8 @@ import {
   Schema,
 } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
-import { TaxonName, Taxonomy } from "robo-taxonomist";
-import {
-  ClassificationFailure,
-  MatchJudgment,
-  PanelResponse,
-  PublicModelReason,
-} from "../src/lib/contract.ts";
+import { TaxonMatchJudgment, TaxonName, Taxonomy } from "robo-taxonomist";
+import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 import * as ClefModel from "../src/server/clef-model.ts";
@@ -232,8 +227,7 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
     );
     expect(match).toMatchObject({
       targetId: "fungi",
-      judgment: MatchJudgment.cases.NotMatched.make({}),
-      support: 0.02,
+      judgment: TaxonMatchJudgment.cases.NotMatched.make({ support: 0.95 }),
       answer: { label: "noMatch", confidence: 0.8 },
     });
     expect(questionCounts).toEqual([36, 36, 36, 36]);

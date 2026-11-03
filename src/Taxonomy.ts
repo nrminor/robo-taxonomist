@@ -1,4 +1,3 @@
-import * as AiError from "effect/ai/AiError";
 import * as Decision from "effect/ai/Decision";
 import * as DecisionModel from "effect/ai/DecisionModel";
 import * as Array from "effect/Array";
@@ -988,23 +987,31 @@ type CollectionOptions = {
   readonly execution?: CollectionExecution;
 };
 
-const Support = UnitInterval.pipe(Schema.brand("Support"));
-type Support = typeof Support.Type;
-
-const taxonMatchJudgmentSchema = Schema.TaggedUnion({
-  Matched: {},
-  NotMatched: {},
+/**
+ * Construct or validate a classification judgment with its accepted answer's support.
+ * Undetermined reports no accepted classification and carries no accepted support.
+ *
+ * @category schemas
+ * @since 0.5.0
+ * @example
+ * import { TaxonMatchJudgment } from "robo-taxonomist";
+ * export const within = TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.97 });
+ */
+export const TaxonMatchJudgment = Schema.TaggedUnion({
+  SameTaxon: { support: UnitInterval },
+  WithinTaxon: { support: UnitInterval },
+  NotMatched: { support: UnitInterval },
   Undetermined: {},
 });
 
 /**
- * Report an accepted match, an accepted negative answer, or an unresolved comparison.
- * Low match support alone does not establish NotMatched.
+ * Report an accepted relationship, an accepted negative answer, or no accepted classification.
+ * NotMatched requires an accepted model-selected noMatch answer.
  *
  * @category models
  * @since 0.2.0
  */
-export type TaxonMatchJudgment = typeof taxonMatchJudgmentSchema.Type;
+export type TaxonMatchJudgment = typeof TaxonMatchJudgment.Type;
 
 const taxonMatchCriteria = {
   sameTaxon: "A match: the record identifies this taxon, including resolved synonyms.",
@@ -1017,7 +1024,7 @@ type TaxonMatchAnswer = Decision.ClassifyAnswer<keyof typeof taxonMatchCriteria>
 
 /**
  * Keep an original record and taxon node with their scored match judgment.
- * Support is a finite number in [0, 1], combining same-taxon and broader-taxon answers.
+ * Accepted judgments carry the selected answer's support as a finite number in [0, 1].
  * The complete validated model answer is retained without modification.
  * The record's concrete type and caller metadata remain available through R.
  *
@@ -1030,12 +1037,15 @@ class TaxonMatch<
 > extends Data.Class<{
   readonly record: R;
   readonly taxon: Taxon<T>;
-  readonly support: Support;
   readonly judgment: TaxonMatchJudgment;
   readonly answer: TaxonMatchAnswer;
 }> {}
 
 export type { TaxonMatch };
+
+const isPositiveMatch = Predicate.Struct({
+  judgment: TaxonMatchJudgment.isAnyOf(["SameTaxon", "WithinTaxon"]),
+});
 
 const taxonMatchInstructions =
   "Assess whether each record can be classified under each supplied taxon. " +
@@ -1051,33 +1061,35 @@ const taxonMatchInputSchema = Schema.Struct({
   panel: Schema.Natural,
 });
 
-const makeTaxonMatch = Effect.fnUntraced(function* <
-  R extends RecordInput,
-  T extends TaxonomicRecord,
->(record: R, taxon: Taxon<T>, answer: TaxonMatchAnswer, policy: AcceptancePolicy) {
-  const p = answer.probabilities;
-  const sameOrWithin = sumProbabilities([p.sameTaxon, p.withinTaxon]);
-  const total = sumProbabilities([sameOrWithin, p.noMatch, p.undetermined]);
-  const support = yield* Schema.decodeEffect(Support)(sameOrWithin / total).pipe(
-    Effect.mapError((error) =>
-      AiError.make({
-        module: "Taxonomy",
-        method: "classifyRecords",
-        reason: new AiError.InvalidOutputError({ description: error.message }),
-      }),
-    ),
+const interpretTaxonMatch = (answer: TaxonMatchAnswer, policy: AcceptancePolicy) => {
+  const support = Struct.get(answer.probabilities, answer.label);
+  const alternatives = pipe(
+    Record.toEntries(answer.probabilities),
+    Iterable.filter(([label]) => label !== answer.label),
+    Iterable.map(([, probability]) => probability),
   );
-  const cases = taxonMatchJudgmentSchema.cases;
-  const candidates: Array.NonEmptyReadonlyArray<Scored<TaxonMatchJudgment>> = [
-    { answer: cases.Matched.make({}), support },
-    { answer: cases.NotMatched.make({}), support: p.noMatch / total },
-    { answer: cases.Undetermined.make({}), support: p.undetermined / total },
-  ];
-  const judgment = select(candidates, policy).pipe(
-    Option.getOrElse(() => cases.Undetermined.make({})),
+  const cases = TaxonMatchJudgment.cases;
+  if (!accepts(support, alternatives, policy)) return cases.Undetermined.make({});
+
+  return Match.value(answer.label).pipe(
+    Match.literalsExhaustive({
+      sameTaxon: () => cases.SameTaxon.make({ support }),
+      withinTaxon: () => cases.WithinTaxon.make({ support }),
+      noMatch: () => cases.NotMatched.make({ support }),
+      undetermined: () => cases.Undetermined.make({}),
+    }),
   );
-  return new TaxonMatch({ record, taxon, support, judgment, answer });
-});
+};
+
+const makeTaxonMatch = <R extends RecordInput, T extends TaxonomicRecord>(
+  record: R,
+  taxon: Taxon<T>,
+  answer: TaxonMatchAnswer,
+  policy: AcceptancePolicy,
+) => {
+  const judgment = interpretTaxonMatch(answer, policy);
+  return new TaxonMatch({ record, taxon, judgment, answer });
+};
 
 const taxaOf = <T extends TaxonomicRecord>(panel: TaxonSet<T>) => {
   const taxa: Taxon<T>[] = [];
@@ -1146,8 +1158,11 @@ type ClassifyRecordsFn = <R extends RecordInput, T extends TaxonomicRecord = Tax
 
 /**
  * Rank supported taxonomic matches for each record against a panel expression.
+ * Accept the model-selected relationship using its individual support and margin.
+ * SameTaxon and WithinTaxon establish positive classifications; NotMatched accepts noMatch.
+ * Undetermined reports no accepted classification while retaining the complete scored answer.
  * Several taxa can match. Each record's taxa retains all outcomes in supplied
- * occurrence order; ranking contains accepted matches in descending support order.
+ * occurrence order; ranking contains accepted positive relationships in descending support order.
  * Ties retain occurrence order. Original records, metadata and taxon nodes are preserved.
  * Subtraction removes taxon occurrences from ranking options; nested subtraction can restore them.
  * Every question receives the complete panel expression.
@@ -1224,18 +1239,18 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
         panel: graph.roots.panel,
       },
     });
-    const classified = yield* Effect.forEach(rows, (row) =>
-      Effect.gen(function* () {
-        const taxa = yield* Effect.forEach(row.taxa, ({ taxon, key }) =>
-          makeTaxonMatch(row.record, taxon, Struct.get(response.answers, key), policy),
-        );
-        const ranking = Array.sort(
-          taxa.filter((match) => taxonMatchJudgmentSchema.guards.Matched(match.judgment)),
-          Order.mapInput(Order.flip(Order.Number), (match: TaxonMatch<R, T>) => match.support),
-        );
-        return { record: row.record, taxa, ranking };
-      }),
-    );
+    const classified = rows.map((row) => {
+      const taxa = row.taxa.map(({ taxon, key }) => {
+        const answer = Struct.get(response.answers, key);
+        return makeTaxonMatch(row.record, taxon, answer, policy);
+      });
+      const accepted = taxa.filter((match) => isPositiveMatch(match));
+      const ranking = Array.sort(
+        accepted,
+        Order.Struct({ judgment: Order.Struct({ support: Order.flip(Order.Number) }) }),
+      );
+      return { record: row.record, taxa, ranking };
+    });
     return { records: classified, usage: response.usage };
   });
   const completed = yield* Effect.forEach(

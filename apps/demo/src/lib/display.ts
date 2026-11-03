@@ -1,6 +1,7 @@
 import { Array, Match, Option, Schema } from "effect";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { panels, records } from "./catalog.ts";
-import { MatchJudgment, type PanelResponse } from "./contract.ts";
+import * as Contract from "./contract.ts";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 2 });
 const sampleWeight = records.reduce((sum, record) => sum + record.abundance, 0);
@@ -26,7 +27,7 @@ export const Comparison = Schema.TaggedUnion({
 
 /** One published response and its derived findings; response identity is preserved. */
 export interface Display {
-  readonly response: PanelResponse;
+  readonly response: Contract.PanelResponse;
   readonly findings: PanelFindings;
   readonly matchedRecords: number;
   readonly comparison: typeof Comparison.Type;
@@ -35,7 +36,7 @@ export interface Display {
 /** Publish a new response, retaining the display unchanged for the same response object. */
 export const replaceDisplayed = (
   previous: Display | undefined,
-  response: PanelResponse,
+  response: Contract.PanelResponse,
 ): Display => {
   if (previous?.response === response) return previous;
   const findings = panelFindings(response);
@@ -65,22 +66,31 @@ export const replaceDisplayed = (
   };
 };
 
-/** Shared labels, semantic colors, and strongest-judgment priority for every view. */
-export const judgmentPresentation = MatchJudgment.match({
-  Matched: () => ({ label: "Matches", priority: 2, style: { color: "var(--color-matched)" } }),
+/** Per-target accepted relationship and its support, when available. */
+export const judgmentPresentation = TaxonMatchJudgment.match({
+  SameTaxon: ({ support }) => ({
+    label: "Same taxon",
+    support,
+    style: { color: "var(--color-matched)" },
+  }),
+  WithinTaxon: ({ support }) => ({
+    label: "Within target taxon",
+    support,
+    style: { color: "var(--color-matched)" },
+  }),
   Undetermined: () => ({
-    label: "Uncertain",
-    priority: 1,
+    label: "No accepted classification",
+    support: undefined,
     style: { color: "var(--color-uncertain)" },
   }),
-  NotMatched: () => ({
-    label: "No match",
-    priority: 0,
+  NotMatched: ({ support }) => ({
+    label: "Not a match",
+    support,
     style: { color: "var(--color-unmatched)" },
   }),
 });
 
-const panelFindings = (response: PanelResponse) => {
+const panelFindings = (response: Contract.PanelResponse) => {
   const panel = Option.getOrThrow(
     Array.findFirst(panels, (entry) => entry.id === response.panelId),
   );
@@ -88,15 +98,12 @@ const panelFindings = (response: PanelResponse) => {
     record: Option.getOrThrow(Array.findFirst(records, (record) => record.id === row.recordId)),
     acceptedTargets: new Set(
       row.matches
-        .filter((match) => MatchJudgment.guards.Matched(match.judgment))
+        .filter(
+          (match) =>
+            TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
+            TaxonMatchJudgment.guards.WithinTaxon(match.judgment),
+        )
         .map((match) => match.targetId),
-    ),
-    judgment: row.matches.reduce(
-      (judgment: MatchJudgment, match) =>
-        judgmentPresentation(match.judgment).priority > judgmentPresentation(judgment).priority
-          ? match.judgment
-          : judgment,
-      MatchJudgment.cases.NotMatched.make({}),
     ),
     matches: row.matches.map((match) => ({
       ...match,
@@ -132,7 +139,7 @@ const panelFindings = (response: PanelResponse) => {
 
 /** Catalog-resolved response with accepted sets and catalog-ordered composition segments. */
 export type PanelFindings = ReturnType<typeof panelFindings>;
-/** One response row with resolved targets, accepted IDs, and its strongest judgment. */
+/** One response row with resolved targets and accepted IDs. */
 export type RecordFinding = PanelFindings["records"][number];
 /** Accepted record shares and cumulative offsets, both in percentage points (0–100). */
 export type TargetComposition = PanelFindings["compositions"][number];

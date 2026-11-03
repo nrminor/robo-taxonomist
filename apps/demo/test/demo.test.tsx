@@ -253,14 +253,14 @@ it("counts the full abundance for overlapping matches and lets a genus record ru
     .element(
       comparisons
         .getByRole("group", { name: "Saccharomyces cerevisiae", exact: true })
-        .getByText("No match", { exact: true }),
+        .getByText("Not a match", { exact: true }),
     )
     .toBeVisible();
   await expect
     .element(
       comparisons
         .getByRole("group", { name: "Saccharomyces", exact: true })
-        .getByText("Matches", { exact: true }),
+        .getByText("Same taxon", { exact: true }),
     )
     .toBeVisible();
 });
@@ -289,7 +289,9 @@ it("shows optional provider confidence separately from match support", async () 
   const fungi = comparisons.getByRole("group", { name: "Fungi", exact: true });
   await fungi.getByText("Answer probabilities", { exact: true }).click();
   await expect.element(fungi.getByText("Answer confidence: 80%", { exact: true })).toBeVisible();
-  await expect.element(fungi.getByText("Match support: 95%", { exact: true })).toBeVisible();
+  await expect
+    .element(fungi.getByText("Accepted answer support: 94%", { exact: true }))
+    .toBeVisible();
 });
 
 it("ignores superseded HTTP replies when Broad groups is selected again before the initial reply arrives", async () => {
@@ -367,7 +369,13 @@ it("does not count a support-only change as a change in matches", async () => {
     ...response,
     rows: response.rows.map((row) => ({
       ...row,
-      matches: row.matches.map((match) => ({ ...match, support: match.support - 0.01 })),
+      matches: row.matches.map((match) => ({
+        ...match,
+        judgment:
+          "support" in match.judgment
+            ? { ...match.judgment, support: match.judgment.support - 0.01 }
+            : match.judgment,
+      })),
     })),
   };
   const wire = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(revised);

@@ -10,7 +10,8 @@ export const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, m
 
 /**
  * Set the minimum model-reported support and margin needed to accept a judgment.
- * Support can combine probabilities for choices that imply the same broader answer.
+ * Classification uses the selected answer's individual support. Rank, containment
+ * and set questions can combine probabilities for choices implying the same broader answer.
  * Margin is the lead over the strongest competing answer, including uncertainty
  * and clarification choices. Every accepted answer must have a unique lead.
  * Uncertainty and clarification retain their reported probability mass.

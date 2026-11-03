@@ -78,7 +78,7 @@ const program = Effect.gen(function* () {
     unresolvedIds: partition.Undetermined.map((record) => record.sampleId),
     matches: classified.records.map(({ record, ranking }) => ({
       sampleId: record.sampleId,
-      taxa: ranking.map((match) => ({ assignment: match.taxon.record, support: match.support })),
+      taxa: ranking.map((match) => ({ assignment: match.taxon.record, judgment: match.judgment })),
     })),
   };
 });
@@ -338,10 +338,13 @@ const classifySample = Effect.gen(function* () {
     records: result.records.map(({ record, taxa, ranking }) => ({
       id: record.id,
       abundance: record.abundance,
-      matches: ranking.map((match) => ({ assignment: match.taxon.record, support: match.support })),
+      matches: ranking.map((match) => ({
+        assignment: match.taxon.record,
+        judgment: match.judgment,
+      })),
       decisions: taxa.map((match) => ({
         assignment: match.taxon.record,
-        judgment: match.judgment._tag,
+        judgment: match.judgment,
         label: match.answer.label,
         probabilities: match.answer.probabilities,
         confidence: match.answer.confidence,
@@ -360,9 +363,7 @@ await Effect.runPromise(
 );
 ```
 
-Each row in `result.records` contains the original `record`, all candidate outcomes in `taxa`, and accepted matches in `ranking`. A match carries the original taxon, its `support`, its `judgment`, and the decision model's `answer`. The judgment is one of `Matched`, `NotMatched`, or `Undetermined`. The answer retains its chosen `label`, the probabilities for `sameTaxon`, `withinTaxon`, `noMatch`, and `undetermined`, and optional provider `confidence`. In other words, it's all there in the result object for your application to build logic around.
-
-`ranking` contains only `Matched` entries, sorted by descending support. Equal scores retain the supplied occurrence order. `taxa` retains all outcomes in panel traversal order, so negative and unresolved answers remain available for inspection. The operation preserves repeated record and target occurrences rather than silently deduplicating them.
+Each row in `result.records` retains the original `record` and all target assessments in `taxa`. Each assessment includes the original target, the model's full `answer`, and a `judgment`: `SameTaxon`, `WithinTaxon`, `NotMatched`, or `Undetermined`. Accepted judgments include `support`; `ranking` lists the positive matches from highest to lowest support.
 
 ### Broad and specific targets can both match
 
@@ -372,9 +373,7 @@ For our _Saccharomyces cerevisiae_ example, all three matches are useful--it joi
 
 ### Support, confidence, and abundance describe different things
 
-For panel classification, match support combines the probability assigned to `sameTaxon` and `withinTaxon`, divided by the total probability mass of the four choices. For example, probabilities of `0.35` for the same taxon, `0.55` for classification within it, `0.05` for no match, and `0.05` for uncertainty give match support of `0.90`.
-
-In panel classifications and elsewhere in the library, acceptance thresholds can be fine-tuned with what we call the "acceptance policy". For combined support like in the above, the policy ultimately controls how `robo-taxonomist` weighs support against the negative and uncertain alternatives. A low match score alone does not establish `NotMatched`: there must be acceptable evidence specifically for the negative answer. If no answer meets the policy, the judgment remains `Undetermined`. This is key! It's how `robo-taxonomist` handles the transition from a non-deterministic model to deterministic programs.
+Support is the probability assigned to the model's selected answer. The [acceptance policy](#choosing-an-acceptance-policy) sets the required support and lead over competing answers for a positive or negative judgment. Unresolved cases are `Undetermined`.
 
 That said, neither a support value of `0.90` nor the underlying model provider's confidence establishes 90% empirical accuracy. Evaluate the model and acceptance policy on representative records with independently checked answers when you need a measured error rate.
 

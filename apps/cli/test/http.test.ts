@@ -248,9 +248,9 @@ it.effect(
       expect(result.usage).toEqual([{}, {}, {}]);
       for (const row of result.records) {
         expect(row.taxa.map(({ judgment }) => judgment)).toEqual([
-          { _tag: "Matched" },
-          { _tag: "Matched" },
-          { _tag: "NotMatched" },
+          { _tag: "WithinTaxon", support: 1 },
+          { _tag: "WithinTaxon", support: 1 },
+          { _tag: "NotMatched", support: 1 },
           { _tag: "Undetermined" },
         ]);
         expect(row.ranking).toEqual(row.taxa.slice(0, 2));
@@ -463,8 +463,7 @@ it.effect(
       const match = {
         record,
         taxon,
-        support: 0.8,
-        judgment: { _tag: "Matched" },
+        judgment: { _tag: "WithinTaxon", support: 0.7 },
         answer: {
           label: "withinTaxon",
           probabilities,

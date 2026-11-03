@@ -1,15 +1,12 @@
 import { Schema } from "effect";
 import { AiError } from "effect/ai";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { PanelId, panels, records } from "./catalog.ts";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
-/** Public match outcome, separate from the model's finer-grained answer label and probabilities. */
-export const MatchJudgment = Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} });
-export type MatchJudgment = typeof MatchJudgment.Type;
 const Match = Schema.Struct({
   targetId: Schema.String,
-  judgment: MatchJudgment,
-  support: probability,
+  judgment: TaxonMatchJudgment,
   answer: Schema.Struct({
     confidence: Schema.optional(probability),
     label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),

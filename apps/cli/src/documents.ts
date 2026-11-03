@@ -1,6 +1,13 @@
 import { Schema, type Data } from "effect";
 import { DecisionModel } from "effect/ai";
-import { RecordLabel, TaxonId, TaxonIdentityJudgment, TaxonName, TaxonSet } from "robo-taxonomist";
+import {
+  RecordLabel,
+  TaxonId,
+  TaxonIdentityJudgment,
+  TaxonMatchJudgment,
+  TaxonName,
+  TaxonSet,
+} from "robo-taxonomist";
 
 const jsonFields = Schema.Record(Schema.String, Schema.Json);
 const identifier = Schema.StructWithRest(TaxonId, [jsonFields]);
@@ -189,8 +196,7 @@ const classificationAnswer = Schema.Struct({
 const taxonMatch = Schema.Struct({
   record: RecordInput,
   taxon: taxonDocument,
-  support: probability,
-  judgment: Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} }),
+  judgment: TaxonMatchJudgment,
   answer: classificationAnswer,
 });
 /** Preserve the panel, record outcomes, accepted rankings, model answers and usage. */

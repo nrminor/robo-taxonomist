@@ -5,6 +5,7 @@ import * as RoboTaxonomist from "robo-taxonomist";
 import {
   Errors,
   TaxonIdentityJudgment,
+  TaxonMatchJudgment,
   TaxonId,
   TaxonName,
   TaxonSet,
@@ -15,6 +16,7 @@ const oaks = TaxonSet.of(TaxonName.make("Quercus"));
 
 assert.equal(TaxonSet.union(oaks, oaks)._tag, "Union");
 assert.equal(Taxonomy.TaxonIdentityJudgment, TaxonIdentityJudgment);
+assert.equal(Taxonomy.TaxonMatchJudgment, TaxonMatchJudgment);
 assert.deepEqual(
   Schema.decodeUnknownSync(TaxonIdentityJudgment)({ _tag: "MultipleTaxa", side: "left" }),
   TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "left" }),
@@ -82,9 +84,13 @@ assert.equal(secondRanked.taxon, species);
 assert.equal(species.record, assignment);
 assert.equal(secondRanked.taxon.record.assignmentId, "oak-species");
 assert.deepEqual(
-  row.ranking.map((match) => match.support),
-  [0.96, 0.95],
+  row.ranking.map((match) => Schema.decodeUnknownSync(TaxonMatchJudgment)(match.judgment)),
+  [
+    TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.95 }),
+    TaxonMatchJudgment.cases.SameTaxon.make({ support: 0.94 }),
+  ],
 );
+assert.equal("support" in firstRanked, false);
 assert.equal(
   firstRanked.pipe((match) => match.record.abundance),
   8,

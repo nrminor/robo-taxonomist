@@ -6,8 +6,9 @@ import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { RegistryProvider } from "@effect/atom-react";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { Demo } from "../src/components/demo.tsx";
-import { ClassifyRequest, MatchJudgment, PanelResponse } from "../src/lib/contract.ts";
+import { ClassifyRequest, PanelResponse } from "../src/lib/contract.ts";
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
@@ -143,8 +144,7 @@ it("expands its axis for actual response judgments and never contracts on the ne
         match.targetId === "fungi"
           ? {
               ...match,
-              judgment: MatchJudgment.cases.Matched.make({}),
-              support: 0.51,
+              judgment: TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.51 }),
               answer: {
                 label: "withinTaxon",
                 confidence: 0.51,
@@ -225,7 +225,10 @@ it("describes selected judgments and uncertainty without adding a segment", asyn
   const species = view.getByRole("img", { name: /^Saccharomyces cerevisiae · species/ });
   await expect
     .element(species)
-    .toHaveAttribute("aria-label", expect.stringContaining("No match · Match support:"));
+    .toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("Not a match · Accepted answer support:"),
+    );
   await expect
     .element(species)
     .toHaveAttribute("aria-label", expect.stringContaining("selected record is not included"));
@@ -234,11 +237,11 @@ it("describes selected judgments and uncertainty without adding a segment", asyn
   const fungi = view.getByRole("img", { name: /^Fungi · kingdom/ });
   await expect
     .element(fungi)
-    .toHaveAttribute("aria-label", expect.stringContaining("Uncertain · Match support:"));
+    .toHaveAttribute("aria-label", expect.stringContaining("No accepted classification"));
   await expect
     .element(
       view.getByText(
-        "There is not enough information to decide whether this record matches 10 targets. It is not included in any target total in Groups and subgroups.",
+        "This record has no accepted classification for at least one target. It is not included in any target total in Groups and subgroups.",
         { exact: true },
       ),
     )

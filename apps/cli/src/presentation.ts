@@ -2,6 +2,7 @@ import { Data, Effect, Match, Predicate, Schema, Stream, Struct } from "effect";
 import { CliError } from "effect/cli";
 import {
   RecordLabel,
+  TaxonMatchJudgment,
   TaxonName,
   type CollectionMembershipJudgment,
   type RankComparisonJudgment,
@@ -192,7 +193,7 @@ export const ClassificationRow = Schema.Struct({
   record: Schema.String,
   target: Schema.String,
   judgment: Schema.String,
-  support: Schema.Finite,
+  support: Schema.optional(Schema.Finite),
   ranking_position: Schema.optional(Schema.Int),
 });
 
@@ -217,13 +218,19 @@ export const classificationRows = (classification: Classification) => {
             Effect.fnUntraced(function* (match) {
               const target = yield* targetText(match.taxon.record, "jsonl");
               const judgment = Struct.get(match.judgment, "_tag");
+              const support = TaxonMatchJudgment.match(match.judgment, {
+                SameTaxon: ({ support }) => support,
+                WithinTaxon: ({ support }) => support,
+                NotMatched: ({ support }) => support,
+                Undetermined: () => undefined,
+              });
               const rankingPosition = positions.get(match);
 
               return {
                 record,
                 target,
                 judgment,
-                support: match.support,
+                support,
                 ranking_position: rankingPosition,
               };
             }),

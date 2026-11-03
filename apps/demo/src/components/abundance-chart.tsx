@@ -2,32 +2,25 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { Array, Match, Option, Schema } from "effect";
 import { useReducer, useSyncExternalStore, type TransitionEvent } from "react";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { recordSelectionAtom } from "../client/panel-atoms.ts";
 import { panels, records } from "../lib/catalog.ts";
-import { MatchJudgment } from "../lib/contract.ts";
-import {
-  formatPercent,
-  formatSampleShare,
-  judgmentPresentation,
-  type PanelFindings,
-  type RecordFinding,
-  type TargetComposition,
-} from "../lib/display.ts";
+import * as Display from "../lib/display.ts";
 import styles from "./abundance-chart.module.css";
 
 const RowPhase = Schema.Literals(["hidden", "entering", "present", "exiting"]);
 type RowPhase = typeof RowPhase.Type;
 
 interface PresentedRow {
-  readonly composition: TargetComposition;
-  readonly findings: PanelFindings;
+  readonly composition: Display.TargetComposition;
+  readonly findings: Display.PanelFindings;
   readonly index: number;
   readonly phase: RowPhase;
 }
 
 interface Presentation {
   readonly revision: symbol;
-  readonly findings: PanelFindings;
+  readonly findings: Display.PanelFindings;
   readonly animate: boolean;
   readonly maximum: number;
   readonly rows: ReadonlyArray<PresentedRow>;
@@ -67,7 +60,7 @@ const orderedTargets = orderTargets();
 const ticks = [0, 25, 50, 75, 100];
 
 const present = (
-  findings: PanelFindings,
+  findings: Display.PanelFindings,
   animate: boolean,
   revision: symbol,
   previous?: Presentation,
@@ -125,7 +118,7 @@ const settledPhase = Match.type<RowPhase>().pipe(
 
 interface PresentationInput {
   readonly revision: symbol;
-  readonly findings: PanelFindings;
+  readonly findings: Display.PanelFindings;
   readonly animate: boolean;
 }
 
@@ -152,26 +145,20 @@ const settlesAppearance = (event: TransitionEvent<HTMLElement>): boolean =>
   (event.target === event.currentTarget && event.propertyName === "opacity") ||
   (event.target === event.currentTarget.firstElementChild && event.propertyName === "transform");
 
-const selectionStory = (selected: Option.Option<RecordFinding>, findings: PanelFindings): string =>
+const selectionStory = (
+  selected: Option.Option<Display.RecordFinding>,
+  findings: Display.PanelFindings,
+): string =>
   Option.match(selected, {
     onNone: () => "Select a record to locate its segment in matching targets.",
-    onSome: ({ record, matches, judgment }) =>
-      MatchJudgment.match({
-        Matched: () => {
-          const count = matches.filter((match) =>
-            MatchJudgment.guards.Matched(match.judgment),
-          ).length;
-          return `This record is ${formatSampleShare(record.abundance)} of the sample and matches ${count} target${count === 1 ? "" : "s"}. The same record is included in each matching total.`;
-        },
-        Undetermined: () => {
-          const count = matches.filter((match) =>
-            MatchJudgment.guards.Undetermined(match.judgment),
-          ).length;
-          return `There is not enough information to decide whether this record matches ${count} target${count === 1 ? "" : "s"}. It is not included in any target total in ${findings.panel.name}.`;
-        },
-        NotMatched: () =>
-          `This record does not match any target in ${findings.panel.name}, so it is not included in any target total.`,
-      })(judgment),
+    onSome: ({ record, matches, acceptedTargets }) => {
+      const count = acceptedTargets.size;
+      if (count > 0)
+        return `This record is ${Display.formatSampleShare(record.abundance)} of the sample and matches ${count} target${count === 1 ? "" : "s"}. The same record is included in each matching total.`;
+      if (matches.some((match) => TaxonMatchJudgment.guards.Undetermined(match.judgment)))
+        return `This record has no accepted classification for at least one target. It is not included in any target total in ${findings.panel.name}.`;
+      return `This record does not match any target in ${findings.panel.name}, so it is not included in any target total.`;
+    },
   });
 
 const describeRow = (row: PresentedRow, selectedId: string | undefined, maximum: number) => {
@@ -190,9 +177,9 @@ const describeRow = (row: PresentedRow, selectedId: string | undefined, maximum:
       ? Option.getOrThrow(selectedMatch)
       : Option.getOrUndefined(selectedMatch);
   const contributes = target.contributors.some((entry) => entry.id === selectedId);
-  const result = match === undefined ? undefined : judgmentPresentation(match.judgment);
+  const result = match === undefined ? undefined : Display.judgmentPresentation(match.judgment);
   const judgment = result?.label ?? "Unavailable";
-  const summary = `${formatPercent(target.abundance / 100)} of sample · ${target.contributors.length} matching record${target.contributors.length === 1 ? "" : "s"}`;
+  const summary = `${Display.formatPercent(target.abundance / 100)} of sample · ${target.contributors.length} matching record${target.contributors.length === 1 ? "" : "s"}`;
   const membership =
     selectedId === undefined
       ? ""
@@ -202,11 +189,11 @@ const describeRow = (row: PresentedRow, selectedId: string | undefined, maximum:
   const decision =
     selectedId === undefined
       ? ""
-      : ` · ${judgment} · Match support: ${match === undefined ? "Unavailable" : formatPercent(match.support)}`;
+      : ` · ${judgment}${result?.support === undefined ? "" : ` · Accepted answer support: ${Display.formatPercent(result.support)}`}`;
   const composition =
     target.contributors.length === 0
       ? ""
-      : ` · Records: ${target.contributors.map((entry) => `${entry.name} ${formatPercent(entry.abundance / 100)}`).join("; ")}`;
+      : ` · Records: ${target.contributors.map((entry) => `${entry.name} ${Display.formatPercent(entry.abundance / 100)}`).join("; ")}`;
   return {
     target,
     active: rowActive(row.phase),
@@ -246,7 +233,7 @@ export const AbundanceChart = ({
   revision,
   animatePanels = false,
 }: {
-  readonly findings: PanelFindings;
+  readonly findings: Display.PanelFindings;
   readonly revision: symbol;
   readonly animatePanels?: boolean;
 }) => {
@@ -359,7 +346,9 @@ export const AbundanceChart = ({
                         ))}
                       </div>
                     </div>
-                    <span className={styles.value}>{formatPercent(target.abundance / 100)}</span>
+                    <span className={styles.value}>
+                      {Display.formatPercent(target.abundance / 100)}
+                    </span>
                   </div>
                 </Tooltip.Trigger>
                 {active && (
