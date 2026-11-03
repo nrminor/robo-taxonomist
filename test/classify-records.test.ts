@@ -227,6 +227,15 @@ it.effect.each([
   ["positive/negative tie", "sameTaxon", [0.5, 0, 0.5, 0]],
   ["selected nonleader", "noMatch", [0.01, 0.97, 0.01, 0.01]],
   ["explicit uncertainty", "undetermined", [0.97, 0.01, 0.01, 0.01]],
+  ["sameTaxon below withinTaxon", "sameTaxon", [0.4, 0.5, 0.05, 0.05]],
+  ["sameTaxon below noMatch", "sameTaxon", [0.4, 0.05, 0.5, 0.05]],
+  ["sameTaxon below undetermined", "sameTaxon", [0.4, 0.05, 0.05, 0.5]],
+  ["withinTaxon below sameTaxon", "withinTaxon", [0.5, 0.4, 0.05, 0.05]],
+  ["withinTaxon below noMatch", "withinTaxon", [0.05, 0.4, 0.5, 0.05]],
+  ["withinTaxon below undetermined", "withinTaxon", [0.05, 0.4, 0.05, 0.5]],
+  ["noMatch below sameTaxon", "noMatch", [0.5, 0.05, 0.4, 0.05]],
+  ["noMatch below withinTaxon", "noMatch", [0.05, 0.5, 0.4, 0.05]],
+  ["noMatch below undetermined", "noMatch", [0.05, 0.05, 0.4, 0.5]],
 ] as const)(
   "abstains for %s even with zero acceptance thresholds",
   ([_case, label, probabilities]) => {

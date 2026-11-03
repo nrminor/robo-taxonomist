@@ -377,6 +377,13 @@ it.effect.each([
     expected: "DifferentTaxaAtRank",
   },
   {
+    behavior: "retains grouped inequality when the global detail leader implies equality",
+    label: "equalSingle",
+    probabilities: { equalSingle: 0.4, properSubset: 0.2, properSuperset: 0.2, disjoint: 0.2 },
+    policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+    expected: "DifferentTaxaAtRank",
+  },
+  {
     behavior: "gates a fine leader on a tied parent comparison first",
     label: "equalSingle",
     probabilities: { equalSingle: 0.5, properSubset: 0.25, disjoint: 0.25 },

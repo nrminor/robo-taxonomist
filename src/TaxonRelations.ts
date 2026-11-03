@@ -1,4 +1,18 @@
-import { sumProbabilities } from "./AcceptancePolicy.ts";
+import * as Match from "effect/Match";
+import * as Schema from "effect/Schema";
+import * as AcceptancePolicy from "./AcceptancePolicy.ts";
+
+/** The set relation requested by a predicate question. */
+export const Relation = Schema.Literals([
+  "subset",
+  "proper-subset",
+  "equivalent",
+  "overlap",
+  "disjoint",
+]);
+
+/** A set relation requested by a predicate question. */
+export type Relation = typeof Relation.Type;
 
 /**
  * Set questions use these choices to compare the organisms in two sets.
@@ -32,47 +46,84 @@ type SetProbabilities = { readonly [K in keyof typeof criteria]: number };
  * TaxonSet uses these totals before it applies the acceptance policy.
  * @example
  * import { predicateSupports } from "./TaxonRelations.ts";
- * export const support = predicateSupports.subset({
+ * export const support = predicateSupports("subset", {
  *   equal: 0.3, properSubset: 0.5, properSuperset: 0, partialOverlap: 0,
  *   disjoint: 0.1, bothEmpty: 0, leftEmpty: 0, rightEmpty: 0, undetermined: 0.1,
  * });
  */
-export const predicateSupports = {
-  subset: (p: SetProbabilities) => ({
-    yes: sumProbabilities([p.equal, p.properSubset, p.bothEmpty, p.leftEmpty]),
-    no: sumProbabilities([p.properSuperset, p.partialOverlap, p.disjoint, p.rightEmpty]),
-  }),
-  "proper-subset": (p: SetProbabilities) => ({
-    yes: sumProbabilities([p.properSubset, p.leftEmpty]),
-    no: sumProbabilities([
-      p.equal,
-      p.properSuperset,
-      p.partialOverlap,
-      p.disjoint,
-      p.bothEmpty,
-      p.rightEmpty,
-    ]),
-  }),
-  equivalent: (p: SetProbabilities) => ({
-    yes: sumProbabilities([p.equal, p.bothEmpty]),
-    no: sumProbabilities([
-      p.properSubset,
-      p.properSuperset,
-      p.partialOverlap,
-      p.disjoint,
-      p.leftEmpty,
-      p.rightEmpty,
-    ]),
-  }),
-  overlap: (p: SetProbabilities) => ({
-    yes: sumProbabilities([p.equal, p.properSubset, p.properSuperset, p.partialOverlap]),
-    no: sumProbabilities([p.disjoint, p.bothEmpty, p.leftEmpty, p.rightEmpty]),
-  }),
-  disjoint: (p: SetProbabilities) => ({
-    yes: sumProbabilities([p.disjoint, p.bothEmpty, p.leftEmpty, p.rightEmpty]),
-    no: sumProbabilities([p.equal, p.properSubset, p.properSuperset, p.partialOverlap]),
-  }),
-};
+export const predicateSupports = (requestedRelation: Relation, p: SetProbabilities) =>
+  Match.value(requestedRelation).pipe(
+    Match.when("subset", () => {
+      const yes = AcceptancePolicy.sumProbabilities([
+        p.equal,
+        p.properSubset,
+        p.bothEmpty,
+        p.leftEmpty,
+      ]);
+      const no = AcceptancePolicy.sumProbabilities([
+        p.properSuperset,
+        p.partialOverlap,
+        p.disjoint,
+        p.rightEmpty,
+      ]);
+      return { yes, no };
+    }),
+    Match.when("proper-subset", () => {
+      const yes = AcceptancePolicy.sumProbabilities([p.properSubset, p.leftEmpty]);
+      const no = AcceptancePolicy.sumProbabilities([
+        p.equal,
+        p.properSuperset,
+        p.partialOverlap,
+        p.disjoint,
+        p.bothEmpty,
+        p.rightEmpty,
+      ]);
+      return { yes, no };
+    }),
+    Match.when("equivalent", () => {
+      const yes = AcceptancePolicy.sumProbabilities([p.equal, p.bothEmpty]);
+      const no = AcceptancePolicy.sumProbabilities([
+        p.properSubset,
+        p.properSuperset,
+        p.partialOverlap,
+        p.disjoint,
+        p.leftEmpty,
+        p.rightEmpty,
+      ]);
+      return { yes, no };
+    }),
+    Match.when("overlap", () => {
+      const yes = AcceptancePolicy.sumProbabilities([
+        p.equal,
+        p.properSubset,
+        p.properSuperset,
+        p.partialOverlap,
+      ]);
+      const no = AcceptancePolicy.sumProbabilities([
+        p.disjoint,
+        p.bothEmpty,
+        p.leftEmpty,
+        p.rightEmpty,
+      ]);
+      return { yes, no };
+    }),
+    Match.when("disjoint", () => {
+      const yes = AcceptancePolicy.sumProbabilities([
+        p.disjoint,
+        p.bothEmpty,
+        p.leftEmpty,
+        p.rightEmpty,
+      ]);
+      const no = AcceptancePolicy.sumProbabilities([
+        p.equal,
+        p.properSubset,
+        p.properSuperset,
+        p.partialOverlap,
+      ]);
+      return { yes, no };
+    }),
+    Match.exhaustive,
+  );
 
 /**
  * Calculate support for all, some, or none of the inner organisms belonging to outer.
@@ -86,10 +137,15 @@ export const predicateSupports = {
  * });
  */
 export const containmentSupports = (p: SetProbabilities) => ({
-  contained: sumProbabilities([p.equal, p.properSubset, p.bothEmpty, p.leftEmpty]),
-  notContained: sumProbabilities([p.properSuperset, p.partialOverlap, p.disjoint, p.rightEmpty]),
-  partlyContained: sumProbabilities([p.properSuperset, p.partialOverlap]),
-  disjoint: sumProbabilities([p.disjoint, p.rightEmpty]),
+  contained: AcceptancePolicy.sumProbabilities([p.equal, p.properSubset, p.bothEmpty, p.leftEmpty]),
+  notContained: AcceptancePolicy.sumProbabilities([
+    p.properSuperset,
+    p.partialOverlap,
+    p.disjoint,
+    p.rightEmpty,
+  ]),
+  partlyContained: AcceptancePolicy.sumProbabilities([p.properSuperset, p.partialOverlap]),
+  disjoint: AcceptancePolicy.sumProbabilities([p.disjoint, p.rightEmpty]),
 });
 
 /**
@@ -129,6 +185,11 @@ type RankProbabilities = { readonly [K in keyof typeof rankCriteria]: number };
  * });
  */
 export const rankSupports = (p: RankProbabilities) => ({
-  same: sumProbabilities([p.equalSingle, p.equalMultiple]),
-  different: sumProbabilities([p.properSubset, p.properSuperset, p.partialOverlap, p.disjoint]),
+  same: AcceptancePolicy.sumProbabilities([p.equalSingle, p.equalMultiple]),
+  different: AcceptancePolicy.sumProbabilities([
+    p.properSubset,
+    p.properSuperset,
+    p.partialOverlap,
+    p.disjoint,
+  ]),
 });

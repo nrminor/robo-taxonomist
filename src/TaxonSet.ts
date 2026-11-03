@@ -10,7 +10,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import type * as Types from "effect/Types";
-import { defaultPolicy, select, type AcceptancePolicy, type Scored } from "./AcceptancePolicy.ts";
+import * as AcceptancePolicy from "./AcceptancePolicy.ts";
 import * as Errors from "./errors.ts";
 import {
   Difference,
@@ -198,19 +198,12 @@ export const complement = <A extends TaxonomicRecord, B extends TaxonomicRecord>
   universe: TaxonSet<B>,
 ): TaxonSet<A | B> => difference(universe, set);
 
-const setRelationSchema = Schema.Literals([
-  "subset",
-  "proper-subset",
-  "equivalent",
-  "overlap",
-  "disjoint",
-]);
 const setRelationJudgmentSchema = Schema.TaggedUnion({
-  Yes: { relation: setRelationSchema },
-  No: { relation: setRelationSchema },
-  Undetermined: { relation: setRelationSchema },
+  Yes: { relation: TaxonRelations.Relation },
+  No: { relation: TaxonRelations.Relation },
+  Undetermined: { relation: TaxonRelations.Relation },
   MultipleTaxaInSet: {
-    relation: setRelationSchema,
+    relation: TaxonRelations.Relation,
     side: Schema.Literals(["left", "right"]),
     taxon: Taxon,
   },
@@ -246,7 +239,7 @@ export type TaxonSetRelationJudgment<R extends TaxonomicRecord = TaxonomicRecord
       readonly taxon: Taxon<R>;
     });
 
-type JudgmentOptions = { readonly policy?: AcceptancePolicy };
+type JudgmentOptions = { readonly policy?: AcceptancePolicy.AcceptancePolicy };
 // Fn aliases keep public calling contracts separate from traced implementations.
 type SetRelationFn = <A extends TaxonomicRecord, B extends TaxonomicRecord>(
   left: TaxonSet<A>,
@@ -316,17 +309,17 @@ type RelationAnswer = Decision.Answer<
 >;
 
 const interpretRelation = <R extends TaxonomicRecord>(
-  requestedRelation: typeof setRelationSchema.Type,
+  requestedRelation: TaxonRelations.Relation,
   answer: RelationAnswer,
   input: { readonly leftTaxa: readonly Taxon<R>[]; readonly rightTaxa: readonly Taxon<R>[] },
-  policy: AcceptancePolicy,
+  policy: AcceptancePolicy.AcceptancePolicy,
 ): TaxonSetRelationJudgment<R> => {
   const p = answer.probabilities;
-  const support = TaxonRelations.predicateSupports[requestedRelation](p);
+  const support = TaxonRelations.predicateSupports(requestedRelation, p);
   const undetermined = setRelationJudgmentSchema.cases.Undetermined.make({
     relation: requestedRelation,
   });
-  const candidates: Array.NonEmptyReadonlyArray<Scored<TaxonSetRelationJudgment<R>>> = [
+  const candidates = Array.make(
     {
       answer: setRelationJudgmentSchema.cases.Yes.make({ relation: requestedRelation }),
       support: support.yes,
@@ -336,37 +329,36 @@ const interpretRelation = <R extends TaxonomicRecord>(
       support: support.no,
     },
     { answer: undetermined, support: p.undetermined },
-  ];
-  const withClarifications = pipe(
-    candidates,
-    Array.appendAll(
-      Array.map(input.leftTaxa, (taxon, index): Scored<TaxonSetRelationJudgment<R>> => ({
-        answer: Struct.assign(
-          setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
-            relation: requestedRelation,
-            side: "left",
-            taxon,
-          }),
-          { taxon },
-        ),
-        support: Record.get(p, `multipleLeft${index}`).pipe(Option.getOrThrow),
-      })),
-    ),
-    Array.appendAll(
-      Array.map(input.rightTaxa, (taxon, index): Scored<TaxonSetRelationJudgment<R>> => ({
-        answer: Struct.assign(
-          setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
-            relation: requestedRelation,
-            side: "right",
-            taxon,
-          }),
-          { taxon },
-        ),
-        support: Record.get(p, `multipleRight${index}`).pipe(Option.getOrThrow),
-      })),
-    ),
   );
-  return select(withClarifications, policy).pipe(Option.getOrElse(() => undetermined));
+  const leftClarifications = Array.map(input.leftTaxa, (taxon, index) => {
+    const judgment = setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
+      relation: requestedRelation,
+      side: "left",
+      taxon,
+    });
+    const answer = Struct.assign(judgment, { taxon });
+    const support = Record.get(p, `multipleLeft${index}`).pipe(Option.getOrThrow);
+    return { answer, support };
+  });
+  const rightClarifications = Array.map(input.rightTaxa, (taxon, index) => {
+    const judgment = setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
+      relation: requestedRelation,
+      side: "right",
+      taxon,
+    });
+    const answer = Struct.assign(judgment, { taxon });
+    const support = Record.get(p, `multipleRight${index}`).pipe(Option.getOrThrow);
+    return { answer, support };
+  });
+  const candidatesWithClarifications = pipe(
+    candidates,
+    Array.appendAll(leftClarifications),
+    Array.appendAll(rightClarifications),
+  );
+  return AcceptancePolicy.select<TaxonSetRelationJudgment<R>>(
+    candidatesWithClarifications,
+    policy,
+  ).pipe(Option.getOrElse(() => undetermined));
 };
 
 /**
@@ -392,7 +384,7 @@ export const isSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isSubsetOf")(functi
     "subset",
     answers.relation,
     request.taxa,
-    options.policy ?? defaultPolicy,
+    options.policy ?? AcceptancePolicy.defaultPolicy,
   );
 });
 
@@ -419,7 +411,7 @@ export const isProperSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isProperSubse
     "proper-subset",
     answers.relation,
     request.taxa,
-    options.policy ?? defaultPolicy,
+    options.policy ?? AcceptancePolicy.defaultPolicy,
   );
 });
 
@@ -446,7 +438,7 @@ export const equivalent: SetRelationFn = Effect.fn("TaxonSet.equivalent")(functi
     "equivalent",
     answers.relation,
     request.taxa,
-    options.policy ?? defaultPolicy,
+    options.policy ?? AcceptancePolicy.defaultPolicy,
   );
 });
 
@@ -474,7 +466,7 @@ export const overlaps: SetRelationFn = Effect.fn("TaxonSet.overlaps")(function* 
     "overlap",
     answers.relation,
     request.taxa,
-    options.policy ?? defaultPolicy,
+    options.policy ?? AcceptancePolicy.defaultPolicy,
   );
 });
 
