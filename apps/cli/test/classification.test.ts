@@ -220,6 +220,25 @@ it.effect("emits one complete empty result with the supplied panel when there ar
   }),
 );
 
+it.effect.each([
+  { flags: [], output: "record\ttarget\tjudgment\tsupport\tranking_position\n" },
+  { flags: ["--no-header"], output: "" },
+])("honors the TSV header policy for an empty classification: $flags", ({ flags, output }) =>
+  Effect.gen(function* () {
+    const result = yield* invoke([
+      "classify",
+      "--target",
+      "Quercus",
+      "--model",
+      "custom/model",
+      ...flags,
+    ]);
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe(output);
+    expect(result.requests).toBe(0);
+  }),
+);
+
 it.effect("quotes delimiter-bearing classification TSV", () =>
   Effect.gen(function* () {
     const result = yield* invoke([

@@ -629,6 +629,16 @@ it.effect.each([
     probabilities: { multipleBoth: 1 },
     native: Documents.ContainmentJudgment.cases.MultipleTaxa.make({ side: "both" }),
   },
+  {
+    choice: "multipleLeft",
+    probabilities: { multipleLeft: 1 },
+    native: Documents.ContainmentJudgment.cases.MultipleTaxa.make({ side: "left" }),
+  },
+  {
+    choice: "multipleRight",
+    probabilities: { multipleRight: 1 },
+    native: Documents.ContainmentJudgment.cases.MultipleTaxa.make({ side: "right" }),
+  },
 ])(
   "retains native containment judgments, including broader answers: $native",
   ({ choice, probabilities, native }) =>
@@ -708,6 +718,22 @@ it.effect.each([
     native: Documents.RankJudgment.cases.MultipleTaxaAtRank.make({
       rank: "species",
       side: "right",
+    }),
+  },
+  {
+    choice: "multipleLeft",
+    probabilities: { multipleLeft: 1 },
+    native: Documents.RankJudgment.cases.MultipleTaxaAtRank.make({
+      rank: "species",
+      side: "left",
+    }),
+  },
+  {
+    choice: "multipleBoth",
+    probabilities: { multipleBoth: 1 },
+    native: Documents.RankJudgment.cases.MultipleTaxaAtRank.make({
+      rank: "species",
+      side: "both",
     }),
   },
 ])("retains native rank judgments and rank context: $native", ({ choice, probabilities, native }) =>
