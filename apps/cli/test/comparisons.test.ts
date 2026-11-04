@@ -543,7 +543,7 @@ it.effect.each([
   }),
 );
 
-it.effect("keeps ID-only clarification targets and metadata intact in JSON", () =>
+it.effect("encodes ID-only clarification targets without extra metadata in JSON", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
@@ -583,7 +583,9 @@ it.effect("keeps ID-only clarification targets and metadata intact in JSON", () 
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
     const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
-      record: Documents.RecordDocument.make(record),
+      record: Documents.RecordDocument.make({
+        taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
+      }),
     });
     const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: "overlap",

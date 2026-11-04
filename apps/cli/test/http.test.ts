@@ -800,7 +800,7 @@ it.effect.each([
 });
 
 it.effect(
-  "retains the complete identifier-only target and metadata in a relation clarification",
+  "encodes the identifier-only target without extra metadata in a relation clarification",
   () => {
     const probabilities = {
       ...subsetReply.answers.relation.probabilities,
@@ -836,8 +836,7 @@ it.effect(
 
       const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
         record: Documents.RecordDocument.make({
-          taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
-          metadata: { sample: ["A17", null] },
+          taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
         }),
       });
       const expected = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({

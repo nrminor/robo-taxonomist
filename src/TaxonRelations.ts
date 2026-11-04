@@ -9,7 +9,7 @@ export const Relation = Schema.Literals([
   "equivalent",
   "overlap",
   "disjoint",
-]);
+]).annotate({ identifier: "SetRelation", description: "A relationship between two taxon sets." });
 
 /** A set relation requested by a predicate question. */
 export type Relation = typeof Relation.Type;

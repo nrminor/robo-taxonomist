@@ -42,7 +42,10 @@ import * as TaxonRelations from "./TaxonRelations.ts";
  */
 export const sameLabel: (left: RecordLabel, right: RecordLabel) => boolean = Equivalence.String;
 
-const taxonomicRankSchema = Schema.Literals([
+/** Supported taxonomic ranks, from domain through species.
+ * @category schemas
+ */
+export const TaxonomicRank = Schema.Literals([
   "domain",
   "kingdom",
   "phylum",
@@ -51,7 +54,7 @@ const taxonomicRankSchema = Schema.Literals([
   "family",
   "genus",
   "species",
-]);
+]).annotate({ identifier: "TaxonomicRank", description: "A level of taxonomic classification." });
 
 /**
  * Taxonomy.sameTaxonAtRank accepts this type to select the rank to compare.
@@ -64,20 +67,23 @@ const taxonomicRankSchema = Schema.Literals([
  * import type { TaxonomicRank } from "robo-taxonomist";
  * export const requestedRank: TaxonomicRank = "species";
  */
-export type TaxonomicRank = typeof taxonomicRankSchema.Type;
+export type TaxonomicRank = typeof TaxonomicRank.Type;
 
-const rankComparisonJudgmentSchema = Schema.TaggedUnion({
-  SameTaxonAtRank: { rank: taxonomicRankSchema },
-  SameMultipleTaxaAtRank: { rank: taxonomicRankSchema },
-  SameTaxaAtRank: { rank: taxonomicRankSchema },
-  LeftTaxaWithinRightAtRank: { rank: taxonomicRankSchema },
-  RightTaxaWithinLeftAtRank: { rank: taxonomicRankSchema },
-  PartlySharedTaxaAtRank: { rank: taxonomicRankSchema },
-  NoSharedTaxaAtRank: { rank: taxonomicRankSchema },
-  DifferentTaxaAtRank: { rank: taxonomicRankSchema },
-  Undetermined: { rank: taxonomicRankSchema },
+/** Construct or validate a rank comparison judgment.
+ * @category schemas
+ */
+export const RankComparisonJudgment = Schema.TaggedUnion({
+  SameTaxonAtRank: { rank: TaxonomicRank },
+  SameMultipleTaxaAtRank: { rank: TaxonomicRank },
+  SameTaxaAtRank: { rank: TaxonomicRank },
+  LeftTaxaWithinRightAtRank: { rank: TaxonomicRank },
+  RightTaxaWithinLeftAtRank: { rank: TaxonomicRank },
+  PartlySharedTaxaAtRank: { rank: TaxonomicRank },
+  NoSharedTaxaAtRank: { rank: TaxonomicRank },
+  DifferentTaxaAtRank: { rank: TaxonomicRank },
+  Undetermined: { rank: TaxonomicRank },
   MultipleTaxaAtRank: {
-    rank: taxonomicRankSchema,
+    rank: TaxonomicRank,
     side: Schema.Literals(["left", "right", "both"]),
   },
 });
@@ -112,7 +118,7 @@ const rankComparisonJudgmentSchema = Schema.TaggedUnion({
  *   }),
  * );
  */
-export type RankComparisonJudgment = typeof rankComparisonJudgmentSchema.Type;
+export type RankComparisonJudgment = typeof RankComparisonJudgment.Type;
 
 const recordInputSchema = Schema.Union([RecordLabel, TaxonomicRecord]);
 type RecordInput = typeof recordInputSchema.Type;
@@ -160,7 +166,7 @@ const describeRecord = (record: typeof recordInputSchema.Encoded): string => {
 const rankComparisonInputSchema = Schema.Struct({
   left: recordInputSchema,
   right: recordInputSchema,
-  rank: taxonomicRankSchema,
+  rank: TaxonomicRank,
 });
 
 const makeRankComparisonQuestion = ({
@@ -201,7 +207,7 @@ const interpretRankComparison = (
 ): RankComparisonJudgment => {
   const p = answer.probabilities;
   const support = TaxonRelations.rankSupports(p);
-  const judgments = rankComparisonJudgmentSchema.cases;
+  const judgments = RankComparisonJudgment.cases;
   const unresolvedSupport = Math.max(
     p.undetermined,
     p.multipleLeft,
@@ -708,7 +714,10 @@ export const sameTaxon: CompareTaxaFn = Effect.fn("Taxonomy.sameTaxon")(function
   return interpretIdentity(answers.identity, options.policy ?? AcceptancePolicy.defaultPolicy);
 });
 
-const containmentJudgmentSchema = Schema.TaggedUnion({
+/** Construct or validate a taxon containment judgment.
+ * @category schemas
+ */
+export const TaxonContainmentJudgment = Schema.TaggedUnion({
   Contained: {},
   PartlyContained: {},
   Disjoint: {},
@@ -741,7 +750,7 @@ const containmentJudgmentSchema = Schema.TaggedUnion({
  *   }),
  * );
  */
-export type TaxonContainmentJudgment = typeof containmentJudgmentSchema.Type;
+export type TaxonContainmentJudgment = typeof TaxonContainmentJudgment.Type;
 
 type TaxonWithinFn = (
   inner: TaxonName | TaxonomicRecord,
@@ -780,7 +789,7 @@ const interpretContainment = (
 ): TaxonContainmentJudgment => {
   const p = answer.probabilities;
   const support = TaxonRelations.containmentSupports(p);
-  const judgments = containmentJudgmentSchema.cases;
+  const judgments = TaxonContainmentJudgment.cases;
   const unresolvedSupport = Math.max(
     p.undetermined,
     p.multipleLeft,
@@ -897,7 +906,10 @@ export const taxonWithin: TaxonWithinFn = Effect.fn("Taxonomy.taxonWithin")(func
   );
 });
 
-const membershipJudgmentSchema = Schema.TaggedUnion({
+/** Describe a membership judgment and any target requiring clarification.
+ * @category schemas
+ */
+export const TaxonMembershipJudgment = Schema.TaggedUnion({
   Member: {},
   NotMember: {},
   MixedMembership: {},
@@ -936,7 +948,7 @@ type WithTarget<J, T extends TaxonomicRecord> = J extends { readonly target: Tax
   : J;
 
 export type TaxonMembershipJudgment<T extends TaxonomicRecord = TaxonomicRecord> = WithTarget<
-  typeof membershipJudgmentSchema.Type,
+  typeof TaxonMembershipJudgment.Type,
   T
 >;
 
@@ -1057,8 +1069,8 @@ const interpretMembership = <T extends TaxonomicRecord>(
       );
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
       return accepted
-        ? membershipJudgmentSchema.cases.Member.make({})
-        : membershipJudgmentSchema.cases.Undetermined.make({});
+        ? TaxonMembershipJudgment.cases.Member.make({})
+        : TaxonMembershipJudgment.cases.Undetermined.make({});
     }),
     Match.when({ label: "notMember" }, ({ probabilities: p }) => {
       const support = p.notMember;
@@ -1070,8 +1082,8 @@ const interpretMembership = <T extends TaxonomicRecord>(
       );
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
       return accepted
-        ? membershipJudgmentSchema.cases.NotMember.make({})
-        : membershipJudgmentSchema.cases.Undetermined.make({});
+        ? TaxonMembershipJudgment.cases.NotMember.make({})
+        : TaxonMembershipJudgment.cases.Undetermined.make({});
     }),
     Match.when({ label: "mixed" }, ({ probabilities: p }) => {
       const support = p.mixed;
@@ -1083,11 +1095,11 @@ const interpretMembership = <T extends TaxonomicRecord>(
       );
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
       return accepted
-        ? membershipJudgmentSchema.cases.MixedMembership.make({})
-        : membershipJudgmentSchema.cases.Undetermined.make({});
+        ? TaxonMembershipJudgment.cases.MixedMembership.make({})
+        : TaxonMembershipJudgment.cases.Undetermined.make({});
     }),
     Match.when({ label: "undetermined" }, () =>
-      membershipJudgmentSchema.cases.Undetermined.make({}),
+      TaxonMembershipJudgment.cases.Undetermined.make({}),
     ),
     Match.when({ label: isTargetClarificationLabel }, ({ label, probabilities: p }) => {
       const support = Record.get(p, label).pipe(Option.getOrThrow);
@@ -1099,13 +1111,13 @@ const interpretMembership = <T extends TaxonomicRecord>(
         clarificationCompetitorSupport,
       );
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
-      if (!accepted) return membershipJudgmentSchema.cases.Undetermined.make({});
+      if (!accepted) return TaxonMembershipJudgment.cases.Undetermined.make({});
 
       const target = Array.findFirst(
         targetTaxa,
         (_taxon, index) => label === `multipleTarget${index}`,
       ).pipe(Option.getOrThrow);
-      const judgment = membershipJudgmentSchema.cases.MultipleTaxaInTarget.make({ target });
+      const judgment = TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({ target });
       return { ...judgment, target };
     }),
     Match.exhaustive,
@@ -1165,7 +1177,7 @@ export function recordBelongsTo(
 const recordBelongsToEffect = Effect.fn("Taxonomy.recordBelongsTo")(function* <
   T extends TaxonomicRecord,
 >(record: RecordInput, target: MembershipTarget<T>, options: JudgmentOptions = {}) {
-  if (taxonSetSchema.guards.Empty(target)) return membershipJudgmentSchema.cases.NotMember.make({});
+  if (taxonSetSchema.guards.Empty(target)) return TaxonMembershipJudgment.cases.NotMember.make({});
   const prepared = yield* prepareMembershipTarget(target);
   const answers = yield* decideMembershipBatch([record], prepared);
   return interpretMembership(
@@ -1749,7 +1761,10 @@ const groupRecordsByTaxaEffect = Effect.fn("Taxonomy.groupRecordsByTaxa")(functi
 const quantifierSchema = Schema.Literals(["all", "any", "none"]);
 type RecordQuantifier = typeof quantifierSchema.Type;
 
-const collectionMembershipJudgmentSchema = Schema.TaggedUnion({
+/** Describe a collection membership judgment and any target requiring clarification.
+ * @category schemas
+ */
+export const CollectionMembershipJudgment = Schema.TaggedUnion({
   Yes: { quantifier: quantifierSchema },
   No: { quantifier: quantifierSchema },
   Undetermined: { quantifier: quantifierSchema },
@@ -1784,14 +1799,14 @@ const collectionMembershipJudgmentSchema = Schema.TaggedUnion({
  * );
  */
 export type CollectionMembershipJudgment<T extends TaxonomicRecord = TaxonomicRecord> = WithTarget<
-  typeof collectionMembershipJudgmentSchema.Type,
+  typeof CollectionMembershipJudgment.Type,
   T
 >;
 
 const yes = (quantifier: RecordQuantifier) =>
-  collectionMembershipJudgmentSchema.cases.Yes.make({ quantifier });
+  CollectionMembershipJudgment.cases.Yes.make({ quantifier });
 const no = (quantifier: RecordQuantifier) =>
-  collectionMembershipJudgmentSchema.cases.No.make({ quantifier });
+  CollectionMembershipJudgment.cases.No.make({ quantifier });
 
 const completedScanJudgment = (quantifier: RecordQuantifier) =>
   Match.value(quantifier).pipe(
@@ -1864,14 +1879,14 @@ const interpretQuantifierAnswer = <T extends TaxonomicRecord>(
     policy,
   );
   if (clarificationAccepted && clarificationTarget !== undefined) {
-    const judgment = collectionMembershipJudgmentSchema.cases.MultipleTaxaInTarget.make({
+    const judgment = CollectionMembershipJudgment.cases.MultipleTaxaInTarget.make({
       quantifier,
       target: clarificationTarget,
     });
     return Option.some({ ...judgment, target: clarificationTarget });
   }
 
-  const judgment = collectionMembershipJudgmentSchema.cases.Undetermined.make({ quantifier });
+  const judgment = CollectionMembershipJudgment.cases.Undetermined.make({ quantifier });
   return Option.some(judgment);
 };
 
@@ -1931,7 +1946,7 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
     }
   }
   if (encounteredUncertainty)
-    return collectionMembershipJudgmentSchema.cases.Undetermined.make({ quantifier });
+    return CollectionMembershipJudgment.cases.Undetermined.make({ quantifier });
   return completedScanJudgment(quantifier);
 });
 

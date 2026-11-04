@@ -42,17 +42,16 @@ export {
  * );
  */
 export * as Taxonomy from "./Taxonomy.ts";
-export { TaxonIdentityJudgment, TaxonMatchJudgment } from "./Taxonomy.ts";
-export type {
-  TaxonMatch,
-  RecordMembershipPartition,
-  RecordsGroupedByTaxa,
-  CollectionMembershipJudgment,
-  RankComparisonJudgment,
+export {
+  TaxonIdentityJudgment,
+  TaxonMatchJudgment,
   TaxonomicRank,
+  RankComparisonJudgment,
   TaxonContainmentJudgment,
   TaxonMembershipJudgment,
+  CollectionMembershipJudgment,
 } from "./Taxonomy.ts";
+export type { TaxonMatch, RecordMembershipPartition, RecordsGroupedByTaxa } from "./Taxonomy.ts";
 
 /**
  * Build set expressions from names or structured records and ask how their organisms relate.
@@ -67,4 +66,4 @@ export type {
  * export const oaks = TaxonSet.of(TaxonName.make("Quercus"));
  */
 export * as TaxonSet from "./TaxonSet.ts";
-export type { TaxonSetRelationJudgment } from "./TaxonSet.ts";
+export { TaxonSetRelation, TaxonSetRelationJudgment } from "./TaxonSet.ts";

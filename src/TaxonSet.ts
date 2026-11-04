@@ -198,7 +198,15 @@ export const complement = <A extends TaxonomicRecord, B extends TaxonomicRecord>
   universe: TaxonSet<B>,
 ): TaxonSet<A | B> => difference(universe, set);
 
-const setRelationJudgmentSchema = Schema.TaggedUnion({
+/** The set relation requested by a predicate question.
+ * @category schemas
+ */
+export const TaxonSetRelation = TaxonRelations.Relation;
+
+/** Describe a set relation judgment and any taxon requiring clarification.
+ * @category schemas
+ */
+export const TaxonSetRelationJudgment = Schema.TaggedUnion({
   Yes: { relation: TaxonRelations.Relation },
   No: { relation: TaxonRelations.Relation },
   Undetermined: { relation: TaxonRelations.Relation },
@@ -234,8 +242,8 @@ const setRelationJudgmentSchema = Schema.TaggedUnion({
  * );
  */
 export type TaxonSetRelationJudgment<R extends TaxonomicRecord = TaxonomicRecord> =
-  | Types.ExcludeTag<typeof setRelationJudgmentSchema.Type, "MultipleTaxaInSet">
-  | (Types.ExtractTag<typeof setRelationJudgmentSchema.Type, "MultipleTaxaInSet"> & {
+  | Types.ExcludeTag<typeof TaxonSetRelationJudgment.Type, "MultipleTaxaInSet">
+  | (Types.ExtractTag<typeof TaxonSetRelationJudgment.Type, "MultipleTaxaInSet"> & {
       readonly taxon: Taxon<R>;
     });
 
@@ -316,22 +324,22 @@ const interpretRelation = <R extends TaxonomicRecord>(
 ): TaxonSetRelationJudgment<R> => {
   const p = answer.probabilities;
   const support = TaxonRelations.predicateSupports(requestedRelation, p);
-  const undetermined = setRelationJudgmentSchema.cases.Undetermined.make({
+  const undetermined = TaxonSetRelationJudgment.cases.Undetermined.make({
     relation: requestedRelation,
   });
   const candidates = Array.make(
     {
-      answer: setRelationJudgmentSchema.cases.Yes.make({ relation: requestedRelation }),
+      answer: TaxonSetRelationJudgment.cases.Yes.make({ relation: requestedRelation }),
       support: support.yes,
     },
     {
-      answer: setRelationJudgmentSchema.cases.No.make({ relation: requestedRelation }),
+      answer: TaxonSetRelationJudgment.cases.No.make({ relation: requestedRelation }),
       support: support.no,
     },
     { answer: undetermined, support: p.undetermined },
   );
   const leftClarifications = Array.map(input.leftTaxa, (taxon, index) => {
-    const judgment = setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
+    const judgment = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: requestedRelation,
       side: "left",
       taxon,
@@ -341,7 +349,7 @@ const interpretRelation = <R extends TaxonomicRecord>(
     return { answer, support };
   });
   const rightClarifications = Array.map(input.rightTaxa, (taxon, index) => {
-    const judgment = setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
+    const judgment = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: requestedRelation,
       side: "right",
       taxon,
@@ -377,7 +385,7 @@ export const isSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isSubsetOf")(functi
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(left))
-    return setRelationJudgmentSchema.cases.Yes.make({ relation: "subset" });
+    return TaxonSetRelationJudgment.cases.Yes.make({ relation: "subset" });
   const request = yield* makeRelationQuestion<A | B>({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
@@ -404,7 +412,7 @@ export const isProperSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isProperSubse
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(right))
-    return setRelationJudgmentSchema.cases.No.make({ relation: "proper-subset" });
+    return TaxonSetRelationJudgment.cases.No.make({ relation: "proper-subset" });
   const request = yield* makeRelationQuestion<A | B>({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
@@ -431,7 +439,7 @@ export const equivalent: SetRelationFn = Effect.fn("TaxonSet.equivalent")(functi
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(left) && taxonSetSchema.guards.Empty(right))
-    return setRelationJudgmentSchema.cases.Yes.make({ relation: "equivalent" });
+    return TaxonSetRelationJudgment.cases.Yes.make({ relation: "equivalent" });
   const request = yield* makeRelationQuestion<A | B>({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
@@ -459,7 +467,7 @@ export const overlaps: SetRelationFn = Effect.fn("TaxonSet.overlaps")(function* 
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(left) || taxonSetSchema.guards.Empty(right))
-    return setRelationJudgmentSchema.cases.No.make({ relation: "overlap" });
+    return TaxonSetRelationJudgment.cases.No.make({ relation: "overlap" });
   const request = yield* makeRelationQuestion<A | B>({ left, right });
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
@@ -490,13 +498,13 @@ export const disjoint: SetRelationFn = Effect.fn("TaxonSet.disjoint")(function* 
   const result = yield* overlaps(left, right, options);
   return Match.value(result).pipe(
     Match.tagsExhaustive({
-      Yes: () => setRelationJudgmentSchema.cases.No.make({ relation: "disjoint" }),
-      No: () => setRelationJudgmentSchema.cases.Yes.make({ relation: "disjoint" }),
+      Yes: () => TaxonSetRelationJudgment.cases.No.make({ relation: "disjoint" }),
+      No: () => TaxonSetRelationJudgment.cases.Yes.make({ relation: "disjoint" }),
       Undetermined: () =>
-        setRelationJudgmentSchema.cases.Undetermined.make({ relation: "disjoint" }),
+        TaxonSetRelationJudgment.cases.Undetermined.make({ relation: "disjoint" }),
       MultipleTaxaInSet: ({ side, taxon }) =>
         Struct.assign(
-          setRelationJudgmentSchema.cases.MultipleTaxaInSet.make({
+          TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
             relation: "disjoint",
             side,
             taxon,
