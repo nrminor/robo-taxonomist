@@ -265,6 +265,60 @@ it("counts the full abundance for overlapping matches and lets a genus record ru
     .toBeVisible();
 });
 
+it.each([
+  { label: "sameTaxon", text: "Same taxon" },
+  { label: "withinTaxon", text: "Within target taxon" },
+  { label: "noMatch", text: "Not a match" },
+  { label: "undetermined", text: "Undetermined" },
+] as const)(
+  "renders $label with every probability in its established order",
+  async ({ label, text }) => {
+    const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(await replyFor("broad"));
+    const reply = {
+      ...response,
+      rows: response.rows.map((row) => ({
+        ...row,
+        matches: row.matches.map((match) => ({
+          ...match,
+          answer: {
+            ...match.answer,
+            label,
+            probabilities: {
+              sameTaxon: 0.11,
+              withinTaxon: 0.22,
+              noMatch: 0.33,
+              undetermined: 0.34,
+            },
+            confidence: 0,
+          },
+        })),
+      })),
+    };
+    const view = await renderDemo(
+      Promise.resolve(Schema.encodeSync(Schema.toCodecJson(PanelResponse))(reply)),
+      () => Promise.reject(new Error("Unexpected browser request")),
+    );
+    await view.getByRole("button", { name: /^Saccharomyces cerevisiae, / }).click();
+    const fungi = view.getByRole("group", { name: "Fungi", exact: true });
+    const summary = fungi.getByText("Answer probabilities", { exact: true });
+    await summary.click();
+    await expect.element(fungi.getByText(`Answer: ${text}`, { exact: true })).toBeVisible();
+    expect(
+      Array.from(
+        summary.element().parentElement?.querySelectorAll("p") ?? [],
+        (p) => p.textContent,
+      ),
+    ).toEqual([
+      `Answer: ${text}`,
+      "Same taxon: 11%",
+      "Within target taxon: 22%",
+      "Not a match: 33%",
+      "Undetermined: 34%",
+      "Answer confidence: 0%",
+    ]);
+  },
+);
+
 it("shows optional provider confidence separately from match support", async () => {
   const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(await replyFor("broad"));
   const reply = {

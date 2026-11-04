@@ -1,14 +1,7 @@
 import { type Ref } from "react";
+import { Match } from "effect";
 import * as Display from "../lib/display.ts";
 import styles from "./record-inspector.module.css";
-
-const answerLabels = {
-  sameTaxon: "Same taxon",
-  withinTaxon: "Within target taxon",
-  noMatch: "Not a match",
-  undetermined: "Undetermined",
-} as const;
-const answerNames = ["sameTaxon", "withinTaxon", "noMatch", "undetermined"] as const;
 
 /** Show one record's per-target answers; headingRef and onBack support list navigation. */
 export const RecordInspector = ({
@@ -29,8 +22,17 @@ export const RecordInspector = ({
       </h3>
       <p className={styles.intro}>Results in {panelName}</p>
       {finding.matches.map((match) => {
-        const { target } = match;
+        const { target, answer } = match;
         const result = Display.judgmentPresentation(match.judgment);
+        const answerLabel = Match.value(answer.label).pipe(
+          Match.literalsExhaustive({
+            sameTaxon: () => "Same taxon",
+            withinTaxon: () => "Within target taxon",
+            noMatch: () => "Not a match",
+            undetermined: () => "Undetermined",
+          }),
+        );
+        const p = answer.probabilities;
         return (
           <div key={target.id} className={styles.judgment} role="group" aria-label={target.name}>
             <div className={styles.header}>
@@ -43,14 +45,13 @@ export const RecordInspector = ({
             <details>
               <summary>Answer probabilities</summary>
               <div className={styles.probabilities}>
-                <p>Answer: {answerLabels[match.answer.label]}</p>
-                {answerNames.map((name) => (
-                  <p key={name}>
-                    {answerLabels[name]}: {Display.formatPercent(match.answer.probabilities[name])}
-                  </p>
-                ))}
-                {match.answer.confidence !== undefined && (
-                  <p>Answer confidence: {Display.formatPercent(match.answer.confidence)}</p>
+                <p>Answer: {answerLabel}</p>
+                <p>Same taxon: {Display.formatPercent(p.sameTaxon)}</p>
+                <p>Within target taxon: {Display.formatPercent(p.withinTaxon)}</p>
+                <p>Not a match: {Display.formatPercent(p.noMatch)}</p>
+                <p>Undetermined: {Display.formatPercent(p.undetermined)}</p>
+                {answer.confidence !== undefined && (
+                  <p>Answer confidence: {Display.formatPercent(answer.confidence)}</p>
                 )}
               </div>
             </details>

@@ -137,26 +137,24 @@ type CompareRecordsFn = (
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
+const describeField = (name: string, value: string | undefined) =>
+  Match.value(value).pipe(
+    Match.when(Match.string, (text) => [`${name}: ${quoteText(text)}`]),
+    Match.orElse(() => []),
+  );
+
 const describeRecord = (record: typeof recordInputSchema.Encoded): string => {
   if (Predicate.isString(record)) {
     return `Record label: ${quoteText(record)}`;
   }
 
-  return pipe(
-    Record.filter(
-      {
-        "Record label": record.label,
-        "Scientific name": record.scientificName,
-        Taxonomy: record.taxonId?.taxonomy,
-        "Taxon ID": record.taxonId?.id,
-        "Taxonomy release": record.taxonId?.release,
-      },
-      Predicate.isNotUndefined,
-    ),
-    Record.toEntries,
-    Array.map(([field, value]) => `${field}: ${quoteText(value)}`),
-    Array.join("\n"),
-  );
+  return [
+    ...describeField("Record label", record.label),
+    ...describeField("Scientific name", record.scientificName),
+    ...describeField("Taxonomy", record.taxonId?.taxonomy),
+    ...describeField("Taxon ID", record.taxonId?.id),
+    ...describeField("Taxonomy release", record.taxonId?.release),
+  ].join("\n");
 };
 
 const rankComparisonInputSchema = Schema.Struct({

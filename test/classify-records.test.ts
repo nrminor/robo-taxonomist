@@ -379,6 +379,52 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("formats each identifying-field combination without blank or reordered lines", () => {
+  const label = RecordLabel.make("voucher");
+  const scientificName = TaxonName.make("Quercus robur");
+  const taxonId = TaxonId.make({ taxonomy: "ncbi", id: "38942" });
+  const records = [
+    label,
+    { label },
+    { scientificName },
+    { taxonId },
+    { label, scientificName },
+    { label, taxonId },
+    { scientificName, taxonId },
+    { label, scientificName, taxonId },
+  ];
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state, decisions }) => {
+        const input = Schema.decodeUnknownSync(inputSchema)(state);
+        expect(input.records).toEqual([
+          'Record label: "voucher"',
+          'Record label: "voucher"',
+          'Scientific name: "Quercus robur"',
+          'Taxonomy: "ncbi"\nTaxon ID: "38942"',
+          'Record label: "voucher"\nScientific name: "Quercus robur"',
+          'Record label: "voucher"\nTaxonomy: "ncbi"\nTaxon ID: "38942"',
+          'Scientific name: "Quercus robur"\nTaxonomy: "ncbi"\nTaxon ID: "38942"',
+          'Record label: "voucher"\nScientific name: "Quercus robur"\nTaxonomy: "ncbi"\nTaxon ID: "38942"',
+        ]);
+        return Effect.succeed({
+          answers: Record.map(decisions, () => answer("undetermined", [0, 0, 0, 1])),
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const result = yield* Taxonomy.classifyRecords(records, TaxonSet.of(scientificName));
+    for (const [index, row] of result.records.entries()) {
+      expect(row.record).toBe(records[index]);
+      expect(row.ranking).toEqual([]);
+    }
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "preserves repeated occurrences through intersections and keeps ranking ties stable",
   () => {
