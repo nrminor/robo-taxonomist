@@ -1,6 +1,6 @@
 import "server-only";
 import { Clock, Data, Effect, Layer, Match, Option, Redacted, Result, Schema } from "effect";
-import { AiError, DecisionModel } from "effect/ai";
+import { AiError, DecisionModel, type Decision } from "effect/ai";
 import {
   Headers,
   HttpClient,
@@ -35,6 +35,7 @@ const responseSchema = Schema.Struct({
   }),
 });
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+const Decisions = Data.taggedEnum<Decision.Any>();
 
 const invalidOutput = () =>
   AiError.make({
@@ -151,7 +152,7 @@ export const clefModelLayer = (options: {
           }
         > = Object.create(null);
         for (const [key, decision] of entries) {
-          if (decision._tag !== "Classify") {
+          if (!Decisions.$is("Classify")(decision)) {
             return yield* AiError.make({
               module: "ClefModel",
               method: "decide",

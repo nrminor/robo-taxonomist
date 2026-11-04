@@ -17,6 +17,7 @@ import {
   Redacted,
   Schema,
 } from "effect";
+import { Decision, DecisionModel } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import { TaxonMatchJudgment, TaxonName, Taxonomy } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
@@ -57,6 +58,55 @@ const liveConfig = {
 };
 
 class RequestId extends Context.Service<RequestId, string>()("test/ClefRequestId") {}
+
+it.effect.each([
+  {
+    name: "a rating decision",
+    decision: Decision.rate({ instructions: "Rate this", criteria: ["low", "high"] }),
+    description: "This Clef adapter supports only Classify decisions",
+  },
+  {
+    name: "a probability decision",
+    decision: Decision.probability({ instructions: "Estimate this" }),
+    description: "This Clef adapter supports only Classify decisions",
+  },
+  {
+    name: "structured classification instructions",
+    decision: Decision.classify({
+      instructions: { task: "Classify this" },
+      criteria: { yes: "Yes", no: "No" },
+    }),
+    description: "This Clef adapter requires string instructions and criteria",
+  },
+  {
+    name: "a null classification criterion",
+    decision: Decision.classify({
+      instructions: "Classify this",
+      criteria: { yes: "Yes", no: null },
+    }),
+    description: "This Clef adapter requires string instructions and criteria",
+  },
+])("rejects $name before transport", ({ decision, description }) => {
+  const execute = vi.fn(() => Effect.die("Unexpected provider transport"));
+  const definition = Decision.make({ input: Schema.Null, decisions: { question: decision } });
+
+  return Effect.gen(function* () {
+    const error = yield* DecisionModel.decide(definition, { input: null }).pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "AiError",
+      module: "ClefModel",
+      method: "decide",
+      reason: { _tag: "InvalidRequestError", description },
+    });
+    expect(execute).not.toHaveBeenCalled();
+  }).pipe(
+    Effect.provide(
+      ClefModel.clefModelLayer({ accountId, apiToken: Redacted.make(token) }).pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
+      ),
+    ),
+  );
+});
 
 it.effect.each([false, true])(
   "retains HTTP cause annotations and accompanying interruption (%s)",
@@ -251,21 +301,27 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
   }
 });
 
-it("keeps fixture mode independent of live credentials and transport", async () => {
-  const fetch = vi.fn(() => Promise.reject(new Error("Provider forbidden")));
-  const runtime = configuredRuntime(fetch, {
-    DEMO_MODEL: "fixture",
-    CLOUDFLARE_ACCOUNT_ID: "invalid",
-    CLOUDFLARE_API_TOKEN: "",
-  });
-  try {
-    const response = await makeHandlers(runtime).classifyHttp(requestPanel());
-    expect(response.status).toBe(200);
-    expect(fetch).not.toHaveBeenCalled();
-  } finally {
-    await runtime.dispose();
-  }
-});
+it.each(["default", "explicit"] as const)(
+  "keeps %s fixture mode independent of live credentials and transport",
+  async (mode) => {
+    const fetch = vi.fn(() => Promise.reject(new Error("Provider forbidden")));
+    const config = {
+      CLOUDFLARE_ACCOUNT_ID: "invalid",
+      CLOUDFLARE_API_TOKEN: "",
+    };
+    const runtime = configuredRuntime(
+      fetch,
+      mode === "explicit" ? { ...config, DEMO_MODEL: "fixture" } : config,
+    );
+    try {
+      const response = await makeHandlers(runtime).classifyHttp(requestPanel());
+      expect(response.status).toBe(200);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
+    }
+  },
+);
 
 it.each([
   { status: 400, reason: PublicModelReason.cases.InvalidRequestError.make({}), retryable: false },
