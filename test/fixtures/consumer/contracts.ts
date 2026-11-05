@@ -19,7 +19,7 @@ import {
   type TaxonContainmentJudgment,
   type TaxonMembershipJudgment,
   type TaxonMatch,
-  type TaxonMatchJudgment,
+  TaxonMatchJudgment,
   type TaxonSetRelationJudgment,
 } from "robo-taxonomist";
 
@@ -262,7 +262,10 @@ export type Contracts = [
   Assert<Equal<TaxonMatch<typeof specimen>["record"], typeof specimen>>,
   Assert<Equal<TaxonMatch<typeof specimen>["taxon"], Types.ExtractTag<TaxonSet.TaxonSet, "Taxon">>>,
   Assert<Equal<ClassifiedMatch["judgment"], TaxonMatchJudgment>>,
-  Assert<Equal<TaxonMatchJudgment["_tag"], "Matched" | "NotMatched" | "Undetermined">>,
+  Assert<
+    Equal<TaxonMatchJudgment["_tag"], "SameTaxon" | "WithinTaxon" | "NotMatched" | "Undetermined">
+  >,
+  Assert<Equal<typeof TaxonMatchJudgment.Type, TaxonMatchJudgment>>,
   Assert<
     Equal<
       ClassifiedMatch["answer"],
@@ -272,9 +275,13 @@ export type Contracts = [
   Assert<Equal<Classified["usage"], readonly DecisionModel.DecisionUsage[]>>,
   Assert<Equal<Effect.Error<typeof classified>, Errors.TaxonomyError>>,
   Assert<Equal<Effect.Services<typeof classified>, DecisionModel.DecisionModel>>,
-  Assert<Equal<ClassifiedMatch["support"] extends number ? true : false, true>>,
-  Assert<Equal<number extends ClassifiedMatch["support"] ? true : false, false>>,
-  Assert<Equal<IsAny<ClassifiedMatch["support"]>, false>>,
+  Assert<Equal<Extract<keyof ClassifiedMatch, "support">, never>>,
+  Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "SameTaxon">["support"], number>>,
+  Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "WithinTaxon">["support"], number>>,
+  Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "NotMatched">["support"], number>>,
+  Assert<
+    Equal<Types.ExtractTag<TaxonMatchJudgment, "Undetermined">, { readonly _tag: "Undetermined" }>
+  >,
   Assert<Judgment<typeof classifiedVouchers, "A17"[]>>,
   Assert<Judgment<typeof rank, RankComparisonJudgment>>,
   Assert<Equal<RankComparisonJudgment, ExpectedRankComparison>>,

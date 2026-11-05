@@ -2,7 +2,6 @@ import * as Array from "effect/Array";
 import * as BigDecimal from "effect/BigDecimal";
 import { pipe } from "effect/Function";
 import * as Iterable from "effect/Iterable";
-import * as Number from "effect/Number";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -10,7 +9,8 @@ export const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, m
 
 /**
  * Set the minimum model-reported support and margin needed to accept a judgment.
- * Support can combine probabilities for choices that imply the same broader answer.
+ * Classification uses the selected answer's individual support. Rank, containment
+ * and set questions can combine probabilities for choices implying the same broader answer.
  * Margin is the lead over the strongest competing answer, including uncertainty
  * and clarification choices. Every accepted answer must have a unique lead.
  * Uncertainty and clarification retain their reported probability mass.
@@ -68,17 +68,16 @@ export type Scored<A> = {
 
 /**
  * Check whether an answer has enough support and margin.
- * Pass its support, the supports of the other answers, and the acceptance policy.
+ * Pass its support, the strongest competing support, and the acceptance policy.
  * @example
  * import { accepts, defaultPolicy } from "./AcceptancePolicy.ts";
- * export const accepted = accepts(0.6, [0.3, 0.1], defaultPolicy);
+ * export const accepted = accepts(0.6, 0.3, defaultPolicy);
  */
 export const accepts = (
   support: number,
-  alternatives: Iterable<number>,
+  strongestAlternative: number,
   policy: AcceptancePolicy,
-) => {
-  const strongestAlternative = Iterable.reduce(alternatives, 0, Number.max);
+): boolean => {
   const margin = support - strongestAlternative;
   return (
     margin > 0 &&
@@ -116,18 +115,20 @@ export const select = <A>(
   candidates: Array.NonEmptyReadonlyArray<Scored<A>>,
   policy: AcceptancePolicy,
 ): Option.Option<A> => {
-  const leading = Array.reduce(
-    candidates,
-    { index: 0, candidate: Array.headNonEmpty(candidates) },
-    (best, candidate, index) =>
-      candidate.support > best.candidate.support ? { index, candidate } : best,
-  );
-  const alternatives = pipe(
-    candidates,
-    Iterable.filter((_candidate, index) => index !== leading.index),
-    Iterable.map(({ support }) => support),
-  );
-  return accepts(leading.candidate.support, alternatives, policy)
-    ? Option.some(leading.candidate.answer)
+  let leading = Array.headNonEmpty(candidates);
+  let strongestAlternative = 0;
+
+  for (let index = 1; index < candidates.length; index++) {
+    const candidate = Array.getUnsafe(candidates, index);
+    if (candidate.support > leading.support) {
+      strongestAlternative = Math.max(strongestAlternative, leading.support);
+      leading = candidate;
+    } else {
+      strongestAlternative = Math.max(strongestAlternative, candidate.support);
+    }
+  }
+
+  return accepts(leading.support, strongestAlternative, policy)
+    ? Option.some(leading.answer)
     : Option.none();
 };

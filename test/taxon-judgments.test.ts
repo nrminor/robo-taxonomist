@@ -237,6 +237,50 @@ it.effect("uses projected containment support instead of a nonleading fine selec
 );
 
 it.effect.each([
+  {
+    behavior: "refines non-selected pooled containment support at the inclusive detail threshold",
+    label: "equal",
+    probabilities: { equal: 0.1, properSuperset: 0.2, partialOverlap: 0.4, disjoint: 0.3 },
+    minimumSupport: 0.6,
+    minimumMargin: 0.2,
+    expected: "PartlyContained",
+  },
+  {
+    behavior: "retains non-containment when the global detail leader implies containment",
+    label: "equal",
+    probabilities: { equal: 0.4, partialOverlap: 0.3, disjoint: 0.3 },
+    minimumSupport: 0,
+    minimumMargin: 0,
+    expected: "NotContained",
+  },
+  {
+    behavior: "gates containment detail on a tied pooled parent even with zero thresholds",
+    label: "properSubset",
+    probabilities: { equal: 0.2, properSubset: 0.3, partialOverlap: 0.5 },
+    minimumSupport: 0,
+    minimumMargin: 0,
+    expected: "Undetermined",
+  },
+])("$behavior", ({ label, probabilities, minimumSupport, minimumMargin, expected }) =>
+  Effect.gen(function* () {
+    const containment = yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
+      policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
+    });
+    expect(containment).toEqual({ _tag: expected });
+  }).pipe(
+    Effect.provide(
+      scalarLayer(
+        "containment",
+        Classify({
+          label,
+          probabilities: { ...containmentProbabilities, ...probabilities },
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
   ["accepts relaxed thresholds", 0, 0, "Contained"],
   ["rejects insufficient support", 0.875, 0, "Undetermined"],
   ["rejects insufficient margin", 0, 0.625, "Undetermined"],
@@ -484,6 +528,36 @@ it.effect.each([
         ),
       ),
     ),
+);
+
+it.effect("includes a later target clarification in singleton membership's margin", () =>
+  Effect.gen(function* () {
+    const target = TaxonSet.union(
+      TaxonSet.of(TaxonName.make("A")),
+      TaxonSet.of(TaxonName.make("B")),
+    );
+    const membership = yield* Taxonomy.recordBelongsTo(RecordLabel.make("subject"), target, {
+      policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }),
+    });
+    expect(membership).toEqual({ _tag: "Undetermined" });
+  }).pipe(
+    Effect.provide(
+      scalarLayer(
+        "record0",
+        Classify({
+          label: "member",
+          probabilities: {
+            member: 0.6,
+            notMember: 0,
+            mixed: 0,
+            undetermined: 0,
+            multipleTarget0: 0,
+            multipleTarget1: 0.4,
+          },
+        }),
+      ),
+    ),
+  ),
 );
 
 it.effect(
@@ -889,6 +963,18 @@ it.effect.each([
     AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
   ],
   ["explicit uncertainty", "undetermined", { same: 0.9, undetermined: 0.1 }, undefined],
+  [
+    "clarification competes with an ordinary identity answer's margin",
+    "same",
+    { same: 0.6, multipleBoth: 0.4 },
+    AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }),
+  ],
+  [
+    "diagnosis sides tie",
+    "multipleLeft",
+    { multipleLeft: 0.5, multipleRight: 0.5 },
+    AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+  ],
   [
     "support stays exact",
     "same",

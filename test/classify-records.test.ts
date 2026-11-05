@@ -41,7 +41,7 @@ const boundedTaxon = (name: string) => {
 
 // Supplied answers test classification contracts, not biological accuracy.
 it.effect.each(["binary", "collection"] as const)(
-  "ranks supported taxa preserving original records and nodes (%s)",
+  "ranks individual relationship support preserving original records and nodes (%s)",
   (construction) => {
     const record = {
       scientificName: TaxonName.make("Saccharomyces cerevisiae"),
@@ -69,7 +69,7 @@ it.effect.each(["binary", "collection"] as const)(
           return Effect.succeed({
             answers: {
               r0t0: answer("withinTaxon", [0.01, 0.96, 0.01, 0.02]),
-              r0t1: answer("sameTaxon", [0.94, 0.01, 0.02, 0.03]),
+              r0t1: answer("sameTaxon", [0.94, 0.05, 0.005, 0.005]),
               r0t2: answer("noMatch", [0.01, 0.01, 0.96, 0.02]),
             },
             usage: { inputTokens: 101, outputTokens: 53 },
@@ -92,16 +92,15 @@ it.effect.each(["binary", "collection"] as const)(
       expect(first.record).toBe(record);
       expect(first.pipe((match) => match.record.sampleId)).toBe("sample-17");
       expect(first.record.sequenceAbundance).toBe(8);
-      expect(row.taxa.map((match) => match.judgment._tag)).toEqual([
-        "Matched",
-        "Matched",
-        "NotMatched",
+      expect(row.taxa.map((match) => match.judgment)).toEqual([
+        { _tag: "WithinTaxon", support: 0.96 },
+        { _tag: "SameTaxon", support: 0.94 },
+        { _tag: "NotMatched", support: 0.96 },
       ]);
       expect(row.ranking.map((match) => match.taxon.record.scientificName)).toEqual([
         "Saccharomyces",
         "Saccharomyces cerevisiae",
       ]);
-      expect(row.ranking.map((match) => match.support)).toEqual([0.97, 0.95]);
       expect(Array.head(row.ranking).pipe(Option.getOrThrow)).toBe(first);
       expect(first.answer.label).toBe("withinTaxon");
       expect(first.answer.probabilities.withinTaxon).toBe(0.96);
@@ -113,8 +112,8 @@ it.effect.each(["binary", "collection"] as const)(
 );
 
 it.effect("separates negative evidence from uncertainty and preserves rounded answers", () => {
-  const records = ["negative", "unknown", "combined", "tie", "rounded"].map((label) =>
-    RecordLabel.make(label),
+  const records = ["negative", "unknown", "nonleader", "half-supported negative", "rounded"].map(
+    (label) => RecordLabel.make(label),
   );
   const panel = TaxonSet.of(TaxonName.make("Saccharomyces"));
   const layer = Layer.effect(
@@ -137,21 +136,162 @@ it.effect("separates negative evidence from uncertainty and preserves rounded an
   return Effect.gen(function* () {
     const result = yield* Taxonomy.classifyRecords(records, panel);
     const matches = result.records.flatMap((row) => row.taxa);
-    expect(matches.map((match) => match.judgment._tag)).toEqual([
-      "NotMatched",
-      "Undetermined",
-      "Matched",
-      "Undetermined",
-      "Matched",
+    expect(matches.map((match) => match.judgment)).toEqual([
+      { _tag: "NotMatched", support: 0.85 },
+      { _tag: "Undetermined" },
+      { _tag: "Undetermined" },
+      { _tag: "NotMatched", support: 0.5 },
+      { _tag: "SameTaxon", support: 0.7 },
     ]);
-    expect(matches.map((match) => match.support)).toEqual([0.1, 0.1, 0.85, 0.5, 1]);
-    expect(result.records.map((row) => row.ranking.length)).toEqual([0, 0, 1, 0, 1]);
-    const combined = Array.get(matches, 2).pipe(Option.getOrThrow);
+    expect(result.records.map((row) => row.ranking.length)).toEqual([0, 0, 0, 0, 1]);
+    const nonleader = Array.get(matches, 2).pipe(Option.getOrThrow);
     const rounded = Array.get(matches, 4).pipe(Option.getOrThrow);
-    expect(combined.answer.label).toBe("noMatch");
+    expect(nonleader.answer.label).toBe("noMatch");
     expect(rounded.answer.probabilities.withinTaxon).toBe(0.3000002);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("leaves split positive answers unaccepted and retains the model's scores", () => {
+  const reported = {
+    label: "sameTaxon",
+    probabilities: { sameTaxon: 0.49, withinTaxon: 0.49, noMatch: 0.01, undetermined: 0.01 },
+    confidence: 0.02,
+  };
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () =>
+        Effect.succeed({
+          answers: { r0t0: Classify(reported) },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        }),
+    }),
+  );
+  return Effect.gen(function* () {
+    const result = yield* Taxonomy.classifyRecords(
+      [RecordLabel.make("subject")],
+      TaxonSet.of(TaxonName.make("Saccharomyces")),
+    );
+    const row = Array.head(result.records).pipe(Option.getOrThrow);
+    const match = Array.head(row.taxa).pipe(Option.getOrThrow);
+    expect(match.judgment).toEqual({ _tag: "Undetermined" });
+    expect(match.answer).toEqual(reported);
+    expect(match).not.toHaveProperty("support");
+    expect(row.ranking).toEqual([]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([
+  ["Lactiplantibacillus plantarum", "Acetobacteraceae", [0.1928, 0.4262, 0.2568, 0.1242], 0.0669],
+  [
+    "Lacticaseibacillus rhamnosus",
+    "Lactiplantibacillus plantarum",
+    [0.2834, 0.2976, 0.2375, 0.1815],
+    0.011,
+  ],
+] as const)(
+  "leaves the weak reported relationship from %s to %s unaccepted",
+  ([name, target, probabilities, confidence]) => {
+    const supplied = { ...answer("withinTaxon", probabilities), confidence };
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.succeed({
+            answers: { r0t0: supplied },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          }),
+      }),
+    );
+    return Effect.gen(function* () {
+      const result = yield* Taxonomy.classifyRecords(
+        [{ scientificName: TaxonName.make(name) }],
+        TaxonSet.of(TaxonName.make(target)),
+      );
+      const row = Array.head(result.records).pipe(Option.getOrThrow);
+      const match = Array.head(row.taxa).pipe(Option.getOrThrow);
+      expect(match.judgment).toEqual({ _tag: "Undetermined" });
+      expect(match.answer).toEqual({
+        label: "withinTaxon",
+        probabilities: supplied.probabilities,
+        confidence,
+      });
+      expect(row.ranking).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect.each([
+  ["uniform", "withinTaxon", [0.25, 0.25, 0.25, 0.25]],
+  ["positive tie", "sameTaxon", [0.49, 0.49, 0.01, 0.01]],
+  ["positive/negative tie", "sameTaxon", [0.5, 0, 0.5, 0]],
+  ["selected nonleader", "noMatch", [0.01, 0.97, 0.01, 0.01]],
+  ["explicit uncertainty", "undetermined", [0.97, 0.01, 0.01, 0.01]],
+  ["sameTaxon below withinTaxon", "sameTaxon", [0.4, 0.5, 0.05, 0.05]],
+  ["sameTaxon below noMatch", "sameTaxon", [0.4, 0.05, 0.5, 0.05]],
+  ["sameTaxon below undetermined", "sameTaxon", [0.4, 0.05, 0.05, 0.5]],
+  ["withinTaxon below sameTaxon", "withinTaxon", [0.5, 0.4, 0.05, 0.05]],
+  ["withinTaxon below noMatch", "withinTaxon", [0.05, 0.4, 0.5, 0.05]],
+  ["withinTaxon below undetermined", "withinTaxon", [0.05, 0.4, 0.05, 0.5]],
+  ["noMatch below sameTaxon", "noMatch", [0.5, 0.05, 0.4, 0.05]],
+  ["noMatch below withinTaxon", "noMatch", [0.05, 0.5, 0.4, 0.05]],
+  ["noMatch below undetermined", "noMatch", [0.05, 0.05, 0.4, 0.5]],
+] as const)(
+  "abstains for %s even with zero acceptance thresholds",
+  ([_case, label, probabilities]) => {
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.succeed({
+            answers: { r0t0: answer(label, probabilities) },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          }),
+      }),
+    );
+    return Effect.gen(function* () {
+      const result = yield* Taxonomy.classifyRecords(
+        [RecordLabel.make("subject")],
+        TaxonSet.of(TaxonName.make("Saccharomyces")),
+        { policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }) },
+      );
+      const row = Array.head(result.records).pipe(Option.getOrThrow);
+      expect(row.taxa.map((match) => match.judgment)).toEqual([{ _tag: "Undetermined" }]);
+      expect(row.taxa.map((match) => match.answer.label)).toEqual([label]);
+      expect(row.ranking).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect.each([
+  ["inclusive boundaries", 0.6, 0.2, { _tag: "SameTaxon", support: 0.6 }],
+  ["insufficient support", 0.6000000000000001, 0.2, { _tag: "Undetermined" }],
+  ["insufficient margin", 0.6, 0.2000000000000003, { _tag: "Undetermined" }],
+] as const)(
+  "applies the caller's policy to classification: %s",
+  ([_case, minimumSupport, minimumMargin, expected]) => {
+    const layer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.succeed({
+            answers: { r0t0: answer("sameTaxon", [0.6, 0.4, 0, 0]) },
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          }),
+      }),
+    );
+    return Effect.gen(function* () {
+      const result = yield* Taxonomy.classifyRecords(
+        [RecordLabel.make("subject")],
+        TaxonSet.of(TaxonName.make("Saccharomyces")),
+        { policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }) },
+      );
+      expect(result.records.flatMap((row) => row.taxa.map((match) => match.judgment))).toEqual([
+        expected,
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("returns original records with no comparisons or requests for empty inputs", () => {
   const record = { label: RecordLabel.make("subject"), abundance: 8 };
@@ -239,6 +379,52 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("formats each identifying-field combination without blank or reordered lines", () => {
+  const label = RecordLabel.make("voucher");
+  const scientificName = TaxonName.make("Quercus robur");
+  const taxonId = TaxonId.make({ taxonomy: "ncbi", id: "38942" });
+  const records = [
+    label,
+    { label },
+    { scientificName },
+    { taxonId },
+    { label, scientificName },
+    { label, taxonId },
+    { scientificName, taxonId },
+    { label, scientificName, taxonId },
+  ];
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state, decisions }) => {
+        const input = Schema.decodeUnknownSync(inputSchema)(state);
+        expect(input.records).toEqual([
+          'Record label: "voucher"',
+          'Record label: "voucher"',
+          'Scientific name: "Quercus robur"',
+          'Taxonomy: "ncbi"\nTaxon ID: "38942"',
+          'Record label: "voucher"\nScientific name: "Quercus robur"',
+          'Record label: "voucher"\nTaxonomy: "ncbi"\nTaxon ID: "38942"',
+          'Scientific name: "Quercus robur"\nTaxonomy: "ncbi"\nTaxon ID: "38942"',
+          'Record label: "voucher"\nScientific name: "Quercus robur"\nTaxonomy: "ncbi"\nTaxon ID: "38942"',
+        ]);
+        return Effect.succeed({
+          answers: Record.map(decisions, () => answer("undetermined", [0, 0, 0, 1])),
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const result = yield* Taxonomy.classifyRecords(records, TaxonSet.of(scientificName));
+    for (const [index, row] of result.records.entries()) {
+      expect(row.record).toBe(records[index]);
+      expect(row.ranking).toEqual([]);
+    }
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "preserves repeated occurrences through intersections and keeps ranking ties stable",
   () => {
@@ -298,7 +484,13 @@ it.effect(
       const lastMatch = Array.head(last.taxa).pipe(Option.getOrThrow);
       expect(first.ranking).toEqual(firstTaxa);
       expect(last.ranking).toEqual(lastTaxa);
-      expect(firstMatch.judgment._tag).toBe("Matched");
+      for (const [index, match] of firstTaxa.entries()) {
+        expect(first.ranking[index]).toBe(match);
+      }
+      for (const [index, match] of lastTaxa.entries()) {
+        expect(last.ranking[index]).toBe(match);
+      }
+      expect(firstMatch.judgment._tag).toBe("WithinTaxon");
       expect(lastMatch.judgment._tag).toBe("NotMatched");
       expect(firstMatch).not.toBe(lastMatch);
     }).pipe(Effect.provide(layer));

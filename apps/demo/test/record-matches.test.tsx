@@ -50,7 +50,7 @@ const examples = [
     kind: "Species record",
     metadata: "Species · 14%",
     share: "14%",
-    result: "Matches",
+    result: "Classified",
   },
   {
     example: "Inspect genus-only example",
@@ -58,7 +58,7 @@ const examples = [
     kind: "Genus-only record",
     metadata: "Genus · 4%",
     share: "4%",
-    result: "Matches",
+    result: "Classified",
   },
   {
     example: "Inspect unclassified example",
@@ -66,7 +66,7 @@ const examples = [
     kind: "Unresolved name",
     metadata: "Unclassified · 4%",
     share: "4%",
-    result: "Uncertain",
+    result: "Unresolved",
   },
 ] satisfies ReadonlyArray<{
   example: string;
@@ -74,7 +74,7 @@ const examples = [
   kind: string;
   metadata: string;
   share: string;
-  result: "Matches" | "Uncertain";
+  result: "Classified" | "Unresolved";
 }>;
 
 it.each(examples)(
@@ -202,7 +202,7 @@ it("shows a focused genus record ruling out the species target after a real pane
     .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
     .toBeVisible();
   const row = view.getByRole("button", {
-    name: "Lactiplantibacillus, 3% of sample. No match. Select record",
+    name: "Lactiplantibacillus, 3% of sample. No matches. Select record",
     exact: true,
   });
   await row.click();
@@ -211,7 +211,7 @@ it("shows a focused genus record ruling out the species target after a real pane
     .element(
       inspector
         .getByRole("group", { name: "Lactiplantibacillus plantarum", exact: true })
-        .getByText("No match", { exact: true }),
+        .getByText("Not a match", { exact: true }),
     )
     .toBeVisible();
   await expect

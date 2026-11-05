@@ -1,6 +1,20 @@
 import { Schema, type Data } from "effect";
 import { DecisionModel } from "effect/ai";
-import { RecordLabel, TaxonId, TaxonIdentityJudgment, TaxonName, TaxonSet } from "robo-taxonomist";
+import {
+  CollectionMembershipJudgment,
+  TaxonMembershipJudgment,
+  TaxonSetRelationJudgment,
+  RankComparisonJudgment,
+  RecordLabel,
+  TaxonContainmentJudgment,
+  TaxonId,
+  TaxonIdentityJudgment,
+  TaxonMatchJudgment,
+  TaxonName,
+  TaxonSet,
+  TaxonSetRelation,
+  TaxonomicRank as Rank,
+} from "robo-taxonomist";
 
 const jsonFields = Schema.Record(Schema.String, Schema.Json);
 const identifier = Schema.StructWithRest(TaxonId, [jsonFields]);
@@ -66,27 +80,10 @@ export const restoreSet = (document: typeof SetDocument.Type): TaxonSet.TaxonSet
     Difference: ({ left, right }) => TaxonSet.difference(restoreSet(left), restoreSet(right)),
   });
 
-const side = Schema.Literals(["left", "right", "both"]);
 /** Select a supported level of taxonomic classification. */
-export const TaxonomicRank = Schema.Literals([
-  "domain",
-  "kingdom",
-  "phylum",
-  "class",
-  "order",
-  "family",
-  "genus",
-  "species",
-]).annotate({ identifier: "TaxonomicRank", description: "A level of taxonomic classification." });
+export const TaxonomicRank = Rank;
 /** Select the relationship to test between two taxon sets. */
-export const SetRelation = Schema.Literals([
-  "subset",
-  "proper-subset",
-  "equivalent",
-  "overlap",
-  "disjoint",
-]).annotate({ identifier: "SetRelation", description: "A relationship between two taxon sets." });
-const quantifier = Schema.Literals(["all", "any", "none"]);
+export const SetRelation = TaxonSetRelation;
 const taxonDocument = SetDocument.cases.Taxon;
 
 /** Describe whether two taxonomic assignments identify the same taxon. */
@@ -96,69 +93,31 @@ export const IdentityJudgment = TaxonIdentityJudgment.annotate({
 });
 
 /** Describe whether one taxon's organisms belong to another taxon. */
-export const ContainmentJudgment = Schema.TaggedUnion({
-  Contained: {},
-  PartlyContained: {},
-  Disjoint: {},
-  NotContained: {},
-  Undetermined: {},
-  MultipleTaxa: { side },
-}).annotate({
+export const ContainmentJudgment = TaxonContainmentJudgment.annotate({
   identifier: "ContainmentJudgment",
   description: "A judgment about taxon containment.",
 });
 
 /** Describe a comparison at a selected taxonomic rank. */
-export const RankJudgment = Schema.TaggedUnion({
-  SameTaxonAtRank: { rank: TaxonomicRank },
-  SameMultipleTaxaAtRank: { rank: TaxonomicRank },
-  SameTaxaAtRank: { rank: TaxonomicRank },
-  LeftTaxaWithinRightAtRank: { rank: TaxonomicRank },
-  RightTaxaWithinLeftAtRank: { rank: TaxonomicRank },
-  PartlySharedTaxaAtRank: { rank: TaxonomicRank },
-  NoSharedTaxaAtRank: { rank: TaxonomicRank },
-  DifferentTaxaAtRank: { rank: TaxonomicRank },
-  Undetermined: { rank: TaxonomicRank },
-  MultipleTaxaAtRank: { rank: TaxonomicRank, side },
-}).annotate({
+export const RankJudgment = RankComparisonJudgment.annotate({
   identifier: "RankJudgment",
   description: "A judgment about taxa at a selected rank.",
 });
 
 /** Describe the answer and any clarification taxon for a set relation. */
-export const SetRelationJudgment = Schema.TaggedUnion({
-  Yes: { relation: SetRelation },
-  No: { relation: SetRelation },
-  Undetermined: { relation: SetRelation },
-  MultipleTaxaInSet: {
-    relation: SetRelation,
-    side: Schema.Literals(["left", "right"]),
-    taxon: taxonDocument,
-  },
-}).annotate({
+export const SetRelationJudgment = TaxonSetRelationJudgment.annotate({
   identifier: "SetRelationJudgment",
   description: "A judgment about a taxon set relationship.",
 });
 
 /** Describe the answer to an all, any or none membership question. */
-export const QuantifierJudgment = Schema.TaggedUnion({
-  Yes: { quantifier },
-  No: { quantifier },
-  Undetermined: { quantifier },
-  MultipleTaxaInTarget: { quantifier, target: taxonDocument },
-}).annotate({
+export const QuantifierJudgment = CollectionMembershipJudgment.annotate({
   identifier: "QuantifierJudgment",
   description: "An all, any or none membership judgment.",
 });
 
 /** Describe a record's membership judgment and any clarification target. */
-export const MembershipJudgment = Schema.TaggedUnion({
-  Member: {},
-  NotMember: {},
-  MixedMembership: {},
-  Undetermined: {},
-  MultipleTaxaInTarget: { target: taxonDocument },
-}).annotate({
+export const MembershipJudgment = TaxonMembershipJudgment.annotate({
   identifier: "MembershipJudgment",
   description: "A judgment about taxon set membership.",
 });
@@ -189,8 +148,7 @@ const classificationAnswer = Schema.Struct({
 const taxonMatch = Schema.Struct({
   record: RecordInput,
   taxon: taxonDocument,
-  support: probability,
-  judgment: Schema.TaggedUnion({ Matched: {}, NotMatched: {}, Undetermined: {} }),
+  judgment: TaxonMatchJudgment,
   answer: classificationAnswer,
 });
 /** Preserve the panel, record outcomes, accepted rankings, model answers and usage. */

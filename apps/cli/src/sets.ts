@@ -158,14 +158,15 @@ const relation = Command.make(
       right.files,
       Option.getOrUndefined(right.format),
     );
-    const operations = {
-      subset: TaxonSet.isSubsetOf,
-      "proper-subset": TaxonSet.isProperSubsetOf,
-      equivalent: TaxonSet.equivalent,
-      overlap: TaxonSet.overlaps,
-      disjoint: TaxonSet.disjoint,
-    };
-    const result = yield* operations[relation](leftSet, rightSet);
+    const result = yield* Match.value(relation).pipe(
+      Match.literalsExhaustive({
+        subset: () => TaxonSet.isSubsetOf(leftSet, rightSet),
+        "proper-subset": () => TaxonSet.isProperSubsetOf(leftSet, rightSet),
+        equivalent: () => TaxonSet.equivalent(leftSet, rightSet),
+        overlap: () => TaxonSet.overlaps(leftSet, rightSet),
+        disjoint: () => TaxonSet.disjoint(leftSet, rightSet),
+      }),
+    );
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeRelation(result, noHeader),

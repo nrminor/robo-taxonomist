@@ -111,7 +111,7 @@ it("enters at its fresh position and reclaims an exiting row without resetting i
   expect(original).toHaveAttribute("tabindex", "-1");
   expect(original).toHaveAttribute(
     "aria-label",
-    expect.stringContaining("Matches · Match support:"),
+    expect.stringContaining("Within target taxon · Accepted answer support:"),
   );
   const entry = view.getByRole("img", { name: /^Kluyveromyces lactis · species/ }).element();
   const entrance = entry.getAnimations({ subtree: true });

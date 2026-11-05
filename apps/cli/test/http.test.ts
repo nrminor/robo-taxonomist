@@ -248,9 +248,9 @@ it.effect(
       expect(result.usage).toEqual([{}, {}, {}]);
       for (const row of result.records) {
         expect(row.taxa.map(({ judgment }) => judgment)).toEqual([
-          { _tag: "Matched" },
-          { _tag: "Matched" },
-          { _tag: "NotMatched" },
+          { _tag: "WithinTaxon", support: 1 },
+          { _tag: "WithinTaxon", support: 1 },
+          { _tag: "NotMatched", support: 1 },
           { _tag: "Undetermined" },
         ]);
         expect(row.ranking).toEqual(row.taxa.slice(0, 2));
@@ -463,8 +463,7 @@ it.effect(
       const match = {
         record,
         taxon,
-        support: 0.8,
-        judgment: { _tag: "Matched" },
+        judgment: { _tag: "WithinTaxon", support: 0.7 },
         answer: {
           label: "withinTaxon",
           probabilities,
@@ -801,7 +800,7 @@ it.effect.each([
 });
 
 it.effect(
-  "retains the complete identifier-only target and metadata in a relation clarification",
+  "encodes the identifier-only target without extra metadata in a relation clarification",
   () => {
     const probabilities = {
       ...subsetReply.answers.relation.probabilities,
@@ -837,8 +836,7 @@ it.effect(
 
       const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
         record: Documents.RecordDocument.make({
-          taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
-          metadata: { sample: ["A17", null] },
+          taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
         }),
       });
       const expected = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({

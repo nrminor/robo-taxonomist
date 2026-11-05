@@ -40,13 +40,16 @@ it.effect("compares identical labels without model configuration", () =>
   }),
 );
 
-it.effect("fails with a diagnostic when the primary stdout reader is closed", () =>
+it.effect.each([
+  { command: ["compare", "labels", "A17", "A17"] },
+  { command: ["mem", "part", "--target", "Quercus", "--model", "custom/model"] },
+])("fails with a diagnostic when the primary stdout reader is closed: $command", ({ command }) =>
   Effect.gen(function* () {
     const result = yield* Effect.promise(
       () =>
         new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
-          const child = spawn(execPath, ["src/main.ts", "compare", "labels", "A17", "A17"], {
-            env: { NO_COLOR: "1" },
+          const child = spawn(execPath, ["src/main.ts", ...command], {
+            env: { NO_COLOR: "1", TYPESAFE_API_KEY: "fixture-key" },
             stdio: ["ignore", "pipe", "pipe"],
           });
           let stderr = "";

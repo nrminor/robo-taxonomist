@@ -253,17 +253,71 @@ it("counts the full abundance for overlapping matches and lets a genus record ru
     .element(
       comparisons
         .getByRole("group", { name: "Saccharomyces cerevisiae", exact: true })
-        .getByText("No match", { exact: true }),
+        .getByText("Not a match", { exact: true }),
     )
     .toBeVisible();
   await expect
     .element(
       comparisons
         .getByRole("group", { name: "Saccharomyces", exact: true })
-        .getByText("Matches", { exact: true }),
+        .getByText("Same taxon", { exact: true }),
     )
     .toBeVisible();
 });
+
+it.each([
+  { label: "sameTaxon", text: "Same taxon" },
+  { label: "withinTaxon", text: "Within target taxon" },
+  { label: "noMatch", text: "Not a match" },
+  { label: "undetermined", text: "Undetermined" },
+] as const)(
+  "renders $label with every probability in its established order",
+  async ({ label, text }) => {
+    const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(await replyFor("broad"));
+    const reply = {
+      ...response,
+      rows: response.rows.map((row) => ({
+        ...row,
+        matches: row.matches.map((match) => ({
+          ...match,
+          answer: {
+            ...match.answer,
+            label,
+            probabilities: {
+              sameTaxon: 0.11,
+              withinTaxon: 0.22,
+              noMatch: 0.33,
+              undetermined: 0.34,
+            },
+            confidence: 0,
+          },
+        })),
+      })),
+    };
+    const view = await renderDemo(
+      Promise.resolve(Schema.encodeSync(Schema.toCodecJson(PanelResponse))(reply)),
+      () => Promise.reject(new Error("Unexpected browser request")),
+    );
+    await view.getByRole("button", { name: /^Saccharomyces cerevisiae, / }).click();
+    const fungi = view.getByRole("group", { name: "Fungi", exact: true });
+    const summary = fungi.getByText("Answer probabilities", { exact: true });
+    await summary.click();
+    await expect.element(fungi.getByText(`Answer: ${text}`, { exact: true })).toBeVisible();
+    expect(
+      Array.from(
+        summary.element().parentElement?.querySelectorAll("p") ?? [],
+        (p) => p.textContent,
+      ),
+    ).toEqual([
+      `Answer: ${text}`,
+      "Same taxon: 11%",
+      "Within target taxon: 22%",
+      "Not a match: 33%",
+      "Undetermined: 34%",
+      "Answer confidence: 0%",
+    ]);
+  },
+);
 
 it("shows optional provider confidence separately from match support", async () => {
   const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(await replyFor("broad"));
@@ -289,7 +343,9 @@ it("shows optional provider confidence separately from match support", async () 
   const fungi = comparisons.getByRole("group", { name: "Fungi", exact: true });
   await fungi.getByText("Answer probabilities", { exact: true }).click();
   await expect.element(fungi.getByText("Answer confidence: 80%", { exact: true })).toBeVisible();
-  await expect.element(fungi.getByText("Match support: 95%", { exact: true })).toBeVisible();
+  await expect
+    .element(fungi.getByText("Accepted answer support: 94%", { exact: true }))
+    .toBeVisible();
 });
 
 it("ignores superseded HTTP replies when Broad groups is selected again before the initial reply arrives", async () => {
@@ -367,7 +423,13 @@ it("does not count a support-only change as a change in matches", async () => {
     ...response,
     rows: response.rows.map((row) => ({
       ...row,
-      matches: row.matches.map((match) => ({ ...match, support: match.support - 0.01 })),
+      matches: row.matches.map((match) => ({
+        ...match,
+        judgment:
+          "support" in match.judgment
+            ? { ...match.judgment, support: match.judgment.support - 0.01 }
+            : match.judgment,
+      })),
     })),
   };
   const wire = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(revised);

@@ -267,15 +267,16 @@ export const sets = HttpApiBuilder.group(
         Effect.fn("Server.relation")(function* ({ payload, query }) {
           const left = yield* operandSet(payload.left);
           const right = yield* operandSet(payload.right);
-          const operations = {
-            subset: TaxonSet.isSubsetOf,
-            "proper-subset": TaxonSet.isProperSubsetOf,
-            equivalent: TaxonSet.equivalent,
-            overlap: TaxonSet.overlaps,
-            disjoint: TaxonSet.disjoint,
-          };
-          const operation = operations[query.relation];
-          const result = yield* operation(left, right).pipe(
+          const operation = Match.value(query.relation).pipe(
+            Match.literalsExhaustive({
+              subset: () => TaxonSet.isSubsetOf(left, right),
+              "proper-subset": () => TaxonSet.isProperSubsetOf(left, right),
+              equivalent: () => TaxonSet.equivalent(left, right),
+              overlap: () => TaxonSet.overlaps(left, right),
+              disjoint: () => TaxonSet.disjoint(left, right),
+            }),
+          );
+          const result = yield* operation.pipe(
             Effect.provideService(DecisionModel.DecisionModel, model),
             Effect.mapError(taxonomyFailure),
           );

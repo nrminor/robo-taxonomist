@@ -1059,6 +1059,128 @@ it.effect(
   },
 );
 
+for (const [quantifier, operation] of quantifiers) {
+  it.effect.each([
+    {
+      behavior: "uses decisive support despite a selected uncertainty label",
+      label: "undetermined",
+      probabilities: { member: 0.9, notMember: 0, mixed: 0, undetermined: 0.1, multipleTarget0: 0 },
+      options: {},
+      tag: quantifier === "none" ? "No" : "Yes",
+    },
+    {
+      behavior: "includes clarification in the pooled non-membership margin",
+      label: "notMember",
+      probabilities: {
+        member: 0,
+        notMember: 0.3,
+        mixed: 0.3,
+        undetermined: 0,
+        multipleTarget0: 0.4,
+      },
+      options: { policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }) },
+      tag: "Undetermined",
+    },
+    {
+      behavior: "includes uncertainty in the pooled non-membership margin",
+      label: "notMember",
+      probabilities: {
+        member: 0,
+        notMember: 0.3,
+        mixed: 0.3,
+        undetermined: 0.4,
+        multipleTarget0: 0,
+      },
+      options: { policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }) },
+      tag: "Undetermined",
+    },
+  ])(`${quantifier} $behavior`, ({ label, probabilities, options, tag }) =>
+    Effect.gen(function* () {
+      const result = yield* operation([RecordLabel.make("subject")], TaxonName.make("A"), options);
+      expect(result).toEqual({ _tag: tag, quantifier });
+    }).pipe(
+      Effect.provide(
+        Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: () =>
+              Effect.succeed({
+                answers: { record0: Classify({ label, probabilities }) },
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+}
+
+it.effect("keeps a quantified membership and later clarification tie unresolved", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () =>
+        Effect.succeed({
+          answers: {
+            record0: Classify({
+              label: "member",
+              probabilities: {
+                member: 0.5,
+                notMember: 0,
+                mixed: 0,
+                undetermined: 0,
+                multipleTarget0: 0.5,
+              },
+            }),
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        }),
+    }),
+  );
+  return Effect.gen(function* () {
+    const result = yield* Taxonomy.anyRecordBelongsTo([RecordLabel.make("record")], target, {
+      policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
+    });
+    expect(result).toEqual({ _tag: "Undetermined", quantifier: "any" });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("retains the original late clarification leader at quantified policy boundaries", () => {
+  const a = TaxonSet.of(TaxonName.make("A"));
+  const b = TaxonSet.of(TaxonName.make("B"));
+  const expression = TaxonSet.union(a, b);
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: () =>
+        Effect.succeed({
+          answers: {
+            record0: Classify({
+              label: "member",
+              probabilities: {
+                member: 0.3,
+                notMember: 0,
+                mixed: 0,
+                undetermined: 0,
+                multipleTarget0: 0.1,
+                multipleTarget1: 0.6,
+              },
+            }),
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        }),
+    }),
+  );
+  return Effect.gen(function* () {
+    const result = yield* Taxonomy.anyRecordBelongsTo([RecordLabel.make("record")], expression, {
+      policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }),
+    });
+    expect(result).toEqual({ _tag: "MultipleTaxaInTarget", quantifier: "any", target: b });
+    if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
+    expect(result.target).toBe(b);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect.each(quantifiers)(
   "stops %s after an ordered diagnosis, without launching another window",
   ([quantifier, operation]) => {

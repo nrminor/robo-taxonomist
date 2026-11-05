@@ -1,18 +1,14 @@
 import { useLayoutEffect, useRef } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Option } from "effect";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { recordSelectionAtom } from "../client/panel-atoms.ts";
-import {
-  formatSampleShare,
-  judgmentPresentation,
-  recordKindLabel,
-  type PanelFindings,
-} from "../lib/display.ts";
+import * as Display from "../lib/display.ts";
 import { RecordInspector } from "./record-inspector.tsx";
 import styles from "./record-matches.module.css";
 
 /** Browse published findings, preserving focus and local scroll when selecting or clearing. */
-export const RecordMatches = ({ findings }: { readonly findings: PanelFindings }) => {
+export const RecordMatches = ({ findings }: { readonly findings: Display.PanelFindings }) => {
   const selection = useAtomValue(recordSelectionAtom);
   const setSelection = useAtomSet(recordSelectionAtom);
   const selectedId = Option.isSome(selection) ? selection.value.recordId : undefined;
@@ -52,10 +48,21 @@ export const RecordMatches = ({ findings }: { readonly findings: PanelFindings }
         aria-label="Sample records and selected-record matches"
       >
         <ul className={styles.recordList}>
-          {findings.records.map(({ record, judgment }) => {
-            const result = judgmentPresentation(judgment);
+          {findings.records.map(({ record, acceptedTargets, matches }) => {
+            const result =
+              acceptedTargets.size > 0
+                ? {
+                    label: "Classified",
+                    style: { color: "var(--color-matched)" },
+                  }
+                : matches.some((match) => TaxonMatchJudgment.guards.Undetermined(match.judgment))
+                  ? {
+                      label: "Unresolved",
+                      style: { color: "var(--color-uncertain)" },
+                    }
+                  : { label: "No matches", style: { color: "var(--color-unmatched)" } };
             const active = record.id === selectedId;
-            const share = formatSampleShare(record.abundance);
+            const share = Display.formatSampleShare(record.abundance);
             return (
               <li
                 key={record.id}
@@ -75,7 +82,9 @@ export const RecordMatches = ({ findings }: { readonly findings: PanelFindings }
                 >
                   <span className={styles.recordName}>
                     {record.name}
-                    <span className={styles.recordKind}>{recordKindLabel(record.kind)}</span>
+                    <span className={styles.recordKind}>
+                      {Display.recordKindLabel(record.kind)}
+                    </span>
                   </span>
                   <span className={styles.abundance}>{share}</span>
                   <span className={styles.badge} style={result.style}>

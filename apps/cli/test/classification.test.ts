@@ -115,7 +115,7 @@ it.effect(
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([
         "record\ttarget\tjudgment\tsupport\tranking_position",
-        "Voucher A17\tQuercus\tMatched\t1\t1",
+        "Voucher A17\tQuercus\tWithinTaxon\t1\t1",
       ]);
       expect(result.requests).toBe(1);
       expect(result.stderr).toEqual([]);
@@ -142,8 +142,7 @@ it.effect(
       const match = {
         record: "Voucher A17",
         taxon,
-        support: 1,
-        judgment: { _tag: "Matched" },
+        judgment: { _tag: "WithinTaxon", support: 1 },
         answer: {
           label: "withinTaxon",
           probabilities: { sameTaxon: 0, withinTaxon: 1, noMatch: 0, undetermined: 0 },
@@ -184,7 +183,10 @@ it.effect(
         "--no-header",
       ]);
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual(["A17\tQuercus\tMatched\t1\t1", "B42\tQuercus\tMatched\t1\t1"]);
+      expect(result.stdout).toEqual([
+        "A17\tQuercus\tWithinTaxon\t1\t1",
+        "B42\tQuercus\tWithinTaxon\t1\t1",
+      ]);
       expect(result.requests).toBe(2);
     }),
 );
@@ -218,6 +220,25 @@ it.effect("emits one complete empty result with the supplied panel when there ar
   }),
 );
 
+it.effect.each([
+  { flags: [], output: "record\ttarget\tjudgment\tsupport\tranking_position\n" },
+  { flags: ["--no-header"], output: "" },
+])("honors the TSV header policy for an empty classification: $flags", ({ flags, output }) =>
+  Effect.gen(function* () {
+    const result = yield* invoke([
+      "classify",
+      "--target",
+      "Quercus",
+      "--model",
+      "custom/model",
+      ...flags,
+    ]);
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe(output);
+    expect(result.requests).toBe(0);
+  }),
+);
+
 it.effect("quotes delimiter-bearing classification TSV", () =>
   Effect.gen(function* () {
     const result = yield* invoke([
@@ -231,7 +252,7 @@ it.effect("quotes delimiter-bearing classification TSV", () =>
       "--no-header",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.output).toBe('"Voucher\tA17\n""sample"""\tQuercus\tMatched\t1\t1\n');
+    expect(result.output).toBe('"Voucher\tA17\n""sample"""\tQuercus\tWithinTaxon\t1\t1\n');
   }),
 );
 
@@ -268,15 +289,23 @@ it.effect.each([
     choice: "noMatch",
     probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 1, undetermined: 0 },
     judgment: "NotMatched",
+    support: 1,
   },
   {
     choice: "undetermined",
     probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
     judgment: "Undetermined",
+    support: undefined,
+  },
+  {
+    choice: "sameTaxon",
+    probabilities: { sameTaxon: 0.49, withinTaxon: 0.49, noMatch: 0.01, undetermined: 0.01 },
+    judgment: "Undetermined",
+    support: undefined,
   },
 ])(
   "retains successful unranked $judgment outcomes and their complete answers",
-  ({ choice, probabilities, judgment }) =>
+  ({ choice, probabilities, judgment, support }) =>
     Effect.gen(function* () {
       const args = [
         "classify",
@@ -294,11 +323,11 @@ it.effect.each([
       };
       const text = yield* invoke([...args, "--no-header"], [reply]);
       expect(Result.isSuccess(text.outcome)).toBe(true);
-      expect(text.stdout).toEqual([`A17\tQuercus\t${judgment}\t0\t`]);
+      expect(text.stdout).toEqual([`A17\tQuercus\t${judgment}\t${support ?? ""}\t`]);
       const json = yield* invoke([...args, "--format", "jsonl"], [reply]);
       expect(Result.isSuccess(json.outcome)).toBe(true);
       const wire = yield* Effect.forEach(json.stdout, (line) =>
-        Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
+        Schema.decodeEffect(Schema.fromJsonString(Documents.Classification))(line),
       );
       const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
         record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
@@ -313,8 +342,8 @@ it.effect.each([
                 {
                   record: "A17",
                   taxon: expectedTaxon,
-                  support: 0,
-                  judgment: { _tag: judgment },
+                  judgment:
+                    support === undefined ? { _tag: judgment } : { _tag: judgment, support },
                   answer: { label: choice, probabilities, confidence: 0.75 },
                 },
               ],
@@ -373,12 +402,12 @@ it.effect(
       expect(Result.isSuccess(text.outcome)).toBe(true);
       expect(text.stdout).toEqual([
         "record\ttarget\tjudgment\tsupport\tranking_position",
-        "A17\tQuercus\tMatched\t0.75\t1",
-        "A17\tQuercus\tMatched\t0.75\t2",
-        "A17\tFagus\tNotMatched\t0\t",
-        "A17\tQuercus\tMatched\t0.75\t1",
-        "A17\tQuercus\tMatched\t0.75\t2",
-        "A17\tFagus\tNotMatched\t0\t",
+        "A17\tQuercus\tWithinTaxon\t0.5\t1",
+        "A17\tQuercus\tWithinTaxon\t0.5\t2",
+        "A17\tFagus\tNotMatched\t1\t",
+        "A17\tQuercus\tWithinTaxon\t0.5\t1",
+        "A17\tQuercus\tWithinTaxon\t0.5\t2",
+        "A17\tFagus\tNotMatched\t1\t",
       ]);
       const json = yield* invoke([...args, "--format", "jsonl"], [reply]);
       expect(Result.isSuccess(json.outcome)).toBe(true);
@@ -399,7 +428,11 @@ it.effect(
       expect(result.records).toHaveLength(2);
       const first = Array.get(result.records, 0).pipe(Option.getOrThrow);
       const second = Array.get(result.records, 1).pipe(Option.getOrThrow);
-      expect(first.taxa.map((match) => match.support)).toEqual([0.75, 0.75, 0]);
+      expect(first.taxa.map((match) => match.judgment)).toEqual([
+        { _tag: "WithinTaxon", support: 0.5 },
+        { _tag: "WithinTaxon", support: 0.5 },
+        { _tag: "NotMatched", support: 1 },
+      ]);
       expect(first.ranking).toEqual(first.taxa.slice(0, 2));
       expect(second).toEqual(first);
     }),

@@ -481,43 +481,61 @@ it.effect.each([
   }),
 );
 
-it.effect("emits just the invocation header for an empty partition", () =>
+it.effect.each([
+  { flags: [], output: "judgment\trecord\tclarification_target\n" },
+  { flags: ["--no-header"], output: "" },
+])("honors the TSV header policy for an empty partition: $flags", ({ flags, output }) =>
   Effect.gen(function* () {
-    const result = yield* invoke(["mem", "part", "--target", "Quercus", "--model", "custom/model"]);
-    expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual(["judgment\trecord\tclarification_target"]);
-    expect(result.requests).toEqual([]);
-  }),
-);
-
-it.effect("fails after an emitted prefix when a later record source cannot be read", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const directory = yield* fs.makeTempDirectoryScoped();
-    const missing = `${directory}/missing.txt`;
     const result = yield* invoke([
       "mem",
       "part",
-      missing,
-      "--record",
-      "A17",
       "--target",
       "Quercus",
       "--model",
       "custom/model",
-      "--batch-size",
-      "1",
-      "--format",
-      "jsonl",
+      ...flags,
     ]);
-    expect(Result.isFailure(result.outcome)).toBe(true);
-    const expectedRow = {
-      record: "A17",
-      judgment: Documents.MembershipJudgment.cases.Member.make({}),
-    };
-    expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
-    expect(JSON.stringify(result.stderr)).toContain(missing);
-  }).pipe(Effect.provide(NodeServices.layer)),
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe(output);
+    expect(result.requests).toEqual([]);
+  }),
+);
+
+it.effect.each([
+  { flags: ["--format", "jsonl"], format: "jsonl", prefix: "" },
+  { flags: [], format: "tsv", prefix: "judgment\trecord\tclarification_target\n" },
+  { flags: ["--no-header"], format: "tsv", prefix: "" },
+])(
+  "fails after an emitted prefix when a later record source cannot be read: $flags",
+  ({ flags, format, prefix }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const missing = `${directory}/missing.txt`;
+      const result = yield* invoke([
+        "mem",
+        "part",
+        missing,
+        "--record",
+        "A17",
+        "--target",
+        "Quercus",
+        "--model",
+        "custom/model",
+        "--batch-size",
+        "1",
+        ...flags,
+      ]);
+      expect(Result.isFailure(result.outcome)).toBe(true);
+      const expectedRow = {
+        record: "A17",
+        judgment: Documents.MembershipJudgment.cases.Member.make({}),
+      };
+      expect(result.output).toBe(
+        format === "jsonl" ? `${JSON.stringify(expectedRow)}\n` : `${prefix}Member\tA17\t\n`,
+      );
+      expect(JSON.stringify(result.stderr)).toContain(missing);
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reads all quantifier inputs before allowing a decisive early model answer", () =>
@@ -554,6 +572,17 @@ it.effect("quotes delimiter-bearing quantifier clarification text", () =>
     expect(result.output).toBe(
       'judgment\tquantifier\tclarification_target\nMultipleTaxaInTarget\tall\t"Quercus\tFagus"\n',
     );
+  }),
+);
+
+it.effect("retains an undetermined quantifier without clarification text in TSV", () =>
+  Effect.gen(function* () {
+    const result = yield* invoke(
+      ["mem", "all", "--record", "A17", "--target", "Quercus", "--model", "custom/model"],
+      [["undetermined"]],
+    );
+    expect(Result.isSuccess(result.outcome)).toBe(true);
+    expect(result.output).toBe("judgment\tquantifier\tclarification_target\nUndetermined\tall\t\n");
   }),
 );
 

@@ -26,9 +26,10 @@ export {
  * Model-backed questions return Effects that require a DecisionModel service
  * and report schema input failures through Errors.InvalidInput, preserving the original cause.
  * Model-interface failures propagate unchanged as AiError.
- * Broader judgments combine support for compatible model choices before applying AcceptancePolicy.
+ * Classification accepts the selected relationship using its individual model-reported support.
+ * Rank, containment and set questions can combine support for compatible choices.
  * The default policy requires at least 0.5 support and a unique lead over competitors.
- * A broad judgment can retain an answer while its finer details remain uncertain.
+ * Grouped comparisons can retain a broader answer while its finer details remain uncertain.
  * Undetermined leaves the question unresolved; clarification judgments identify
  * supplied names or record sides that the model asks the caller to review.
  *
@@ -41,18 +42,16 @@ export {
  * );
  */
 export * as Taxonomy from "./Taxonomy.ts";
-export { TaxonIdentityJudgment } from "./Taxonomy.ts";
-export type {
-  TaxonMatch,
+export {
+  TaxonIdentityJudgment,
   TaxonMatchJudgment,
-  RecordMembershipPartition,
-  RecordsGroupedByTaxa,
-  CollectionMembershipJudgment,
-  RankComparisonJudgment,
   TaxonomicRank,
+  RankComparisonJudgment,
   TaxonContainmentJudgment,
   TaxonMembershipJudgment,
+  CollectionMembershipJudgment,
 } from "./Taxonomy.ts";
+export type { TaxonMatch, RecordMembershipPartition, RecordsGroupedByTaxa } from "./Taxonomy.ts";
 
 /**
  * Build set expressions from names or structured records and ask how their organisms relate.
@@ -67,4 +66,4 @@ export type {
  * export const oaks = TaxonSet.of(TaxonName.make("Quercus"));
  */
 export * as TaxonSet from "./TaxonSet.ts";
-export type { TaxonSetRelationJudgment } from "./TaxonSet.ts";
+export { TaxonSetRelation, TaxonSetRelationJudgment } from "./TaxonSet.ts";

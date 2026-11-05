@@ -12,8 +12,10 @@ import {
   Schema,
 } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { panels, records } from "../src/lib/catalog.ts";
-import { MatchJudgment, PanelResponse } from "../src/lib/contract.ts";
+import { PanelResponse } from "../src/lib/contract.ts";
+import * as Display from "../src/lib/display.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
 
@@ -38,12 +40,20 @@ it.effect(
       );
       expect(
         species.matches
-          .filter((match) => MatchJudgment.guards.Matched(match.judgment))
+          .filter(
+            (match) =>
+              TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
+              TaxonMatchJudgment.guards.WithinTaxon(match.judgment),
+          )
           .map((match) => match.targetId),
       ).toEqual(["fungi", "saccharomycetaceae", "saccharomyces", "saccharomyces-cerevisiae"]);
       expect(
         genus.matches
-          .filter((match) => MatchJudgment.guards.Matched(match.judgment))
+          .filter(
+            (match) =>
+              TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
+              TaxonMatchJudgment.guards.WithinTaxon(match.judgment),
+          )
           .map((match) => match.targetId),
       ).toEqual(["fungi", "saccharomycetaceae", "saccharomyces"]);
       const vagueIds = records
@@ -55,12 +65,15 @@ it.effect(
       expect(
         vagueRows
           .flatMap((row) => row.matches)
-          .every((match) => MatchJudgment.guards.Undetermined(match.judgment)),
+          .every((match) => TaxonMatchJudgment.guards.Undetermined(match.judgment)),
       ).toBe(true);
       const abundanceFor = (targetId: string) =>
         result.rows.reduce((total, row) => {
           const accepted = row.matches.some(
-            (match) => match.targetId === targetId && MatchJudgment.guards.Matched(match.judgment),
+            (match) =>
+              match.targetId === targetId &&
+              (TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
+                TaxonMatchJudgment.guards.WithinTaxon(match.judgment)),
           );
           const record = Array.findFirst(records, (record) => record.id === row.recordId).pipe(
             Option.getOrThrowWith(() => new Error(`Missing record ${row.recordId}`)),
@@ -97,7 +110,11 @@ it.effect("preserves the locked record weights and ordered broad and focused com
     expect(
       namedRows.every(
         (row) =>
-          row.matches.filter((match) => MatchJudgment.guards.Matched(match.judgment)).length === 1,
+          row.matches.filter(
+            (match) =>
+              TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
+              TaxonMatchJudgment.guards.WithinTaxon(match.judgment),
+          ).length === 1,
       ),
     ).toBe(true);
     const focused = yield* classifyPanel("focused");
@@ -110,10 +127,10 @@ it.effect("preserves the locked record weights and ordered broad and focused com
     expect(outsideSpecies.matches).toHaveLength(10);
     expect(outsideGenus.matches).toHaveLength(10);
     expect(
-      outsideSpecies.matches.every((match) => MatchJudgment.guards.NotMatched(match.judgment)),
+      outsideSpecies.matches.every((match) => TaxonMatchJudgment.guards.NotMatched(match.judgment)),
     ).toBe(true);
     expect(
-      outsideGenus.matches.every((match) => MatchJudgment.guards.NotMatched(match.judgment)),
+      outsideGenus.matches.every((match) => TaxonMatchJudgment.guards.NotMatched(match.judgment)),
     ).toBe(true);
   }).pipe(Effect.provide(PanelResults.layer)),
 );
@@ -185,6 +202,70 @@ it.effect(
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   },
 );
+
+it.effect("excludes split support from abundance while retaining an accepted relationship", () => {
+  const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+  let batch = 0;
+  const split = { sameTaxon: 0.49, withinTaxon: 0.49, noMatch: 0.01, undetermined: 0.01 };
+  const strong = { sameTaxon: 0.01, withinTaxon: 0.96, noMatch: 0.02, undetermined: 0.01 };
+  const negative = { sameTaxon: 0.01, withinTaxon: 0.01, noMatch: 0.95, undetermined: 0.03 };
+  const model = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ decisions }) => {
+        const first = batch++ === 0;
+        return Effect.succeed({
+          answers: Record.map(decisions, (_, key) =>
+            Classify(
+              first && key === "r0t0"
+                ? { label: "sameTaxon", probabilities: split, confidence: 0.7 }
+                : first && key === "r0t1"
+                  ? { label: "withinTaxon", probabilities: strong, confidence: 0.8 }
+                  : { label: "noMatch", probabilities: negative },
+            ),
+          ),
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    const response = yield* classifyPanel("broad");
+    expect(response.rows.map((row) => row.recordId)).toEqual(records.map((record) => record.id));
+    const row = Array.head(response.rows).pipe(Option.getOrThrow);
+    const panel = Array.findFirst(panels, (panel) => panel.id === "broad").pipe(Option.getOrThrow);
+    const splitMatch = Array.findFirst(row.matches, (match) => match.targetId === "fungi").pipe(
+      Option.getOrThrow,
+    );
+    const strongMatch = Array.findFirst(
+      row.matches,
+      (match) => match.targetId === "lactobacillaceae",
+    ).pipe(Option.getOrThrow);
+    expect(row.matches.map((match) => match.targetId)).toEqual(
+      panel.targets.map((target) => target.id),
+    );
+    expect(splitMatch).toMatchObject({
+      judgment: { _tag: "Undetermined" },
+      answer: { label: "sameTaxon", probabilities: split, confidence: 0.7 },
+    });
+    expect(strongMatch).toMatchObject({
+      judgment: { _tag: "WithinTaxon", support: 0.96 },
+      answer: { label: "withinTaxon", probabilities: strong, confidence: 0.8 },
+    });
+    const findings = Display.replaceDisplayed(undefined, response).findings;
+    const finding = Array.head(findings.records).pipe(Option.getOrThrow);
+    const fungi = Array.findFirst(findings.compositions, (target) => target.id === "fungi").pipe(
+      Option.getOrThrow,
+    );
+    const lactobacillaceae = Array.findFirst(
+      findings.compositions,
+      (target) => target.id === "lactobacillaceae",
+    ).pipe(Option.getOrThrow);
+    expect(finding.acceptedTargets).toEqual(new Set([strongMatch.targetId]));
+    expect(fungi.abundance).toBe(0);
+    expect(lactobacillaceae.abundance).toBeCloseTo(14);
+  }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
+});
 
 it.effect("loads only requested panels, coalesces pending requests and reuses successes", () =>
   Effect.gen(function* () {

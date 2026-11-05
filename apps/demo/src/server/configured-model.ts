@@ -1,5 +1,5 @@
 import "server-only";
-import { Config, Effect, Layer, Schema } from "effect";
+import { Config, Effect, Layer, Match, Schema } from "effect";
 import { ClassificationFailure } from "../lib/contract.ts";
 import { clefModelLayer } from "./clef-model.ts";
 import { PanelResults } from "./panel-results.ts";
@@ -24,8 +24,16 @@ export const ConfiguredPanelResults = Layer.unwrap(
     const mode = yield* Config.Literals(["fixture", "clef"], "DEMO_MODEL").pipe(
       Config.withDefault("fixture"),
     );
-    if (mode === "fixture") return PanelResults.layer;
-    const config = yield* credentials;
-    return PanelResults.layerNoDeps.pipe(Layer.provide(clefModelLayer(config)));
+    return yield* Match.value(mode).pipe(
+      Match.literalsExhaustive({
+        fixture: () => Effect.succeed(PanelResults.layer),
+        clef: () =>
+          credentials.pipe(
+            Effect.map((config) =>
+              PanelResults.layerNoDeps.pipe(Layer.provide(clefModelLayer(config))),
+            ),
+          ),
+      }),
+    );
   }).pipe(Effect.mapError(() => ClassificationFailure.cases.ConfigurationFailure.make({}))),
 );

@@ -1,14 +1,7 @@
 import { type Ref } from "react";
-import { formatPercent, judgmentPresentation, type RecordFinding } from "../lib/display.ts";
+import { Match } from "effect";
+import * as Display from "../lib/display.ts";
 import styles from "./record-inspector.module.css";
-
-const answerLabels = {
-  sameTaxon: "Same taxon",
-  withinTaxon: "Within target taxon",
-  noMatch: "Not a match",
-  undetermined: "Undetermined",
-} as const;
-const answerNames = ["sameTaxon", "withinTaxon", "noMatch", "undetermined"] as const;
 
 /** Show one record's per-target answers; headingRef and onBack support list navigation. */
 export const RecordInspector = ({
@@ -17,7 +10,7 @@ export const RecordInspector = ({
   headingRef,
   onBack,
 }: {
-  readonly finding: RecordFinding;
+  readonly finding: Display.RecordFinding;
   readonly panelName: string;
   readonly headingRef: Ref<HTMLHeadingElement>;
   readonly onBack: () => void;
@@ -29,26 +22,36 @@ export const RecordInspector = ({
       </h3>
       <p className={styles.intro}>Results in {panelName}</p>
       {finding.matches.map((match) => {
-        const { target } = match;
-        const result = judgmentPresentation(match.judgment);
+        const { target, answer } = match;
+        const result = Display.judgmentPresentation(match.judgment);
+        const answerLabel = Match.value(answer.label).pipe(
+          Match.literalsExhaustive({
+            sameTaxon: () => "Same taxon",
+            withinTaxon: () => "Within target taxon",
+            noMatch: () => "Not a match",
+            undetermined: () => "Undetermined",
+          }),
+        );
+        const p = answer.probabilities;
         return (
           <div key={target.id} className={styles.judgment} role="group" aria-label={target.name}>
             <div className={styles.header}>
               <strong>{target.name}</strong>
               <span style={result.style}>{result.label}</span>
             </div>
-            <p>Match support: {formatPercent(match.support)}</p>
+            {result.support !== undefined && (
+              <p>Accepted answer support: {Display.formatPercent(result.support)}</p>
+            )}
             <details>
               <summary>Answer probabilities</summary>
               <div className={styles.probabilities}>
-                <p>Answer: {answerLabels[match.answer.label]}</p>
-                {answerNames.map((name) => (
-                  <p key={name}>
-                    {answerLabels[name]}: {formatPercent(match.answer.probabilities[name])}
-                  </p>
-                ))}
-                {match.answer.confidence !== undefined && (
-                  <p>Answer confidence: {formatPercent(match.answer.confidence)}</p>
+                <p>Answer: {answerLabel}</p>
+                <p>Same taxon: {Display.formatPercent(p.sameTaxon)}</p>
+                <p>Within target taxon: {Display.formatPercent(p.withinTaxon)}</p>
+                <p>Not a match: {Display.formatPercent(p.noMatch)}</p>
+                <p>Undetermined: {Display.formatPercent(p.undetermined)}</p>
+                {answer.confidence !== undefined && (
+                  <p>Answer confidence: {Display.formatPercent(answer.confidence)}</p>
                 )}
               </div>
             </details>
