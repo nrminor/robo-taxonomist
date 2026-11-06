@@ -87,6 +87,9 @@ const identity = Taxonomy.sameTaxon(name, name, { policy });
 const containment = Taxonomy.taxonWithin(name, name, { policy });
 const contextHint = TaxonomyHint.make("context");
 const readonlyHints: readonly TaxonomyHint[] = [contextHint];
+const hintSnapshot = TaxonomyHints.snapshot(readonlyHints);
+const inheritedHintSnapshot: typeof hintSnapshot = TaxonomyHints.snapshot(undefined);
+void inheritedHintSnapshot;
 const hinted = Taxonomy.classifyRecords(records, oaks, { hints: readonlyHints });
 const hintedWithLayer = hinted.pipe(Effect.provide(TaxonomyHints.layer(readonlyHints)));
 const hintedRequiresOnlyModel: Effect.Effect<
@@ -123,6 +126,8 @@ TaxonomyHints.layer(["raw"]);
 TaxonomyHints.withHints(["raw"]);
 // @ts-expect-error Appended inputs require branded hints.
 TaxonomyHints.withAddedHints(["raw"]);
+// @ts-expect-error Snapshot inputs require branded hints.
+TaxonomyHints.snapshot(["raw"]);
 
 const relation = TaxonSet.isSubsetOf(oaks, TaxonSet.union(oaks, TaxonSet.empty()));
 const membership = Taxonomy.recordBelongsTo(specimen, oaks);
@@ -235,7 +240,9 @@ const classifiedVouchers = classified.pipe(
 
 export type Contracts = [
   Assert<Equal<Effect.Success<typeof TaxonomyHints.Current>, readonly TaxonomyHint[]>>,
-  Assert<Equal<keyof typeof TaxonomyHints, "Current" | "layer" | "withHints" | "withAddedHints">>,
+  Assert<Equal<Effect.Success<typeof hintSnapshot>, readonly TaxonomyHint[]>>,
+  Assert<Equal<Effect.Error<typeof hintSnapshot>, Errors.InvalidInput>>,
+  Assert<Equal<Effect.Services<typeof hintSnapshot>, never>>,
   Assert<Judgment<typeof hintedScalar, Effect.Success<typeof identity>>>,
   Assert<Judgment<typeof hintedRelation, Effect.Success<typeof relation>>>,
   Assert<Judgment<typeof assignedMembership, TaxonMembershipJudgment<typeof assignment>>>,

@@ -16,6 +16,36 @@ const subject = RecordLabel.make("subject");
 const target = TaxonSet.of(TaxonName.make("Fungi"));
 const other = TaxonSet.of(TaxonName.make("Plants"));
 
+it.effect("captures independent validated hints from the scope or an explicit collection", () =>
+  Effect.gen(function* () {
+    const empty = yield* TaxonomyHints.snapshot();
+    expect(empty).toEqual([]);
+    const capture = TaxonomyHints.snapshot();
+    const scoped = [TaxonomyHint.make("scoped")];
+    const inherited = yield* capture.pipe(Effect.provideService(TaxonomyHints.Current, scoped));
+    const inheritedUndefined = yield* TaxonomyHints.snapshot(undefined).pipe(
+      Effect.provideService(TaxonomyHints.Current, scoped),
+    );
+    expect(inherited).not.toBe(scoped);
+    expect(inheritedUndefined).toEqual(["scoped"]);
+    scoped.push(TaxonomyHint.make("later"));
+    expect(inherited).toEqual(["scoped"]);
+    const recaptured = yield* capture.pipe(Effect.provideService(TaxonomyHints.Current, scoped));
+    expect(recaptured).toEqual(["scoped", "later"]);
+
+    const placement = TaxonomyHint.make(" \tQuercus belongs to Fagaceae.\n");
+    const explicit = [placement, placement];
+    const pending = TaxonomyHints.snapshot(explicit);
+    explicit.push(TaxonomyHint.make("before execution"));
+    const captured = yield* pending.pipe(TaxonomyHints.withHints(scoped));
+    expect(captured).not.toBe(explicit);
+    explicit.push(TaxonomyHint.make("after execution"));
+    expect(captured).toEqual([placement, placement, "before execution"]);
+    const disabled = yield* TaxonomyHints.snapshot([]).pipe(TaxonomyHints.withHints(scoped));
+    expect(disabled).toEqual([]);
+  }),
+);
+
 it.effect("selects scoped, direct, empty and updated hints without leaking scopes", () => {
   const seen: DecisionModel.ProviderOptions["state"][] = [];
   const model = Layer.effect(
@@ -391,6 +421,11 @@ it.effect("validates hints before transport while preserving literal shortcuts",
   );
   return Effect.gen(function* () {
     for (const hints of [[42], null, 42, "", [""], [" \t\n"]]) {
+      const invalidSnapshot = yield* Effect.flip(
+        // @ts-expect-error Verify an untyped caller's malformed snapshot inputs.
+        TaxonomyHints.snapshot(hints),
+      );
+      expect(invalidSnapshot).toMatchObject({ _tag: "InvalidInput" });
       const invalidClassification = yield* Effect.flip(
         // @ts-expect-error Verify an untyped caller's malformed hints.
         Taxonomy.classifyRecords([subject], target, { hints }),

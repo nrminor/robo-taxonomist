@@ -29,7 +29,7 @@ import {
 } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
 import * as TaxonRelations from "./TaxonRelations.ts";
-import * as Hints from "./TaxonomyHintContext.ts";
+import * as TaxonomyHints from "./TaxonomyHints.ts";
 
 /**
  * Check whether two record labels contain exactly the same text. This is a simple
@@ -143,6 +143,13 @@ type CompareRecordsFn = (
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
+const hintsInstruction = (hints: ReadonlyArray<TaxonomyHint>) =>
+  Array.match(hints, {
+    onEmpty: () => "",
+    onNonEmpty: (nonempty) =>
+      `\nUse these taxonomic hints as background: ${JSON.stringify(nonempty)}`,
+  });
+
 const describeField = (name: string, value: string | undefined) =>
   Match.value(value).pipe(
     Match.when(Match.string, (text) => [`${name}: ${quoteText(text)}`]),
@@ -182,7 +189,7 @@ const makeRankComparisonQuestion = (
           "Interpret clear combinations together. Flag a combined input only when it prevents comparison; choose multipleBoth when both inputs need clarification.\n" +
           `Left record:\n${describeRecord(left)}\n` +
           `Right record:\n${describeRecord(right)}` +
-          Hints.instruction(hints),
+          hintsInstruction(hints),
         criteria: pipe(
           TaxonRelations.rankCriteria,
           Struct.assign({
@@ -390,7 +397,7 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
     rank: TaxonomicRank,
     options: JudgmentOptions = {},
   ) {
-    const hints = yield* Hints.snapshot(options.hints);
+    const hints = yield* TaxonomyHints.snapshot(options.hints);
     const encoded = yield* Schema.encodeEffect(rankComparisonInputSchema)({
       left,
       right,
@@ -607,7 +614,7 @@ const makeIdentityQuestion = (
           "Choose multipleBoth when both records need clarification.\n" +
           `Left taxon:\n${describeRecord(input.left)}\n` +
           `Right taxon:\n${describeRecord(input.right)}` +
-          Hints.instruction(hints),
+          hintsInstruction(hints),
         criteria: {
           same: "Both assignments refer to the same taxonomic grouping, including resolved synonyms.",
           different: "The assignments refer to distinct taxonomic groupings.",
@@ -711,7 +718,7 @@ export const sameTaxon: CompareTaxaFn = Effect.fn("Taxonomy.sameTaxon")(function
   right: TaxonName | TaxonomicRecord,
   options: JudgmentOptions = {},
 ) {
-  const hints = yield* Hints.snapshot(options.hints);
+  const hints = yield* TaxonomyHints.snapshot(options.hints);
   const encoded = yield* Schema.encodeEffect(scalarInputSchema)({
     left: asTaxonomicRecord(left),
     right: asTaxonomicRecord(right),
@@ -779,7 +786,7 @@ const makeContainmentQuestion = (
           "Flag a combined assignment only when it prevents comparison; choose multipleBoth when both records need clarification.\n" +
           `Left (inner) taxon:\n${describeRecord(input.left)}\n` +
           `Right (outer) taxon:\n${describeRecord(input.right)}` +
-          Hints.instruction(hints),
+          hintsInstruction(hints),
         criteria: pipe(
           TaxonRelations.criteria,
           Struct.assign({
@@ -905,7 +912,7 @@ export const taxonWithin: TaxonWithinFn = Effect.fn("Taxonomy.taxonWithin")(func
   outer: TaxonName | TaxonomicRecord,
   options: JudgmentOptions = {},
 ) {
-  const hints = yield* Hints.snapshot(options.hints);
+  const hints = yield* TaxonomyHints.snapshot(options.hints);
   const encoded = yield* Schema.encodeEffect(scalarInputSchema)({
     left: asTaxonomicRecord(inner),
     right: asTaxonomicRecord(outer),
@@ -1200,7 +1207,7 @@ const recordBelongsToEffect = Effect.fn("Taxonomy.recordBelongsTo")(function* <
   T extends TaxonomicRecord,
 >(record: RecordInput, target: MembershipTarget<T>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(target)) return TaxonMembershipJudgment.cases.NotMember.make({});
-  const hints = yield* Hints.snapshot(options.hints);
+  const hints = yield* TaxonomyHints.snapshot(options.hints);
   const prepared = yield* prepareMembershipTarget(target);
   const answers = yield* decideMembershipBatch([record], prepared, hints);
   return interpretMembership(
@@ -1425,7 +1432,7 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
   R extends RecordInput,
   T extends TaxonomicRecord,
 >(records: readonly R[], panel: TaxonSet<T>, options: CollectionOptions = {}) {
-  const inherited = yield* Hints.Current;
+  const inherited = yield* TaxonomyHints.Current;
   const selected = options.hints === undefined ? inherited : options.hints;
   const snapshot = Array.isArray(selected) ? Array.copy(selected) : selected;
   const graph = yield* TaxonSetGraph.compile({ panel });
@@ -1674,7 +1681,7 @@ const partitionRecordsByMembershipEffect = Effect.fn("Taxonomy.partitionRecordsB
     if (!Array.isReadonlyArrayNonEmpty(records))
       return MembershipPartition.fromBatches<A, T>([], []);
 
-    const hints = yield* Hints.snapshot(options.hints);
+    const hints = yield* TaxonomyHints.snapshot(options.hints);
     const execution = options.execution ?? defaultCollectionExecution;
     const batches = Array.fromIterable(
       Iterable.filter(Iterable.chunksOf(records, execution.batchSize), Array.isArrayNonEmpty),
@@ -1783,7 +1790,7 @@ const groupRecordsByTaxaEffect = Effect.fn("Taxonomy.groupRecordsByTaxa")(functi
 >(records: readonly A[], targets: readonly MembershipTarget<T>[], options: CollectionOptions = {}) {
   let scopedOptions = options;
   if (records.length > 0 && targets.some((target) => !taxonSetSchema.guards.Empty(target))) {
-    const hints = yield* Hints.snapshot(options.hints);
+    const hints = yield* TaxonomyHints.snapshot(options.hints);
     scopedOptions = Struct.assign(options, { hints });
   }
   const groups = yield* Effect.forEach(
@@ -1948,7 +1955,7 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
       Match.exhaustive,
     );
 
-  const hints = yield* Hints.snapshot(options.hints);
+  const hints = yield* TaxonomyHints.snapshot(options.hints);
   const execution = options.execution ?? defaultCollectionExecution;
   const input = Array.copy(records);
   const prepared = yield* prepareMembershipTarget(target);
