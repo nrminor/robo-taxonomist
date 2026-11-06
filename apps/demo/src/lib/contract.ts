@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { AiError } from "effect/ai";
-import { TaxonMatchJudgment } from "robo-taxonomist";
+import { TaxonMatchJudgment, TaxonomyHint } from "robo-taxonomist";
 import { PanelId, panels, records } from "./catalog.ts";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
@@ -89,14 +89,16 @@ export const classificationFailureFields = {
     requestId: Schema.optional(Schema.String),
   },
   InvalidPanel: {},
+  InvalidHints: {},
   ConfigurationFailure: { requestId: Schema.optional(Schema.String) },
   InternalFailure: { requestId: Schema.optional(Schema.String) },
 };
 /** Browser-facing failures with optional correlation IDs, rather than raw server or provider errors. */
 export const ClassificationFailure = Schema.TaggedUnion(classificationFailureFields);
 export type ClassificationFailure = typeof ClassificationFailure.Type;
-/** Classify one known panel; refresh explicitly requests new model decisions instead of a cached result. */
+/** Classify one known panel with optional hints; refresh explicitly requests new model decisions. */
 export const ClassifyRequest = Schema.Struct({
   panelId: PanelId,
   refresh: Schema.optional(Schema.Boolean),
+  hints: Schema.optional(Schema.Array(TaxonomyHint)),
 });

@@ -116,6 +116,10 @@ const describeFailure = (error: RequestFailure): FailureDetails =>
       requestId,
     }),
     InvalidPanel: () => ({ message: "Choose one of the listed panels.", retry: false }),
+    InvalidHints: () => ({
+      message: "Edit the taxonomic hints. Supply nonblank text, or clear the note to remove hints.",
+      retry: false,
+    }),
     ConfigurationFailure: ({ requestId }) => ({
       message: "Ask the site administrator to check the model settings before you try again.",
       retry: false,

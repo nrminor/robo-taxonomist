@@ -41,13 +41,19 @@ const Event = Schema.TaggedUnion({
   },
   Wake: { token: Schema.Symbol, now: Schema.Finite },
   FeedbackCommitted: { token: Schema.Symbol, now: Schema.Finite },
-  DisplayCommitted: { token: Schema.Symbol, reply: ReplyReference, animate: Schema.Boolean },
+  DisplayCommitted: {
+    token: Schema.Symbol,
+    reply: ReplyReference,
+    request: ClassifyRequest,
+    animate: Schema.Boolean,
+  },
 });
 
 /** Eligible results to render; only an actual React commit advances comparison history. */
 export interface PublicationCandidate {
   readonly token: symbol;
   readonly display: Display;
+  readonly request: typeof ClassifyRequest.Type;
   readonly animate: boolean;
 }
 interface Publication {
@@ -146,14 +152,14 @@ const reducePublication = (state: Publication, event: typeof Event.Type): Public
         };
       return state;
     },
-    DisplayCommitted: ({ token, reply, animate }) => {
+    DisplayCommitted: ({ token, reply, request, animate }) => {
       // This is an actual DOM commit, not a request completion. A newer intent
       // must not erase the comparison baseline React really displayed.
       if (Option.isSome(state.committed) && state.committed.value.token === token) return state;
       const display = replaceDisplayed(Option.getOrUndefined(state.committed)?.display, reply);
       return {
         ...state,
-        committed: Option.some({ token, display, animate }),
+        committed: Option.some({ token, display, request, animate }),
         phase:
           token === state.intent.token && Phase.guards.ReadyToPublish(state.phase)
             ? Phase.cases.Settled.make({})
@@ -205,6 +211,7 @@ const presentPublication = (state: Publication) => {
   const candidate = Phase.guards.ReadyToPublish(state.phase)
     ? Option.some({
         token,
+        request: requestedRequest(state.intent),
         display: replaceDisplayed(
           Option.getOrUndefined(state.committed)?.display,
           state.phase.reply,
@@ -237,7 +244,7 @@ const presentPublication = (state: Publication) => {
  * Publishes the latest intent with a 150ms feedback grace and a 250ms minimum
  * from feedback commit. Failures bypass delays; superseded successes are ignored.
  * Requests and timers are cancelled on unmount, independently of display history.
- * The intent retains the request so retries preserve an explicit refresh.
+ * The intent and committed publication retain their requests, preserving hint context and retries.
  */
 export const usePanelPresentation = () => {
   const [state, dispatch] = useReducer(reducePublication, undefined, initialPublication);
@@ -280,6 +287,7 @@ export const usePanelPresentation = () => {
       Event.cases.DisplayCommitted.make({
         token: candidate.token,
         reply: candidate.display.response,
+        request: candidate.request,
         animate: candidate.animate,
       }),
     );

@@ -1,5 +1,12 @@
-import { Cache, Context, Duration, Effect, Exit, Layer, Schema } from "effect";
-import { CollectionExecution, RecordLabel, TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
+import { Array, Cache, Context, Duration, Effect, Exit, Layer, Schema } from "effect";
+import {
+  CollectionExecution,
+  RecordLabel,
+  TaxonName,
+  TaxonSet,
+  Taxonomy,
+  TaxonomyHint,
+} from "robo-taxonomist";
 import { PanelId, panels, records } from "../lib/catalog.ts";
 import * as Contract from "../lib/contract.ts";
 import { FixtureModel } from "./fixture-model.ts";
@@ -12,7 +19,13 @@ const inputs = records.map((record) =>
 
 const execution = CollectionExecution.make({ batchSize: 6, concurrency: 1 });
 
-const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
+const lookup = Effect.fn("PanelResults.lookup")(function* ({
+  panelId,
+  hints,
+}: {
+  readonly panelId: PanelId;
+  readonly hints: ReadonlyArray<TaxonomyHint>;
+}) {
   const panel = panels.find((entry) => entry.id === panelId);
   if (panel === undefined)
     return yield* Effect.fail(Contract.ClassificationFailure.cases.InvalidPanel.make({}));
@@ -20,7 +33,7 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
     (set, target) => TaxonSet.union(set, TaxonSet.of(TaxonName.make(target.name))),
     TaxonSet.empty(),
   );
-  const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution });
+  const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution, hints });
   return yield* Schema.decodeUnknownEffect(Contract.PanelResponse)({
     panelId,
     rows: result.records.map((row) => ({
@@ -37,7 +50,7 @@ const lookup = Effect.fn("PanelResults.lookup")(function* (panelId: PanelId) {
 type LookupFailure = Effect.Error<ReturnType<typeof lookup>>;
 
 /**
- * Panel classification service caching successful, schema-validated results indefinitely per layer instance.
+ * Cache successful, schema-validated results by panel and ordered hints per layer instance.
  * Native refresh keeps an old success readable while running; failed refreshes evict only that entry.
  * Failed lookups expire immediately; collection execution uses batch size six and concurrency one.
  */
@@ -47,6 +60,7 @@ export class PanelResults extends Context.Service<
     readonly classify: (
       panelId: PanelId,
       refresh?: boolean,
+      hints?: ReadonlyArray<TaxonomyHint>,
     ) => Effect.Effect<Contract.PanelResponse, LookupFailure>;
   }
 >()("@robo-taxonomist/demo/PanelResults") {
@@ -59,8 +73,10 @@ export class PanelResults extends Context.Service<
         timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
       });
       return PanelResults.of({
-        classify: (panelId, refresh = false) =>
-          refresh ? Cache.refresh(cache, panelId) : Cache.get(cache, panelId),
+        classify: (panelId, refresh = false, hints = []) => {
+          const key = { panelId, hints: Array.copy(hints) };
+          return refresh ? Cache.refresh(cache, key) : Cache.get(cache, key);
+        },
       });
     }),
   );
@@ -68,11 +84,12 @@ export class PanelResults extends Context.Service<
   static readonly layer = PanelResults.layerNoDeps.pipe(Layer.provide(FixtureModel));
 }
 
-/** Classify through PanelResults; refresh forces a fresh lookup without touching other panels. */
+/** Classify through PanelResults; refresh forces a fresh lookup for the selected panel and hints. */
 export const classifyPanel = Effect.fn("classifyPanel")(function* (
   panelId: PanelId,
   refresh = false,
+  hints?: ReadonlyArray<TaxonomyHint>,
 ) {
   const results = yield* PanelResults;
-  return yield* results.classify(panelId, refresh);
+  return yield* results.classify(panelId, refresh, hints);
 });

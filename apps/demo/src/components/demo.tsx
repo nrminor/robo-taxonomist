@@ -2,7 +2,7 @@
 
 import { useAtomValue } from "@effect/atom-react";
 import { Button } from "@base-ui/react/button";
-import { Array, Option } from "effect";
+import { Array, Option, Struct } from "effect";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { panels, records } from "../lib/catalog.ts";
 import { Comparison, formatSampleShare } from "../lib/display.ts";
@@ -18,6 +18,7 @@ import { ThemeControl } from "./theme-control.tsx";
 import { PanelControls } from "./panel-controls.tsx";
 import { LoadingResults } from "./loading-results.tsx";
 import { RecordControls } from "./record-controls.tsx";
+import * as Hints from "./hints-control.tsx";
 import styles from "./demo.module.css";
 import { initialQueryAtom, recordSelectionAtom } from "../client/panel-atoms.ts";
 
@@ -69,6 +70,19 @@ const SuccessfulResults = ({
             })}
           </p>
         </div>
+        {Array.match(candidate.request.hints ?? [], {
+          onEmpty: () => <p className={styles.hintsContext}>No taxonomic hints used.</p>,
+          onNonEmpty: (hints) => (
+            <details className={styles.hintsContext}>
+              <summary>Taxonomic hints used</summary>
+              {hints.map((hint, index) => (
+                <p key={index} className={styles.hintText}>
+                  {hint}
+                </p>
+              ))}
+            </details>
+          ),
+        })}
         <div className={styles.retainedChart} data-updating={feedback !== undefined}>
           <AbundanceChart findings={findings} revision={candidate.token} animatePanels={animate} />
         </div>
@@ -133,7 +147,7 @@ export const Demo = () => {
     onNone: () => "No panel results have been displayed yet.",
     onSome: ({ display }) => `Still showing ${display.findings.panel.name}.`,
   });
-  const progress = `${retrying ? "Retrying" : request.refresh ? "Reclassifying with" : "Updating to"} ${requestedName}. ${retained}`;
+  const progress = `${retrying ? "Retrying" : request.refresh ? "Reclassifying with" : "Updating to"} ${requestedName}. ${retained}${request.hints !== undefined && request.hints.length > 0 ? " Using supplied taxonomic hints for this request." : ""}`;
   const feedback = visible ? (
     <CommittedFeedback token={token} onCommit={feedbackCommitted}>
       <p>{progress}</p>
@@ -155,8 +169,18 @@ export const Demo = () => {
           <div className={styles.controlOptions}>
             <PanelControls
               selected={request.panelId}
-              onSelect={(panelId, animate) => start({ panelId }, animate)}
+              onSelect={(panelId, animate) => {
+                const selection = Struct.omit(request, ["refresh"]);
+                start(Struct.assign(selection, { panelId }), animate);
+              }}
               selectedInputRef={selectedPanel}
+            />
+            <Hints.HintsControl
+              hints={request.hints ?? []}
+              submitting={pending || awaitingInitial}
+              onApply={(hints, animate) =>
+                start({ panelId: request.panelId, hints, refresh: true }, animate)
+              }
             />
             <RecordControls />
           </div>
@@ -167,7 +191,7 @@ export const Demo = () => {
               focusableWhenDisabled
               title="Request fresh model decisions for this panel; live mode may incur API charges."
               onClick={(event) =>
-                start({ panelId: request.panelId, refresh: true }, event.detail > 0)
+                start(Struct.assign(request, { refresh: true }), event.detail > 0)
               }
             >
               {pending && request.refresh ? "Reclassifying…" : "Reclassify panel"}
