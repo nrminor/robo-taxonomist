@@ -25,6 +25,7 @@ import {
   TaxonomicRecord,
   TaxonName,
   Taxonomy,
+  TaxonomyHint,
   TaxonSet,
   type TaxonIdentityJudgment,
   type TaxonContainmentJudgment,
@@ -61,7 +62,7 @@ it.effect("supplies direct hints to identity comparisons without changing uncert
   );
   return Effect.gen(function* () {
     const result = yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), {
-      hints: ["A contextual prior"],
+      hints: [TaxonomyHint.make("A contextual prior")],
     });
     expect(result._tag).toBe("Undetermined");
   }).pipe(Effect.provide(layer));

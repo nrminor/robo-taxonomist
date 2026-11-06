@@ -9,6 +9,7 @@ import {
   TaxonName,
   TaxonSet,
   Taxonomy,
+  TaxonomyHint,
 } from "../src/index.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
@@ -44,7 +45,7 @@ it.effect("passes direct hints once in the shared classification input", () => {
     const record = RecordLabel.make("subject");
     const taxon = TaxonSet.of(TaxonName.make("Fungi"));
     const result = yield* Taxonomy.classifyRecords([record], taxon, {
-      hints: ["A contextual prior"],
+      hints: [TaxonomyHint.make("A contextual prior")],
     });
     expect(result.records).toHaveLength(1);
     const row = Array.head(result.records).pipe(Option.getOrThrow);

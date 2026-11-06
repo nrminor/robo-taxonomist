@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, SchemaIssue } from "effect";
-import { RecordLabel, TaxonName, Taxonomy } from "../src/index.ts";
+import { RecordLabel, TaxonName, Taxonomy, TaxonomyHint } from "../src/index.ts";
 
 describe.each([
   { name: "RecordLabel", schema: RecordLabel, expected: "a nonblank record label" },
   { name: "TaxonName", schema: TaxonName, expected: "a nonblank taxon name" },
+  { name: "TaxonomyHint", schema: TaxonomyHint, expected: "a nonblank taxonomic hint" },
 ])("$name", ({ schema, expected }) => {
   it.each(["", " ", "\t", "\n\r", " \t\n ", "\u00a0", "\u2003", "\u3000"])(
     "rejects blank text %j",
@@ -26,9 +27,11 @@ describe.each([
 
   it.effect("retains a domain-specific validation issue", () =>
     Effect.gen(function* () {
-      const issue = yield* Effect.flip<RecordLabel | TaxonName, SchemaIssue.Issue, never>(
-        schema.makeEffect(" \t"),
-      );
+      const issue = yield* Effect.flip<
+        RecordLabel | TaxonName | TaxonomyHint,
+        SchemaIssue.Issue,
+        never
+      >(schema.makeEffect(" \t"));
       expect(SchemaIssue.makeFormatterDefault()(issue)).toContain(expected);
     }),
   );

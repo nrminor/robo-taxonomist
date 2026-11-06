@@ -7,8 +7,8 @@ import {
   TaxonName,
   TaxonSet,
   Taxonomy,
+  TaxonomyHint,
   TaxonomyHints,
-  taxonomyHintsLayer,
 } from "../src/index.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
@@ -36,27 +36,39 @@ it.effect("selects scoped, direct, empty and updated hints without leaking scope
     }),
   );
   const operation = Taxonomy.classifyRecords([subject], target);
-  const source = ["outer"];
-  const hintsLayer = taxonomyHintsLayer(source);
-  source.push("later");
+  const source = [TaxonomyHint.make("outer")];
+  const hintsLayer = TaxonomyHints.layer(source);
+  source.push(TaxonomyHint.make("later"));
   return Effect.gen(function* () {
     yield* operation;
     yield* operation.pipe(Effect.provide(hintsLayer));
-    yield* Taxonomy.classifyRecords([subject], target, { hints: ["direct"] }).pipe(
-      Effect.provide(hintsLayer),
-    );
-    yield* Taxonomy.classifyRecords([subject], target, { hints: [] }).pipe(
+    yield* Effect.gen(function* () {
+      const before = yield* TaxonomyHints.Current;
+      expect(before).toEqual(["replacement", "inner"]);
+      yield* Taxonomy.classifyRecords([subject], target, { hints: [TaxonomyHint.make("direct")] });
+      const afterDirect = yield* TaxonomyHints.Current;
+      expect(afterDirect).toBe(before);
+      yield* Taxonomy.classifyRecords([subject], target, { hints: [] });
+      const afterDisabled = yield* TaxonomyHints.Current;
+      expect(afterDisabled).toBe(before);
+    }).pipe(
+      TaxonomyHints.withAddedHints([TaxonomyHint.make("inner")]),
+      TaxonomyHints.withHints([TaxonomyHint.make("replacement")]),
       Effect.provide(hintsLayer),
     );
     yield* operation.pipe(
-      Effect.updateService(TaxonomyHints, Array.append("inner")),
+      TaxonomyHints.withAddedHints([TaxonomyHint.make("inner")]),
       Effect.provide(hintsLayer),
     );
     yield* operation.pipe(Effect.provide(hintsLayer));
     yield* Taxonomy.classifyRecords([subject], target, { hints: undefined }).pipe(
       Effect.provide(hintsLayer),
     );
-    expect(seen).toHaveLength(7);
+    yield* operation.pipe(
+      TaxonomyHints.withHints([TaxonomyHint.make("replacement")]),
+      Effect.provide(hintsLayer),
+    );
+    expect(seen).toHaveLength(8);
     const baseline = Array.get(seen, 0).pipe(Option.getOrThrow);
     const shared = Array.get(seen, 1).pipe(Option.getOrThrow);
     const direct = Array.get(seen, 2).pipe(Option.getOrThrow);
@@ -64,21 +76,84 @@ it.effect("selects scoped, direct, empty and updated hints without leaking scope
     const supplemented = Array.get(seen, 4).pipe(Option.getOrThrow);
     const restored = Array.get(seen, 5).pipe(Option.getOrThrow);
     const inherited = Array.get(seen, 6).pipe(Option.getOrThrow);
+    const replaced = Array.get(seen, 7).pipe(Option.getOrThrow);
     expect(disabled).toEqual(baseline);
     expect(shared).toMatchObject({ hints: ["outer"] });
     expect(direct).toMatchObject({ hints: ["direct"] });
     expect(supplemented).toMatchObject({ hints: ["outer", "inner"] });
     expect(restored).toEqual(shared);
     expect(inherited).toEqual(shared);
+    expect(replaced).toMatchObject({ hints: ["replacement"] });
   }).pipe(Effect.provide(model));
 });
+
+it.effect(
+  "exposes scoped replacement and immutable ordered additions without changing outer hints",
+  () =>
+    Effect.gen(function* () {
+      const initial = yield* TaxonomyHints.Current;
+      expect(initial).toEqual([]);
+      const outer = [TaxonomyHint.make("outer")];
+      const replacement = TaxonomyHint.make("replacement");
+      const added = TaxonomyHint.make("added");
+      yield* Effect.gen(function* () {
+        const before = yield* TaxonomyHints.Current;
+        expect(before).toEqual(["outer"]);
+        yield* Effect.gen(function* () {
+          const replaced = yield* TaxonomyHints.Current;
+          expect(replaced).toEqual(["replacement"]);
+          const appended = yield* TaxonomyHints.Current.pipe(
+            TaxonomyHints.withAddedHints([added, added]),
+          );
+          expect(appended).toEqual(["replacement", "added", "added"]);
+          const afterAppend = yield* TaxonomyHints.Current;
+          expect(afterAppend).toBe(replaced);
+        }).pipe(TaxonomyHints.withHints([replacement]));
+        const afterReplacement = yield* TaxonomyHints.Current;
+        expect(afterReplacement).toBe(before);
+        const nativeAppend = yield* TaxonomyHints.Current.pipe(
+          Effect.updateService(TaxonomyHints.Current, Array.append(added)),
+        );
+        expect(nativeAppend).toEqual(["outer", "added"]);
+        expect(before).toEqual(["outer"]);
+        expect(outer).toEqual(["outer"]);
+        const afterNativeAppend = yield* TaxonomyHints.Current;
+        expect(afterNativeAppend).toBe(before);
+      }).pipe(Effect.provide(TaxonomyHints.layer(outer)));
+      const restored = yield* TaxonomyHints.Current;
+      expect(restored).toBe(initial);
+    }),
+);
+
+it.effect("copies helper inputs at construction but inherits ambient hints on each execution", () =>
+  Effect.gen(function* () {
+    const additions = [TaxonomyHint.make("added")];
+    const replacements = [TaxonomyHint.make("replacement")];
+    const supplemented = TaxonomyHints.Current.pipe(TaxonomyHints.withAddedHints(additions));
+    const replaced = TaxonomyHints.Current.pipe(TaxonomyHints.withHints(replacements));
+    additions.push(TaxonomyHint.make("too late"));
+    replacements[0] = TaxonomyHint.make("too late");
+    const first = TaxonomyHints.layer([TaxonomyHint.make("first")]);
+    const second = TaxonomyHints.layer([TaxonomyHint.make("second")]);
+    const firstSupplemented = yield* supplemented.pipe(Effect.provide(first));
+    const secondSupplemented = yield* supplemented.pipe(Effect.provide(second));
+    const firstReplaced = yield* replaced.pipe(Effect.provide(first));
+    const secondReplaced = yield* replaced.pipe(Effect.provide(second));
+    expect(firstSupplemented).toEqual(["first", "added"]);
+    expect(secondSupplemented).toEqual(["second", "added"]);
+    expect(firstReplaced).toEqual(["replacement"]);
+    expect(secondReplaced).toEqual(["replacement"]);
+    const outside = yield* TaxonomyHints.Current;
+    expect(outside).toEqual([]);
+  }),
+);
 
 it.effect("snapshots group hints before the first request for later targets", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const seen: DecisionModel.ProviderOptions["state"][] = [];
-    const hints = ["initial"];
+    const hints = [TaxonomyHint.make("initial")];
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -111,7 +186,7 @@ it.effect("snapshots group hints before the first request for later targets", ()
       Effect.forkChild,
     );
     yield* Deferred.await(started);
-    hints.push("mutated");
+    hints.push(TaxonomyHint.make("mutated"));
     yield* Deferred.succeed(release, undefined);
     const result = yield* Fiber.join(fiber);
     expect(result.groups).toHaveLength(2);
@@ -122,13 +197,13 @@ it.effect("snapshots group hints before the first request for later targets", ()
 
 it.effect("carries hints through successive quantifier windows", () => {
   const seen: DecisionModel.ProviderOptions["state"][] = [];
-  const hints = ["prior"];
+  const hints = [TaxonomyHint.make("prior")];
   const model = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         seen.push(state);
-        hints.push("mutated");
+        hints.push(TaxonomyHint.make("mutated"));
         return Effect.succeed({
           answers: Record.map(decisions, () =>
             Classify({
@@ -182,7 +257,7 @@ it.effect("delivers hints across comparison, relation, membership and delegated 
       },
     }),
   );
-  const hint = ["shared prior"];
+  const hint = [TaxonomyHint.make(" \tshared prior\n")];
   const options = { hints: hint };
   return Effect.gen(function* () {
     yield* Taxonomy.sameSpecies(subject, subject, options);
@@ -200,7 +275,7 @@ it.effect("delivers hints across comparison, relation, membership and delegated 
     yield* Taxonomy.noRecordBelongsTo([subject], target, options);
     expect(states).toHaveLength(13);
     for (const instruction of instructions.slice(0, 3))
-      expect(instruction).toContain("shared prior");
+      expect(instruction).toContain(JSON.stringify(" \tshared prior\n"));
     for (const state of states.slice(3)) expect(state).toMatchObject({ hints: hint });
   }).pipe(Effect.provide(model));
 });
@@ -233,15 +308,15 @@ it.effect(
     return Effect.gen(function* () {
       yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"));
       yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), { hints: [] }).pipe(
-        Effect.provide(taxonomyHintsLayer(["hidden"])),
+        Effect.provide(TaxonomyHints.layer([TaxonomyHint.make("hidden")])),
       );
       yield* Taxonomy.groupRecordsByTaxa([subject], [target]);
       yield* Taxonomy.groupRecordsByTaxa([subject], [target], { hints: [] }).pipe(
-        Effect.provide(taxonomyHintsLayer(["hidden"])),
+        Effect.provide(TaxonomyHints.layer([TaxonomyHint.make("hidden")])),
       );
       yield* Taxonomy.allRecordsBelongTo([subject], target);
       yield* Taxonomy.allRecordsBelongTo([subject], target, { hints: [] }).pipe(
-        Effect.provide(taxonomyHintsLayer(["hidden"])),
+        Effect.provide(TaxonomyHints.layer([TaxonomyHint.make("hidden")])),
       );
       expect(requests).toHaveLength(6);
       const scalarBaseline = Array.get(requests, 0).pipe(Option.getOrThrow);
@@ -262,7 +337,7 @@ it.effect("isolates concurrent scopes and snapshots classification batches at ex
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const seen: DecisionModel.ProviderOptions["state"][] = [];
-    const direct = ["before execution"];
+    const direct = [TaxonomyHint.make("before execution")];
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -288,12 +363,12 @@ it.effect("isolates concurrent scopes and snapshots classification batches at ex
       hints: direct,
       execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
     });
-    direct[0] = "at execution";
+    direct[0] = TaxonomyHint.make("at execution");
     const fiber = yield* pending.pipe(Effect.provide(model), Effect.forkChild);
     yield* Deferred.await(started);
-    direct[0] = "after start";
+    direct[0] = TaxonomyHint.make("after start");
     yield* Taxonomy.classifyRecords([subject], target).pipe(
-      Effect.provide(Layer.merge(model, taxonomyHintsLayer(["other scope"]))),
+      Effect.provide(Layer.merge(model, TaxonomyHints.layer([TaxonomyHint.make("other scope")]))),
     );
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(fiber);
@@ -315,7 +390,7 @@ it.effect("validates hints before transport while preserving literal shortcuts",
     }),
   );
   return Effect.gen(function* () {
-    for (const hints of [[42], null, 42, ""]) {
+    for (const hints of [[42], null, 42, "", [""], [" \t\n"]]) {
       const invalidClassification = yield* Effect.flip(
         // @ts-expect-error Verify an untyped caller's malformed hints.
         Taxonomy.classifyRecords([subject], target, { hints }),

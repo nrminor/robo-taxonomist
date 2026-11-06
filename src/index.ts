@@ -20,6 +20,7 @@ export {
   TaxonId,
   TaxonomicRecord,
   TaxonName,
+  TaxonomyHint,
 } from "./schemas.ts";
 /**
  * Compare record labels, ask about taxa and ranks, and test records against targets.
@@ -67,4 +68,10 @@ export type { TaxonMatch, RecordMembershipPartition, RecordsGroupedByTaxa } from
  */
 export * as TaxonSet from "./TaxonSet.ts";
 export { TaxonSetRelation, TaxonSetRelationJudgment } from "./TaxonSet.ts";
-export { TaxonomyHints, taxonomyHintsLayer } from "./TaxonomyHints.ts";
+/**
+ * Supply shared hints, replace or supplement them for one workflow, and inspect its current scope.
+ *
+ * @category modules
+ * @since 0.6.0
+ */
+export * as TaxonomyHints from "./TaxonomyHints.ts";
