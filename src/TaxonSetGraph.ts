@@ -8,7 +8,13 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as Errors from "./errors.ts";
-import { TaxonomicRecord, taxonSetSchema, type Expression, type Taxon } from "./schemas.ts";
+import {
+  TaxonomicRecord,
+  TaxonomyHint,
+  taxonSetSchema,
+  type Expression,
+  type Taxon,
+} from "./schemas.ts";
 
 const fields = Schema.Union([
   Schema.Struct(taxonSetSchema.cases.Empty.fields),
@@ -33,11 +39,15 @@ type Node = typeof nodeSchema.Type;
 export const membershipTargetSchema = Schema.Struct({
   nodes: Schema.Array(nodeSchema),
   target: nodeRef,
+  hints: Schema.optionalKey(Schema.NonEmptyArray(TaxonomyHint)),
+  instructions: Schema.optionalKey(Schema.String),
 });
 export const relationInputSchema = Schema.Struct({
   nodes: Schema.Array(nodeSchema),
   left: nodeRef,
   right: nodeRef,
+  hints: Schema.optionalKey(Schema.NonEmptyArray(TaxonomyHint)),
+  instructions: Schema.optionalKey(Schema.String),
 });
 export const instructions =
   "References index nodes; roots select the complete sets. Empty contains no organisms; " +

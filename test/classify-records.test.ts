@@ -9,6 +9,7 @@ import {
   TaxonName,
   TaxonSet,
   Taxonomy,
+  TaxonomyHint,
 } from "../src/index.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
@@ -25,6 +26,34 @@ const answer = (
 const inputSchema = Schema.Struct({
   records: Schema.Array(Schema.String),
   taxa: Schema.Array(Schema.Struct({ scientificName: Schema.String })),
+});
+
+it.effect("passes direct hints once in the shared classification input", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state }) => {
+        expect(state).toMatchObject({ hints: ["A contextual prior"] });
+        return Effect.succeed({
+          answers: { r0t0: answer("undetermined", [0, 0, 0, 1]) },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    const record = RecordLabel.make("subject");
+    const taxon = TaxonSet.of(TaxonName.make("Fungi"));
+    const result = yield* Taxonomy.classifyRecords([record], taxon, {
+      hints: [TaxonomyHint.make("A contextual prior")],
+    });
+    expect(result.records).toHaveLength(1);
+    const row = Array.head(result.records).pipe(Option.getOrThrow);
+    expect(row.taxa).toHaveLength(1);
+    const match = Array.head(row.taxa).pipe(Option.getOrThrow);
+    expect(row.record).toBe(record);
+    expect(match.judgment).toEqual({ _tag: "Undetermined" });
+  }).pipe(Effect.provide(layer));
 });
 
 const boundedTaxon = (name: string) => {

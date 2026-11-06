@@ -235,13 +235,11 @@ it("describes selected judgments and uncertainty without adding a segment", asyn
   await expect.element(view.getByText("Other matching records", { exact: true })).toBeVisible();
   await view.getByRole("button", { name: "Inspect unclassified example", exact: true }).click();
   const fungi = view.getByRole("img", { name: /^Fungi · kingdom/ });
-  await expect
-    .element(fungi)
-    .toHaveAttribute("aria-label", expect.stringContaining("No accepted classification"));
+  await expect.element(fungi).toHaveAttribute("aria-label", expect.stringContaining("Unresolved"));
   await expect
     .element(
       view.getByText(
-        "This record has no accepted classification for at least one target. It is not included in any target total in Groups and subgroups.",
+        "This record is unresolved for at least one target. It is not included in any target total in Groups and subgroups.",
         { exact: true },
       ),
     )

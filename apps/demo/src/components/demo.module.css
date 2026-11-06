@@ -146,6 +146,27 @@
   --color-selected-record: var(--color-text-muted);
 }
 
+.hintsContext {
+  min-block-size: 30px;
+  padding-block-end: 6px;
+  font-size: 12px;
+  line-height: 24px;
+  color: var(--color-text-muted);
+}
+
+.hintsContext summary {
+  min-block-size: 24px;
+  cursor: pointer;
+}
+
+.hintText {
+  margin-block-start: 6px;
+  color: var(--color-text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1249px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);

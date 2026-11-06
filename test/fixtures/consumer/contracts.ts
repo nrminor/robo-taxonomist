@@ -1,5 +1,5 @@
 // Compile only, against package exports after build; never executed by Vitest.
-import { Effect, Schema, type Array, type Types } from "effect";
+import { Array, Effect, Schema, type Types } from "effect";
 import type { AiError, Decision, DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
 import {
@@ -9,6 +9,8 @@ import {
   TaxonId,
   TaxonName,
   Taxonomy,
+  TaxonomyHint,
+  TaxonomyHints,
   TaxonSet,
   type CollectionMembershipJudgment,
   type RecordMembershipPartition,
@@ -83,6 +85,49 @@ const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 }
 const rank = Taxonomy.sameSpecies(specimen, specimen, { policy });
 const identity = Taxonomy.sameTaxon(name, name, { policy });
 const containment = Taxonomy.taxonWithin(name, name, { policy });
+const contextHint = TaxonomyHint.make("context");
+const readonlyHints: readonly TaxonomyHint[] = [contextHint];
+const hintSnapshot = TaxonomyHints.snapshot(readonlyHints);
+const inheritedHintSnapshot: typeof hintSnapshot = TaxonomyHints.snapshot(undefined);
+void inheritedHintSnapshot;
+const hinted = Taxonomy.classifyRecords(records, oaks, { hints: readonlyHints });
+const hintedWithLayer = hinted.pipe(Effect.provide(TaxonomyHints.layer(readonlyHints)));
+const hintedRequiresOnlyModel: Effect.Effect<
+  Effect.Success<typeof hinted>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+> = hintedWithLayer;
+void hintedRequiresOnlyModel;
+const inheritedHints: typeof hintedRequiresOnlyModel = Taxonomy.classifyRecords(records, oaks, {
+  hints: undefined,
+});
+void inheritedHints;
+const hintedScalar = Taxonomy.sameTaxon(name, name, { hints: readonlyHints });
+const hintedRelation = TaxonSet.isSubsetOf(oaks, oaks, { hints: readonlyHints });
+const inheritedScalar = Taxonomy.sameTaxon(name, name, { hints: undefined });
+const inheritedRelation = TaxonSet.isSubsetOf(oaks, oaks, { hints: undefined });
+const hintedWithHelpers: typeof hintedRequiresOnlyModel = hinted.pipe(
+  TaxonomyHints.withAddedHints(readonlyHints),
+  TaxonomyHints.withHints(readonlyHints),
+  Effect.updateService(TaxonomyHints.Current, Array.append(contextHint)),
+);
+void hintedWithHelpers;
+void inheritedScalar;
+void inheritedRelation;
+// @ts-expect-error Scalar hints require validated branded text.
+Taxonomy.sameTaxon(name, name, { hints: ["raw"] });
+// @ts-expect-error Set-relation hints require validated branded text too.
+TaxonSet.isSubsetOf(oaks, oaks, { hints: ["raw"] });
+// @ts-expect-error Collection hints cannot bypass the public constructor.
+Taxonomy.classifyRecords(records, oaks, { hints: ["raw"] });
+// @ts-expect-error Scoped layer inputs also require branded hints.
+TaxonomyHints.layer(["raw"]);
+// @ts-expect-error Replacement inputs require branded hints.
+TaxonomyHints.withHints(["raw"]);
+// @ts-expect-error Appended inputs require branded hints.
+TaxonomyHints.withAddedHints(["raw"]);
+// @ts-expect-error Snapshot inputs require branded hints.
+TaxonomyHints.snapshot(["raw"]);
 
 const relation = TaxonSet.isSubsetOf(oaks, TaxonSet.union(oaks, TaxonSet.empty()));
 const membership = Taxonomy.recordBelongsTo(specimen, oaks);
@@ -194,6 +239,12 @@ const classifiedVouchers = classified.pipe(
 );
 
 export type Contracts = [
+  Assert<Equal<Effect.Success<typeof TaxonomyHints.Current>, readonly TaxonomyHint[]>>,
+  Assert<Equal<Effect.Success<typeof hintSnapshot>, readonly TaxonomyHint[]>>,
+  Assert<Equal<Effect.Error<typeof hintSnapshot>, Errors.InvalidInput>>,
+  Assert<Equal<Effect.Services<typeof hintSnapshot>, never>>,
+  Assert<Judgment<typeof hintedScalar, Effect.Success<typeof identity>>>,
+  Assert<Judgment<typeof hintedRelation, Effect.Success<typeof relation>>>,
   Assert<Judgment<typeof assignedMembership, TaxonMembershipJudgment<typeof assignment>>>,
   Assert<Judgment<typeof assignedSetMembership, TaxonMembershipJudgment<typeof assignment>>>,
   Assert<Judgment<typeof namedMembership, TaxonMembershipJudgment<ShorthandTarget>>>,

@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
+import * as AcceptancePolicy from "./AcceptancePolicy.ts";
 
 /**
  * Describe a record with nonblank text, preserved exactly as supplied.
@@ -56,6 +58,33 @@ export const TaxonName = Schema.String.check(
  * export const specimen = TaxonomicRecord.make({ scientificName });
  */
 export type TaxonName = typeof TaxonName.Type;
+
+/**
+ * Supply a taxonomic hint as nonblank text, preserved exactly as supplied.
+ * Model-backed questions use hints as contextual priors under the existing acceptance policy.
+ *
+ * @category schemas
+ * @since 0.6.0
+ * @example
+ * import { TaxonomyHint } from "robo-taxonomist";
+ * export const placement = TaxonomyHint.make("Acetobacter aceti belongs to Acetobacteraceae.");
+ */
+export const TaxonomyHint = Schema.String.check(
+  Schema.isPattern(/\S/u, { expected: "a nonblank taxonomic hint" }),
+).pipe(Schema.brand("TaxonomyHint"));
+
+/**
+ * Pass validated hint text in operation options or a TaxonomyHints scope.
+ * TaxonomyHint.make validates synchronously; makeEffect exposes validation as an Effect.
+ *
+ * @category models
+ * @since 0.6.0
+ * @example
+ * import { TaxonomyHint, TaxonomyHints } from "robo-taxonomist";
+ * const placement = TaxonomyHint.make("Acetobacter aceti belongs to Acetobacteraceae.");
+ * export const hints = TaxonomyHints.layer([placement]);
+ */
+export type TaxonomyHint = typeof TaxonomyHint.Type;
 
 const NonblankText = Schema.String.check(Schema.isPattern(/\S/u, { expected: "nonblank text" }));
 
@@ -158,6 +187,30 @@ export const CollectionExecution = Schema.Struct({
  * export const partition = Taxonomy.partitionRecordsByMembership(records, target, { execution });
  */
 export type CollectionExecution = typeof CollectionExecution.Type;
+
+/**
+ * Share policy and hint options across model-backed questions.
+ * Omitted or undefined hints inherit the current scope; [] disables hints.
+ *
+ * @internal
+ */
+export const JudgmentOptions = Schema.Struct({
+  policy: Schema.optionalKey(AcceptancePolicy.AcceptancePolicy),
+  hints: Schema.optional(Schema.Array(TaxonomyHint)),
+});
+
+/** Derive question options from their shared schema. @internal */
+export type JudgmentOptions = typeof JudgmentOptions.Type;
+
+const collectionOptionFields = Struct.assign(JudgmentOptions.fields, {
+  execution: Schema.optionalKey(CollectionExecution),
+});
+
+/** Extend question options with collection execution bounds. @internal */
+export const CollectionOptions = Schema.Struct(collectionOptionFields);
+
+/** Derive collection options from their shared schema. @internal */
+export type CollectionOptions = typeof CollectionOptions.Type;
 
 class Empty extends Schema.TaggedClass<Empty>("robo-taxonomist/TaxonSet/Empty")("Empty", {}) {}
 export class Taxon<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<Taxon>(

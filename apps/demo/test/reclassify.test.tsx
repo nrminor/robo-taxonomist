@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { cdp, userEvent } from "vitest/browser";
+import { cdp, page, userEvent } from "vitest/browser";
 import { StrictMode } from "react";
 import { RegistryProvider } from "@effect/atom-react";
 import { Effect, Layer, Schema } from "effect";
@@ -47,7 +47,11 @@ const renderDemo = async (
 
 const expectPosts = async (
   fetch: ReturnType<typeof initialBroadReplyThenFetch>,
-  bodies: ReadonlyArray<{ readonly panelId: PanelId; readonly refresh?: true }>,
+  bodies: ReadonlyArray<{
+    readonly panelId: PanelId;
+    readonly refresh?: true;
+    readonly hints?: ReadonlyArray<string>;
+  }>,
 ) => {
   expect(fetch).toHaveBeenCalledTimes(bodies.length);
   for (const [index, [input, init]] of fetch.mock.calls.entries()) {
@@ -69,6 +73,148 @@ const chartValues = (figure: Element) =>
   Array.from(figure.querySelectorAll('[role="img"]:not([aria-hidden="true"])'), (row) =>
     row.getAttribute("aria-label"),
   );
+
+it("applies a complete hint note only on submission and retains the displayed run's context", async () => {
+  const pending = Promise.withResolvers<Response>();
+  const interactiveFetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);
+  const { view, fetch } = await renderDemo(interactiveFetch);
+  const targets = view.getByRole("region", { name: "Panel targets" });
+  await expect.element(targets).toBeVisible();
+  const originalFigure = targets.getByRole("figure").element();
+  const edit = view.getByRole("button", { name: "Edit taxonomic hints" });
+  await edit.click();
+  const dialog = page.getByRole("dialog", { name: "Taxonomic hints", exact: true });
+  const note = "  Acetobacter aceti belongs to Acetobacteraceae.\nUse that family placement.\t";
+  await dialog.getByRole("textbox", { name: "Background context" }).fill(note);
+  await expectPosts(fetch, [{ panelId: "broad" }]);
+  await dialog.getByRole("button", { name: "Apply and reclassify" }).click();
+  await expect.element(dialog).not.toBeInTheDocument();
+  await expect.element(edit).toHaveFocus();
+  await expectPosts(fetch, [
+    { panelId: "broad" },
+    { panelId: "broad", refresh: true, hints: [note] },
+  ]);
+  expect(targets.getByRole("figure").element()).toBe(originalFigure);
+  await expect.element(targets.getByText("No taxonomic hints used.")).toBeVisible();
+
+  await edit.click();
+  const editor = dialog.getByRole("textbox", { name: "Background context" });
+  await expect.element(editor).toHaveValue(note);
+  await editor.fill("An unsubmitted revision");
+  const apply = dialog.getByRole("button", { name: "Apply and reclassify" });
+  await expect.element(apply).toHaveAttribute("aria-disabled", "true");
+  await apply.click({ force: true });
+  expect(interactiveFetch).toHaveBeenCalledTimes(1);
+
+  pending.resolve(Response.json(await replyFor("broad")));
+  await expect.element(apply).not.toHaveAttribute("aria-disabled", "true");
+  await expect.element(editor).toHaveValue("An unsubmitted revision");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await targets.getByText("Taxonomic hints used", { exact: true }).click();
+  expect(targets.getByText(note).element().textContent).toBe(note);
+  expect(targets.getByRole("figure").element()).toBe(originalFigure);
+  await edit.click();
+  await expect
+    .element(dialog.getByRole("textbox", { name: "Background context" }))
+    .toHaveValue(note);
+});
+
+it("discards cancelled drafts and rejects whitespace without making a request", async () => {
+  const interactiveFetch = vi.fn<typeof globalThis.fetch>(() =>
+    Promise.reject(new Error("Unexpected inference while editing")),
+  );
+  const { view, fetch } = await renderDemo(interactiveFetch);
+  await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+  const edit = view.getByRole("button", { name: "Edit taxonomic hints" });
+  const dialog = page.getByRole("dialog", { name: "Taxonomic hints", exact: true });
+  const editor = dialog.getByRole("textbox", { name: "Background context" });
+  await edit.click();
+  await expect.element(editor).toHaveFocus();
+  await editor.fill("Discard this draft");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect.element(edit).toHaveFocus();
+  await edit.click();
+  await expect.element(editor).toHaveValue("");
+  await editor.fill("Discard on Escape too");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(dialog).not.toBeInTheDocument();
+  await expect.element(edit).toHaveFocus();
+  await edit.click();
+  await expect.element(editor).toHaveValue("");
+  await editor.fill(" \t\n");
+  await dialog.getByRole("button", { name: "Apply and reclassify" }).click();
+  await expect.element(editor).toHaveAttribute("aria-invalid", "true");
+  await expect.element(editor).toHaveFocus();
+  await expect.element(dialog.getByRole("alert")).toBeVisible();
+  await expectPosts(fetch, [{ panelId: "broad" }]);
+  expect(interactiveFetch).not.toHaveBeenCalled();
+});
+
+it("carries submitted hints across panels and refreshes, retries their exact snapshot, and clears them", async () => {
+  const broad = await replyFor("broad");
+  const focused = await replyFor("focused");
+  const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
+    ClassificationFailure.cases.ModelFailure.make({
+      reason: PublicModelReason.cases.RateLimitError.make({}),
+      retryable: true,
+    }),
+  );
+  const interactiveFetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json(broad))
+    .mockResolvedValueOnce(Response.json(focused))
+    .mockResolvedValueOnce(Response.json(focused))
+    .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
+    .mockResolvedValueOnce(Response.json(focused))
+    .mockResolvedValueOnce(Response.json(focused));
+  const { view, fetch } = await renderDemo(interactiveFetch, broad);
+  const targets = view.getByRole("region", { name: "Panel targets" });
+  await expect.element(targets).toBeVisible();
+  const edit = view.getByRole("button", { name: "Edit taxonomic hints" });
+  const dialog = page.getByRole("dialog", { name: "Taxonomic hints", exact: true });
+  const editor = dialog.getByRole("textbox", { name: "Background context" });
+  await edit.click();
+  await editor.fill("First submitted note");
+  await dialog.getByRole("button", { name: "Apply and reclassify" }).click();
+  await targets.getByText("Taxonomic hints used", { exact: true }).click();
+  await expect.element(targets.getByText("First submitted note", { exact: true })).toBeVisible();
+  await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
+  await expect
+    .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
+    .toBeVisible();
+  const reclassify = view.getByRole("button", { name: "Reclassify panel", exact: true });
+  await reclassify.click();
+  await expect.poll(() => interactiveFetch.mock.calls.length).toBe(3);
+  await expect.element(reclassify).not.toHaveAttribute("aria-disabled", "true");
+
+  await edit.click();
+  await expect.element(editor).toHaveValue("First submitted note");
+  await editor.fill("Second submitted note");
+  await dialog.getByRole("button", { name: "Apply and reclassify" }).click();
+  await expect.element(view.getByRole("alert")).toBeVisible();
+  await expect.element(targets.getByText("First submitted note", { exact: true })).toBeVisible();
+  await edit.click();
+  await expect.element(editor).toHaveValue("Second submitted note");
+  await editor.fill("Do not send this draft on retry");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await view.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect.element(view.getByRole("alert")).not.toBeInTheDocument();
+  await expect.element(targets.getByText("Second submitted note", { exact: true })).toBeVisible();
+
+  await edit.click();
+  await editor.fill("");
+  await dialog.getByRole("button", { name: "Apply and reclassify" }).click();
+  await expect.element(targets.getByText("No taxonomic hints used.")).toBeVisible();
+  await expectPosts(fetch, [
+    { panelId: "broad" },
+    { panelId: "broad", hints: ["First submitted note"], refresh: true },
+    { panelId: "focused", hints: ["First submitted note"] },
+    { panelId: "focused", hints: ["First submitted note"], refresh: true },
+    { panelId: "focused", hints: ["Second submitted note"], refresh: true },
+    { panelId: "focused", hints: ["Second submitted note"], refresh: true },
+    { panelId: "focused", hints: [], refresh: true },
+  ]);
+});
 
 it("keeps reclassification focusable but disabled until the initial results arrive", async () => {
   const initial = Promise.withResolvers<Schema.Json>();

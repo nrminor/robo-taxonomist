@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
-import { Deferred, Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { Data, Deferred, Effect, Layer, ManagedRuntime, Record, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import { Errors } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
@@ -258,6 +258,80 @@ it.effect("rejects nonboolean refresh values with a safe 400 before any inferenc
       expect(failure).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
       expect(calls).toBe(0);
     }
+  }),
+);
+
+it.effect("rejects malformed hints without exposing their contents or starting inference", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const model = observedFixture(() =>
+      Effect.sync(() => {
+        calls++;
+      }),
+    );
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
+      (runtime) => runtime.disposeEffect,
+    );
+    for (const hints of ["SECRET", null, {}, ["   "], ["SECRET", 1]]) {
+      const response = yield* Effect.promise(() =>
+        makeHandlers(runtime).classifyHttp(
+          new Request("http://localhost/api/classify", {
+            method: "POST",
+            body: JSON.stringify({ panelId: "broad", hints }),
+          }),
+        ),
+      );
+      expect(response.status).toBe(400);
+      const wire = yield* Effect.promise(() => response.text());
+      expect(wire).not.toContain("SECRET");
+      expect(JSON.parse(wire)).toEqual({ _tag: "InvalidHints" });
+      expect(calls).toBe(0);
+    }
+  }),
+);
+
+it.effect("passes exact hint text through HTTP to every Broad batch", () =>
+  Effect.gen(function* () {
+    const states: DecisionModel.ProviderOptions["state"][] = [];
+    const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+    const model = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: ({ state, decisions }) => {
+          states.push(state);
+          return Effect.succeed({
+            answers: Record.map(decisions, () =>
+              Classify({
+                label: "undetermined",
+                probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
+              }),
+            ),
+            usage: { inputTokens: undefined, outputTokens: undefined },
+          });
+        },
+      }),
+    );
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
+      (runtime) => runtime.disposeEffect,
+    );
+    const response = yield* Effect.promise(() =>
+      makeHandlers(runtime).classifyHttp(
+        new Request("http://localhost/api/classify", {
+          method: "POST",
+          body: JSON.stringify({ panelId: "broad", hints: ["  contextual note  "] }),
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    const reply = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
+      yield* Effect.promise(() => response.json()),
+    );
+    expect(reply.rows).toHaveLength(24);
+    expect(reply.rows.every((row) => row.matches.length === 6)).toBe(true);
+    expect(states).toHaveLength(4);
+    for (const state of states) expect(state).toMatchObject({ hints: ["  contextual note  "] });
   }),
 );
 

@@ -48,6 +48,19 @@ const renderDemo = (
 const failedReply = (failure: ClassificationFailure) =>
   Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
 
+it("directs invalid hints back to the editor instead of retrying the rejected request", async () => {
+  const initial = failedReply(ClassificationFailure.cases.InvalidHints.make({}));
+  const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected unchanged retry")));
+  const view = await renderDemo(initial, mockFetch, 400);
+  await expect.element(view.getByRole("alert")).toMatchTextContent("Edit the taxonomic hints.");
+  await expect.element(view.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  await view.getByRole("button", { name: "Edit taxonomic hints" }).click();
+  await expect
+    .element(page.getByRole("dialog", { name: "Taxonomic hints", exact: true }))
+    .toBeVisible();
+  expect(mockFetch).not.toHaveBeenCalled();
+});
+
 it("waits for an explicit retry after showing the initial rate limit and sends the selected panel", async () => {
   const initial = failedReply(
     ClassificationFailure.cases.ModelFailure.make({

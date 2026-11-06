@@ -79,7 +79,7 @@ export const judgmentPresentation = TaxonMatchJudgment.match({
     style: { color: "var(--color-matched)" },
   }),
   Undetermined: () => ({
-    label: "No accepted classification",
+    label: "Unresolved",
     support: undefined,
     style: { color: "var(--color-uncertain)" },
   }),

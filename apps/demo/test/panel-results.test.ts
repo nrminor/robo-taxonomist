@@ -12,7 +12,7 @@ import {
   Schema,
 } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
-import { TaxonMatchJudgment } from "robo-taxonomist";
+import { TaxonMatchJudgment, TaxonomyHint } from "robo-taxonomist";
 import { panels, records } from "../src/lib/catalog.ts";
 import { PanelResponse } from "../src/lib/contract.ts";
 import * as Display from "../src/lib/display.ts";
@@ -305,6 +305,57 @@ it.effect("loads only requested panels, coalesces pending requests and reuses su
       expect(calls).toBe(4);
       yield* classifyPanel("focused");
       expect(calls).toBe(8);
+    }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
+  }),
+);
+
+it.effect("keys cached and concurrent results by ordered hints and panel", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let calls = 0;
+    const model = Layer.effect(
+      DecisionModel.DecisionModel,
+      Effect.gen(function* () {
+        const fixture = yield* DecisionModel.DecisionModel;
+        return DecisionModel.DecisionModel.of({
+          ...fixture,
+          decide: Effect.fnUntraced(function* (definition, options) {
+            calls++;
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return yield* fixture.decide(definition, options);
+          }),
+        });
+      }),
+    ).pipe(Layer.provide(FixtureModel));
+    yield* Effect.gen(function* () {
+      const a = TaxonomyHint.make("first");
+      const b = TaxonomyHint.make("second");
+      const first = yield* classifyPanel("broad", false, [a, b]).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const second = yield* classifyPanel("broad", false, [a, b]).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      expect(calls).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      const result = yield* Fiber.join(first);
+      const coalesced = yield* Fiber.join(second);
+      expect(coalesced).toBe(result);
+      const cached = yield* classifyPanel("broad", false, [a, b]);
+      expect(cached).toBe(result);
+      expect(calls).toBe(4);
+      yield* classifyPanel("broad", false, [b, a]);
+      expect(calls).toBe(8);
+      const baseline = yield* classifyPanel("broad");
+      const empty = yield* classifyPanel("broad", false, []);
+      expect(empty).toBe(baseline);
+      expect(calls).toBe(12);
+      yield* classifyPanel("broad", true, [a, b]);
+      expect(calls).toBe(16);
+      const retainedBaseline = yield* classifyPanel("broad");
+      expect(retainedBaseline).toBe(baseline);
+      yield* classifyPanel("focused", false, [a, b]);
+      expect(calls).toBe(20);
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   }),
 );

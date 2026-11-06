@@ -156,7 +156,7 @@ const selectionStory = (
       if (count > 0)
         return `This record is ${Display.formatSampleShare(record.abundance)} of the sample and matches ${count} target${count === 1 ? "" : "s"}. The same record is included in each matching total.`;
       if (matches.some((match) => TaxonMatchJudgment.guards.Undetermined(match.judgment)))
-        return `This record has no accepted classification for at least one target. It is not included in any target total in ${findings.panel.name}.`;
+        return `This record is unresolved for at least one target. It is not included in any target total in ${findings.panel.name}.`;
       return `This record does not match any target in ${findings.panel.name}, so it is not included in any target total.`;
     },
   });
