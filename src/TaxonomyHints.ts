@@ -42,6 +42,12 @@ export const TaxonomyHints = Context.Reference<ReadonlyArray<string>>(
 export const taxonomyHintsLayer = (hints: ReadonlyArray<string>) =>
   Layer.succeed(TaxonomyHints, Array.copy(hints));
 
+/**
+ * Select explicit hints or the current scope, then validate a private snapshot.
+ * An explicit empty collection overrides the scope. Text is preserved unchanged.
+ *
+ * @internal
+ */
 export const resolve = Effect.fnUntraced(function* (explicit?: ReadonlyArray<string>) {
   const inherited = yield* TaxonomyHints;
   const selected = explicit === undefined ? inherited : explicit;
@@ -51,5 +57,10 @@ export const resolve = Effect.fnUntraced(function* (explicit?: ReadonlyArray<str
   );
 });
 
+/**
+ * Format hints for scalar decision instructions, or return no additional text.
+ *
+ * @internal
+ */
 export const instruction = (hints: ReadonlyArray<string>) =>
   hints.length === 0 ? "" : `\nUse these taxonomic hints as background: ${JSON.stringify(hints)}`;

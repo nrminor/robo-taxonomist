@@ -46,8 +46,12 @@ it.effect("passes direct hints once in the shared classification input", () => {
     const result = yield* Taxonomy.classifyRecords([record], taxon, {
       hints: ["A contextual prior"],
     });
-    expect(result.records[0]?.record).toBe(record);
-    expect(result.records[0]?.taxa[0]?.judgment).toEqual({ _tag: "Undetermined" });
+    expect(result.records).toHaveLength(1);
+    const row = Array.head(result.records).pipe(Option.getOrThrow);
+    expect(row.taxa).toHaveLength(1);
+    const match = Array.head(row.taxa).pipe(Option.getOrThrow);
+    expect(row.record).toBe(record);
+    expect(match.judgment).toEqual({ _tag: "Undetermined" });
   }).pipe(Effect.provide(layer));
 });
 
