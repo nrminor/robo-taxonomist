@@ -33,6 +33,40 @@ import {
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
+it.effect("supplies direct hints to identity comparisons without changing uncertainty", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state, decisions }) => {
+        expect(state).toBeNull();
+        expect(decisions.identity?.instructions).toContain("A contextual prior");
+        return Effect.succeed({
+          answers: {
+            identity: Classify({
+              label: "undetermined",
+              probabilities: {
+                same: 0,
+                different: 0,
+                undetermined: 1,
+                multipleLeft: 0,
+                multipleRight: 0,
+                multipleBoth: 0,
+              },
+            }),
+          },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    const result = yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), {
+      hints: ["A contextual prior"],
+    });
+    expect(result._tag).toBe("Undetermined");
+  }).pipe(Effect.provide(layer));
+});
+
 // Canned transport answers test library contracts, not biological accuracy.
 const containmentProbabilities = {
   equal: 0,

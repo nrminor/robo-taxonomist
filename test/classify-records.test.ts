@@ -27,6 +27,30 @@ const inputSchema = Schema.Struct({
   taxa: Schema.Array(Schema.Struct({ scientificName: Schema.String })),
 });
 
+it.effect("passes direct hints once in the shared classification input", () => {
+  const layer = Layer.effect(
+    DecisionModel.DecisionModel,
+    DecisionModel.make({
+      decide: ({ state }) => {
+        expect(state).toMatchObject({ hints: ["A contextual prior"] });
+        return Effect.succeed({
+          answers: { r0t0: answer("undetermined", [0, 0, 0, 1]) },
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        });
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    const record = RecordLabel.make("subject");
+    const taxon = TaxonSet.of(TaxonName.make("Fungi"));
+    const result = yield* Taxonomy.classifyRecords([record], taxon, {
+      hints: ["A contextual prior"],
+    });
+    expect(result.records[0]?.record).toBe(record);
+    expect(result.records[0]?.taxa[0]?.judgment).toEqual({ _tag: "Undetermined" });
+  }).pipe(Effect.provide(layer));
+});
+
 const boundedTaxon = (name: string) => {
   const taxon = TaxonSet.of(TaxonName.make(name));
   let reads = 0;

@@ -33,11 +33,15 @@ type Node = typeof nodeSchema.Type;
 export const membershipTargetSchema = Schema.Struct({
   nodes: Schema.Array(nodeSchema),
   target: nodeRef,
+  hints: Schema.optionalKey(Schema.Array(Schema.String)),
+  instructions: Schema.optionalKey(Schema.String),
 });
 export const relationInputSchema = Schema.Struct({
   nodes: Schema.Array(nodeSchema),
   left: nodeRef,
   right: nodeRef,
+  hints: Schema.optionalKey(Schema.Array(Schema.String)),
+  instructions: Schema.optionalKey(Schema.String),
 });
 export const instructions =
   "References index nodes; roots select the complete sets. Empty contains no organisms; " +

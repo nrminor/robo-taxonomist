@@ -67,3 +67,4 @@ export type { TaxonMatch, RecordMembershipPartition, RecordsGroupedByTaxa } from
  */
 export * as TaxonSet from "./TaxonSet.ts";
 export { TaxonSetRelation, TaxonSetRelationJudgment } from "./TaxonSet.ts";
+export { TaxonomyHints, taxonomyHintsLayer } from "./TaxonomyHints.ts";

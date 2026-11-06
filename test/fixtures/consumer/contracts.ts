@@ -83,6 +83,18 @@ const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 }
 const rank = Taxonomy.sameSpecies(specimen, specimen, { policy });
 const identity = Taxonomy.sameTaxon(name, name, { policy });
 const containment = Taxonomy.taxonWithin(name, name, { policy });
+const hinted = Taxonomy.classifyRecords(records, oaks, { hints: ["context"] });
+const hintedWithLayer = hinted.pipe(Effect.provide(RoboTaxonomist.taxonomyHintsLayer(["shared"])));
+const hintedRequiresOnlyModel: Effect.Effect<
+  Effect.Success<typeof hinted>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+> = hintedWithLayer;
+void hintedRequiresOnlyModel;
+const inheritedHints: typeof hintedRequiresOnlyModel = Taxonomy.classifyRecords(records, oaks, {
+  hints: undefined,
+});
+void inheritedHints;
 
 const relation = TaxonSet.isSubsetOf(oaks, TaxonSet.union(oaks, TaxonSet.empty()));
 const membership = Taxonomy.recordBelongsTo(specimen, oaks);

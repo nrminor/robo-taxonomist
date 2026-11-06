@@ -88,6 +88,7 @@
               "test/taxon-judgments.test.ts",
               "test/collection-membership.test.ts",
               "test/classify-records.test.ts",
+              "test/taxonomy-hints.test.ts",
               "test/structured-inputs.test.ts",
               "test/taxonomic-values.test.ts",
               "test/text-values.test.ts",

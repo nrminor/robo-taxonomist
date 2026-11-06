@@ -24,6 +24,7 @@ import {
 } from "./schemas.ts";
 import * as TaxonSetGraph from "./TaxonSetGraph.ts";
 import * as TaxonRelations from "./TaxonRelations.ts";
+import * as Hints from "./TaxonomyHints.ts";
 
 /**
  * Inspect the supplied record on a taxon entry returned by TaxonSet.of.
@@ -247,7 +248,11 @@ export type TaxonSetRelationJudgment<R extends TaxonomicRecord = TaxonomicRecord
       readonly taxon: Taxon<R>;
     });
 
-type JudgmentOptions = { readonly policy?: AcceptancePolicy.AcceptancePolicy };
+type JudgmentOptions = {
+  readonly policy?: AcceptancePolicy.AcceptancePolicy;
+  /** Replace scoped hints; omit or use undefined to inherit, or [] to use none. */
+  readonly hints?: ReadonlyArray<string> | undefined;
+};
 // Fn aliases keep public calling contracts separate from traced implementations.
 type SetRelationFn = <A extends TaxonomicRecord, B extends TaxonomicRecord>(
   left: TaxonSet<A>,
@@ -259,19 +264,33 @@ type SetRelationFn = <A extends TaxonomicRecord, B extends TaxonomicRecord>(
   DecisionModel.DecisionModel
 >;
 
-const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRecord>(input: {
-  readonly left: TaxonSet<R>;
-  readonly right: TaxonSet<R>;
-}) {
+const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRecord>(
+  input: {
+    readonly left: TaxonSet<R>;
+    readonly right: TaxonSet<R>;
+  },
+  hints: ReadonlyArray<string>,
+) {
   const compiled = yield* TaxonSetGraph.compile(input);
   const taxa = {
     leftTaxa: compiled.taxa.left,
     rightTaxa: compiled.taxa.right,
   };
-  const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)({
+  const graphInput = {
     nodes: compiled.nodes,
     ...compiled.roots,
-  }).pipe(Effect.mapError(Errors.InvalidInput.from));
+  };
+  const inputWithHints =
+    hints.length === 0
+      ? graphInput
+      : {
+          ...graphInput,
+          hints,
+          instructions: "Use the supplied taxonomic hints as background.",
+        };
+  const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)(
+    inputWithHints,
+  ).pipe(Effect.mapError(Errors.InvalidInput.from));
   const leftTaxonChoices = Record.fromEntries(
     Array.map(
       taxa.leftTaxa,
@@ -386,7 +405,8 @@ export const isSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isSubsetOf")(functi
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(left))
     return TaxonSetRelationJudgment.cases.Yes.make({ relation: "subset" });
-  const request = yield* makeRelationQuestion<A | B>({ left, right });
+  const hints = yield* Hints.resolve(options.hints);
+  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "subset",
@@ -413,7 +433,8 @@ export const isProperSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isProperSubse
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(right))
     return TaxonSetRelationJudgment.cases.No.make({ relation: "proper-subset" });
-  const request = yield* makeRelationQuestion<A | B>({ left, right });
+  const hints = yield* Hints.resolve(options.hints);
+  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "proper-subset",
@@ -440,7 +461,8 @@ export const equivalent: SetRelationFn = Effect.fn("TaxonSet.equivalent")(functi
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(left) && taxonSetSchema.guards.Empty(right))
     return TaxonSetRelationJudgment.cases.Yes.make({ relation: "equivalent" });
-  const request = yield* makeRelationQuestion<A | B>({ left, right });
+  const hints = yield* Hints.resolve(options.hints);
+  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "equivalent",
@@ -468,7 +490,8 @@ export const overlaps: SetRelationFn = Effect.fn("TaxonSet.overlaps")(function* 
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   if (taxonSetSchema.guards.Empty(left) || taxonSetSchema.guards.Empty(right))
     return TaxonSetRelationJudgment.cases.No.make({ relation: "overlap" });
-  const request = yield* makeRelationQuestion<A | B>({ left, right });
+  const hints = yield* Hints.resolve(options.hints);
+  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
   const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
   return interpretRelation(
     "overlap",
