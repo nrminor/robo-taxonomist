@@ -17,12 +17,6 @@ pnpm add robo-taxonomist
 
 This release supports Effect `^4.0.0`. With default settings, pnpm and other package managers will automatically install the right version of Effect if missing. If your application already uses Effect, make sure its version satisfies the library's peer requirement.
 
-### Migrating from 0.4.0
-
-Classification results no longer expose `TaxonMatch.support` or the generic `Matched` judgment. Handle `match.judgment._tag` as `SameTaxon`, `WithinTaxon`, `NotMatched`, or `Undetermined`. The first three carry `judgment.support`, the probability of the selected answer; `Undetermined` has no support. Previously, `TaxonMatch.support` was always present and pooled normalized `sameTaxon` and `withinTaxon` probabilities. The full original model answer remains available as `match.answer`.
-
-Classification now applies the acceptance policy to the selected label without pooling or automatically falling back to another label. Only accepted positive `SameTaxon` and `WithinTaxon` judgments appear in `ranking`; review all assessments in `taxa` for negative or unresolved results. Concrete runtime judgment schemas, including `TaxonMatchJudgment`, are also exported for constructing and validating judgments.
-
 Most operations in this library require internet access as well as access to a live decision model. Wire it up in an Effect `DecisionModel` layer, as demonstrated below.
 
 ## Example
