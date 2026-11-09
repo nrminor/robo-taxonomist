@@ -20,6 +20,7 @@ import { TestConsole } from "effect/testing";
 import { TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
 import * as Documents from "../src/documents.ts";
+import * as TestJson from "./Json.ts";
 
 const fixtureReply = {
   model: "fixture-model",
@@ -55,17 +56,18 @@ const invoke = (args: readonly string[], replies: readonly object[] = [fixtureRe
               throw new Error("Expected a JSON provider request");
             }),
           );
-          const payload = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
+          const payload = yield* Schema.decodeEffect(wireRequest)(text);
           payloads.push(payload);
           const reply = Array.get(replies, requests).pipe(Option.getOrElse(() => fixtureReply));
           requests++;
+          const body = yield* TestJson.encode(reply);
           return HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify(reply), {
+            new Response(body, {
               headers: { "content-type": "application/json" },
             }),
           );
-        }),
+        }).pipe(Effect.orDie),
       );
       const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
         Effect.result,
@@ -280,7 +282,8 @@ it.effect("reports deeply nested classification metadata as a safe output failur
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("Cannot serialize output");
+    const stderr = yield* TestJson.encode(result.stderr);
+    expect(stderr).toContain("Cannot serialize output");
   }),
 );
 
@@ -460,7 +463,9 @@ it.effect("keeps record and target identifier metadata and symbolic panel topolo
       }),
     });
     const panel = Documents.SetDocument.cases.Difference.make({ left: included, right: excluded });
-    yield* fs.writeFileString(path, JSON.stringify(panel));
+    const panelText = yield* TestJson.encode(panel);
+    yield* fs.writeFileString(path, panelText);
+    const recordText = yield* TestJson.encode(record);
     const result = yield* invoke(
       [
         "classify",
@@ -475,7 +480,7 @@ it.effect("keeps record and target identifier metadata and symbolic panel topolo
         "custom/model",
       ],
       [fixtureReply],
-      JSON.stringify(record) + "\n",
+      recordText + "\n",
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
     const line = Array.head(result.stdout).pipe(Option.getOrThrow);
@@ -490,9 +495,10 @@ it.effect("keeps record and target identifier metadata and symbolic panel topolo
     expect(match.record).toEqual(record);
     expect(match.taxon.record).toEqual(target);
     expect(row.ranking).toEqual(row.taxa);
-    expect(JSON.stringify(payload.state)).not.toContain("abundance");
-    expect(JSON.stringify(payload.state)).not.toContain("metadata");
-    expect(JSON.stringify(payload.state)).not.toContain("revision");
+    const stateText = yield* TestJson.encode(payload.state);
+    expect(stateText).not.toContain("abundance");
+    expect(stateText).not.toContain("metadata");
+    expect(stateText).not.toContain("revision");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -612,7 +618,8 @@ it.effect("does not emit a result for a failed group after a completed JSONL pre
     );
     const row = Array.head(document.records).pipe(Option.getOrThrow);
     expect(row.record).toBe("A17");
-    expect(JSON.stringify(result.stderr)).toContain("unusable answer");
+    const stderr = yield* TestJson.encode(result.stderr);
+    expect(stderr).toContain("unusable answer");
     expect(result.requests).toBe(2);
   }),
 );
@@ -644,6 +651,7 @@ it.effect("preserves only the completed prefix when a later record source fails"
     );
     const row = Array.head(document.records).pipe(Option.getOrThrow);
     expect(row.record).toBe("A17");
-    expect(JSON.stringify(result.stderr)).toContain(missing);
+    const stderr = yield* TestJson.encode(result.stderr);
+    expect(stderr).toContain(missing);
   }).pipe(Effect.provide(NodeServices.layer)),
 );

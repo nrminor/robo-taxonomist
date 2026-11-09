@@ -19,6 +19,7 @@ import { TestConsole } from "effect/testing";
 import { TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
 import * as Documents from "../src/documents.ts";
+import * as TestJson from "./Json.ts";
 
 const wireRequest = Schema.fromJsonString(
   Schema.Struct({
@@ -76,16 +77,17 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
           throw new Error("Expected a JSON provider request");
         }),
       );
-      const body = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
+      const body = yield* Schema.decodeEffect(wireRequest)(text);
       requests.push(body);
+      const responseBody = yield* TestJson.encode(options.reply ?? identityReply);
       return HttpClientResponse.fromWeb(
         request,
-        new Response(JSON.stringify(options.reply ?? identityReply), {
+        new Response(responseBody, {
           status: options.status ?? 200,
           headers: { "content-type": "application/json" },
         }),
       );
-    }),
+    }).pipe(Effect.orDie),
   );
   let output = "";
   const decoder = new TextDecoder();
@@ -157,8 +159,9 @@ it.effect.each([401, 403, 429, 500])(
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.stderr).toHaveLength(1);
-      expect(JSON.stringify(result.stderr)).toMatch(/model|provider/);
-      expect(JSON.stringify(result.stderr)).not.toContain(secret);
+      const stderr = yield* TestJson.encode(result.stderr);
+      expect(stderr).toMatch(/model|provider/);
+      expect(stderr).not.toContain(secret);
     }),
 );
 
@@ -246,7 +249,8 @@ it.effect.each([
       expect(text.stdout).toEqual(["judgment\tside", row]);
       const json = yield* invoke([...args, "--format", "json"], { reply });
       expect(Result.isSuccess(json.outcome)).toBe(true);
-      expect(json.stdout).toEqual([JSON.stringify(native)]);
+      const nativeText = yield* TestJson.encode(native);
+      expect(json.stdout).toEqual([nativeText]);
     }),
 );
 
@@ -453,7 +457,8 @@ it.effect("quotes delimiter-bearing clarification text and preserves it in struc
       side: "left",
       taxon: expectedTaxon,
     });
-    expect(json.stdout).toEqual([JSON.stringify(expectedJudgment)]);
+    const expectedText = yield* TestJson.encode(expectedJudgment);
+    expect(json.stdout).toEqual([expectedText]);
   }),
 );
 
@@ -515,7 +520,8 @@ it.effect.each([
       },
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([JSON.stringify(native)]);
+    const nativeText = yield* TestJson.encode(native);
+    expect(result.stdout).toEqual([nativeText]);
     expect(result.requests).toHaveLength(1);
   }),
 );
@@ -552,7 +558,8 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
       taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
       metadata: { sample: ["A17", null] },
     };
-    yield* fs.writeFileString(path, JSON.stringify([record]));
+    const recordText = yield* TestJson.encode([record]);
+    yield* fs.writeFileString(path, recordText);
     const args = [
       "set",
       "relation",
@@ -579,7 +586,8 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
     const text = yield* invoke(args, { reply });
     expect(Result.isFailure(text.outcome)).toBe(true);
     expect(text.stdout).toEqual([]);
-    expect(JSON.stringify(text.stderr)).toContain("--format json");
+    const stderr = yield* TestJson.encode(text.stderr);
+    expect(stderr).toContain("--format json");
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
     const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
@@ -592,7 +600,8 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
       side: "right",
       taxon: expectedTaxon,
     });
-    expect(json.stdout).toEqual([JSON.stringify(expectedJudgment)]);
+    const expectedText = yield* TestJson.encode(expectedJudgment);
+    expect(json.stdout).toEqual([expectedText]);
     const request = Array.head(json.requests).pipe(Option.getOrThrow);
     expect(request.state).toEqual({
       nodes: [
@@ -665,7 +674,8 @@ it.effect.each([
       const args = ["cmp", "within", "Quercus", "Fagaceae", "--model", "custom/model"];
       const result = yield* invoke([...args, "--format", "json"], { reply });
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([JSON.stringify(native)]);
+      const nativeText = yield* TestJson.encode(native);
+      expect(result.stdout).toEqual([nativeText]);
       const text = yield* invoke([...args, "--no-header"], { reply });
       expect(Result.isSuccess(text.outcome)).toBe(true);
       const expectedSide = "side" in native ? native.side : "";
@@ -763,7 +773,8 @@ it.effect.each([
     ];
     const result = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([JSON.stringify(native)]);
+    const nativeText = yield* TestJson.encode(native);
+    expect(result.stdout).toEqual([nativeText]);
     const text = yield* invoke([...args, "--no-header"], { reply });
     expect(Result.isSuccess(text.outcome)).toBe(true);
     const expectedSide = "side" in native ? native.side : "";
@@ -786,7 +797,8 @@ it.effect("treats invalid provider responses as failures, not unresolved judgmen
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("unusable answer");
+    const stderr = yield* TestJson.encode(result.stderr);
+    expect(stderr).toContain("unusable answer");
   }),
 );
 

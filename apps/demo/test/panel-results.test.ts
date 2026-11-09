@@ -18,6 +18,7 @@ import { PanelResponse } from "../src/lib/contract.ts";
 import * as Display from "../src/lib/display.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
+import * as TestJson from "./Json.ts";
 
 it.effect(
   "classifies the authored nested fixture with overlapping targets and unresolved vague rows",
@@ -26,9 +27,9 @@ it.effect(
       const result = yield* classifyPanel("nested");
       expect(Schema.is(PanelResponse)(result)).toBe(true);
       const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(PanelResponse))(result);
-      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
-        JSON.parse(JSON.stringify(encoded)),
-      );
+      const text = yield* TestJson.encode(encoded);
+      const parsed = yield* TestJson.decode(text);
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(parsed);
       expect(decoded).toEqual(result);
       expect(result.rows).toHaveLength(24);
       expect(result.rows.map((row) => row.matches.length)).toEqual(Array.replicate(10, 24));
@@ -194,10 +195,10 @@ it.effect(
       );
       expect(match.answer).toMatchObject({ confidence: 0.8 });
       const wire = yield* Schema.encodeEffect(Schema.toCodecJson(PanelResponse))(response);
-      expect(JSON.stringify(wire)).toContain('"confidence":0.8');
-      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
-        JSON.parse(JSON.stringify(wire)),
-      );
+      const text = yield* TestJson.encode(wire);
+      expect(text).toContain('"confidence":0.8');
+      const parsed = yield* TestJson.decode(text);
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(parsed);
       expect(decoded).toEqual(response);
     }).pipe(Effect.provide(PanelResults.layerNoDeps.pipe(Layer.provide(model))));
   },

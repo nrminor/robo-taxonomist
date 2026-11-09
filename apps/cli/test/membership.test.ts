@@ -21,6 +21,7 @@ import { TestConsole } from "effect/testing";
 import { TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
 import * as Documents from "../src/documents.ts";
+import * as TestJson from "./Json.ts";
 
 const wireRequest = Schema.fromJsonString(
   Schema.Struct({
@@ -47,7 +48,7 @@ const invoke = (
               throw new Error("Expected a JSON provider request");
             }),
           );
-          const payload = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
+          const payload = yield* Schema.decodeEffect(wireRequest)(text);
           const choices = Array.get(replies, requests.length).pipe(
             Option.getOrElse(() => ["member"]),
           );
@@ -70,13 +71,14 @@ const invoke = (
               },
             ]),
           );
+          const body = yield* TestJson.encode({ model: "fixture-model", answers });
           return HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify({ model: "fixture-model", answers }), {
+            new Response(body, {
               headers: { "content-type": "application/json" },
             }),
           );
-        }),
+        }).pipe(Effect.orDie),
       );
       const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
         Effect.result,
@@ -160,7 +162,8 @@ it.effect("retains identifying fields and arbitrary metadata from structured rec
       abundance: 0.37,
       metadata: { sample: "A17", note: null },
     };
-    yield* fs.writeFileString(path, JSON.stringify([record]));
+    const recordText = yield* TestJson.encode([record]);
+    yield* fs.writeFileString(path, recordText);
     const result = yield* invoke([
       "membership",
       "partition",
@@ -173,9 +176,11 @@ it.effect("retains identifying fields and arbitrary metadata from structured rec
       "jsonl",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([
-      JSON.stringify({ record, judgment: Documents.MembershipJudgment.cases.Member.make({}) }),
-    ]);
+    const expectedText = yield* TestJson.encode({
+      record,
+      judgment: Documents.MembershipJudgment.cases.Member.make({}),
+    });
+    expect(result.stdout).toEqual([expectedText]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -291,7 +296,8 @@ it.effect("retains a quantifier clarification node in JSON after scanning the co
       quantifier: "all",
       target: expectedTarget,
     });
-    expect(result.stdout).toEqual([JSON.stringify(expected)]);
+    const expectedText = yield* TestJson.encode(expected);
+    expect(result.stdout).toEqual([expectedText]);
     expect(result.requests).toHaveLength(2);
   }),
 );
@@ -423,9 +429,11 @@ it.effect.each([
         "jsonl",
       ]);
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([
-        JSON.stringify({ record, judgment: Documents.MembershipJudgment.cases.Member.make({}) }),
-      ]);
+      const expectedText = yield* TestJson.encode({
+        record,
+        judgment: Documents.MembershipJudgment.cases.Member.make({}),
+      });
+      expect(result.stdout).toEqual([expectedText]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -455,7 +463,8 @@ it.effect.each([
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.requests).toEqual([]);
-      expect(JSON.stringify(result.stderr)).toContain(path);
+      const stderr = yield* TestJson.encode(result.stderr);
+      expect(stderr).toContain(path);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -476,7 +485,8 @@ it.effect.each([
       "json",
     ]);
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    expect(result.stdout).toEqual([JSON.stringify(native)]);
+    const nativeText = yield* TestJson.encode(native);
+    expect(result.stdout).toEqual([nativeText]);
     expect(result.requests).toEqual([]);
   }),
 );
@@ -531,10 +541,12 @@ it.effect.each([
         record: "A17",
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       };
+      const expectedText = yield* TestJson.encode(expectedRow);
       expect(result.output).toBe(
-        format === "jsonl" ? `${JSON.stringify(expectedRow)}\n` : `${prefix}Member\tA17\t\n`,
+        format === "jsonl" ? `${expectedText}\n` : `${prefix}Member\tA17\t\n`,
       );
-      expect(JSON.stringify(result.stderr)).toContain(missing);
+      const stderr = yield* TestJson.encode(result.stderr);
+      expect(stderr).toContain(missing);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -620,9 +632,11 @@ it.effect.each([
         text,
       );
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([
-        JSON.stringify({ record, judgment: Documents.MembershipJudgment.cases.Member.make({}) }),
-      ]);
+      const expectedText = yield* TestJson.encode({
+        record,
+        judgment: Documents.MembershipJudgment.cases.Member.make({}),
+      });
+      expect(result.stdout).toEqual([expectedText]);
     }),
 );
 
@@ -648,7 +662,8 @@ it.effect.each([{ files: ["-", "-"] }, { files: ["-", "--targets-file", "-"] }])
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.requests).toEqual([]);
-      expect(JSON.stringify(result.stderr)).toContain("stdin can only be used once");
+      const stderr = yield* TestJson.encode(result.stderr);
+      expect(stderr).toContain("stdin can only be used once");
     }),
 );
 
@@ -680,8 +695,10 @@ it.effect(
         record: "A17",
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       };
-      expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
-      expect(JSON.stringify(result.stderr)).toContain("unusable answer");
+      const expectedText = yield* TestJson.encode(expectedRow);
+      expect(result.stdout).toEqual([expectedText]);
+      const stderr = yield* TestJson.encode(result.stderr);
+      expect(stderr).toContain("unusable answer");
     }),
 );
 
@@ -710,7 +727,8 @@ it.effect("reports JSONL serialization limits as operational errors rather than 
     );
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
-    expect(JSON.stringify(result.stderr)).toContain("Cannot serialize output");
+    const stderr = yield* TestJson.encode(result.stderr);
+    expect(stderr).toContain("Cannot serialize output");
   }),
 );
 
@@ -754,7 +772,8 @@ it.effect.each([
         choices.map((choice) => [choice]),
       );
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      expect(result.stdout).toEqual([JSON.stringify(native)]);
+      const nativeText = yield* TestJson.encode(native);
+      expect(result.stdout).toEqual([nativeText]);
       expect(result.requests).toHaveLength(2);
     }),
 );
@@ -790,7 +809,8 @@ it.effect(
         quantifier: "any",
         target: expectedTarget,
       });
-      expect(result.stdout).toEqual([JSON.stringify(expected)]);
+      const expectedText = yield* TestJson.encode(expected);
+      expect(result.stdout).toEqual([expectedText]);
       expect(result.requests).toHaveLength(1);
     }),
 );
@@ -848,7 +868,8 @@ it.effect("handles the empty target through the native primitive without a provi
       record: "A17",
       judgment: Documents.MembershipJudgment.cases.NotMember.make({}),
     };
-    expect(result.stdout).toEqual([JSON.stringify(expectedRow)]);
+    const expectedText = yield* TestJson.encode(expectedRow);
+    expect(result.stdout).toEqual([expectedText]);
     expect(result.requests).toEqual([]);
   }),
 );

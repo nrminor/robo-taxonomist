@@ -6,6 +6,7 @@ import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as TestJson from "./Json.ts";
 
 const cli = fileURLToPath(new URL("../node_modules/varlock/bin/cli.js", import.meta.url));
 const account = "0123456789abcdef0123456789abcdef";
@@ -68,11 +69,13 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const directory = yield* cliDirectory;
+      const accountText = yield* TestJson.encode(account);
+      const tokenText = yield* TestJson.encode(token);
       const child = `
       const assert = require('node:assert/strict');
       assert.equal(process.env.DEMO_MODEL, 'clef');
-      assert.equal(process.env.CLOUDFLARE_ACCOUNT_ID, ${JSON.stringify(account)});
-      assert.equal(process.env.CLOUDFLARE_API_TOKEN, ${JSON.stringify(token)});
+      assert.equal(process.env.CLOUDFLARE_ACCOUNT_ID, ${accountText});
+      assert.equal(process.env.CLOUDFLARE_API_TOKEN, ${tokenText});
       assert.equal(Object.hasOwn(process.env, '__VARLOCK_ENV'), false);
       console.log('CHILD_ASSERTIONS_PASSED');
       console.log(process.env.CLOUDFLARE_API_TOKEN);
@@ -139,7 +142,8 @@ it.effect(
       expect(output).toContain("CLOUDFLARE_API_TOKEN");
       expect(output).toContain("clef");
       expect(output).not.toContain(token);
-      expect(JSON.parse(result.stdout)).toEqual({
+      const parsed = yield* TestJson.decode(result.stdout);
+      expect(parsed).toEqual({
         DEMO_MODEL: "clef",
         CLOUDFLARE_ACCOUNT_ID: account,
         CLOUDFLARE_API_TOKEN: expect.stringContaining("▒"),

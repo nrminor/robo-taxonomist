@@ -18,6 +18,7 @@ import {
 } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
 import { AcceptancePolicy, TaxonName, TaxonSet } from "../src/index.ts";
+import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
@@ -96,7 +97,10 @@ it("consumes an iterable once while retaining repeated occurrences", () => {
 it("serializes ten thousand flat targets without creating a deeply nested expression", () => {
   const inputs = Array.makeBy(10_000, (index) => TaxonSet.of(TaxonName.make(`Target ${index}`)));
   const result = TaxonSet.unionAll(inputs);
-  const document = JSON.parse(JSON.stringify(result));
+  const wire = TestJson.encodeSync(result);
+  const document = TestJson.decodeSync(wire);
+  if (!Predicate.hasProperty(document, "operands") || !Array.isArray(document.operands))
+    throw new Error("Expected serialized union operands");
   expect(document.operands).toHaveLength(10_000);
   expect(document.operands[0]).toEqual({ _tag: "Taxon", record: { scientificName: "Target 0" } });
   expect(document.operands[9_999]).toEqual({

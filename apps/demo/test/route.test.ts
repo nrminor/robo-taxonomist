@@ -9,6 +9,7 @@ import { POST } from "../src/app/api/classify/route.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { FixtureModel } from "../src/server/fixture-model.ts";
+import * as TestJson from "./Json.ts";
 
 vi.mock("server-only", () => ({}));
 vi.stubEnv("DEMO_MODEL", "fixture");
@@ -35,19 +36,21 @@ it.effect("treats invalid server catalog input as a safe internal failure", () =
     );
     expect(internal).toBe(original);
     expect(original.cause).toBe(cause);
+    const requestBody = yield* TestJson.encode({ panelId: "broad" });
     const response = yield* Effect.promise(() =>
       makeHandlers(runtime).classifyHttp(
         new Request("http://localhost/api/classify", {
           method: "POST",
-          body: JSON.stringify({ panelId: "broad" }),
+          body: requestBody,
         }),
       ),
     );
     expect(response.status).toBe(500);
     const wire = yield* Effect.promise(() => response.text());
     expect(wire).not.toContain("SECRET");
+    const document = yield* TestJson.decode(wire);
     const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-      JSON.parse(wire),
+      document,
     );
     expect(failure).toEqual(ClassificationFailure.cases.InternalFailure.make({}));
   }),
@@ -72,19 +75,21 @@ it.effect("preserves the provider error until the HTTP boundary", () =>
       runtime.runPromise(Effect.flip(classifyPanel("broad"))),
     );
     expect(error).toBe(original);
+    const requestBody = yield* TestJson.encode({ panelId: "broad" });
     const response = yield* Effect.promise(() =>
       makeHandlers(runtime).classifyHttp(
         new Request("http://localhost/api/classify", {
           method: "POST",
-          body: JSON.stringify({ panelId: "broad" }),
+          body: requestBody,
         }),
       ),
     );
     expect(response.status).toBe(503);
     const wire = yield* Effect.promise(() => response.text());
     expect(wire).not.toContain("SECRET");
+    const document = yield* TestJson.decode(wire);
     const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-      JSON.parse(wire),
+      document,
     );
     expect(failure).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
@@ -123,19 +128,20 @@ it.effect("refreshes through the same POST contract without disturbing other cac
     const handlers = makeHandlers(runtime);
     const post = (panelId: string, refresh?: boolean) =>
       Effect.gen(function* () {
+        const body = yield* TestJson.encode({ panelId, refresh });
         const response = yield* Effect.promise(() =>
           handlers.classifyHttp(
             new Request("http://localhost/api/classify", {
               method: "POST",
-              body: JSON.stringify({ panelId, refresh }),
+              body,
             }),
           ),
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("Cache-Control")).toBe("no-store");
-        return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
-          yield* Effect.promise(() => response.json()),
-        );
+        const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
+        const value = yield* Effect.promise(() => response.json());
+        return yield* decodeResponse(value);
       });
     const broad = yield* post("broad");
     expect(calls).toBe(4);
@@ -187,12 +193,16 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
     );
     const handlers = makeHandlers(runtime);
     const post = (refresh?: boolean) =>
-      Effect.promise(() =>
-        handlers.classifyHttp(
-          new Request("http://localhost/api/classify", {
-            method: "POST",
-            body: JSON.stringify({ panelId: "broad", refresh }),
-          }),
+      TestJson.encode({ panelId: "broad", refresh }).pipe(
+        Effect.flatMap((body) =>
+          Effect.promise(() =>
+            handlers.classifyHttp(
+              new Request("http://localhost/api/classify", {
+                method: "POST",
+                body,
+              }),
+            ),
+          ),
         ),
       );
     const initial = yield* post();
@@ -203,8 +213,9 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
     expect(failed.headers.get("Cache-Control")).toBe("no-store");
     const wire = yield* Effect.promise(() => failed.text());
     expect(wire).not.toContain("SECRET");
+    const document = yield* TestJson.decode(wire);
     const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-      JSON.parse(wire),
+      document,
     );
     expect(failure).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
@@ -215,9 +226,9 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
     expect(calls).toBe(5);
     const retried = yield* post();
     expect(retried.status).toBe(200);
-    const reply = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
-      yield* Effect.promise(() => retried.json()),
-    );
+    const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
+    const value = yield* Effect.promise(() => retried.json());
+    const reply = yield* decodeResponse(value);
     expect(reply.rows).toHaveLength(24);
     expect(calls).toBe(9);
     const cached = yield* post();
@@ -240,11 +251,12 @@ it.effect("rejects nonboolean refresh values with a safe 400 before any inferenc
     );
     const handlers = makeHandlers(runtime);
     for (const refresh of ["true", "false", "SECRET", 0, 1, null, [], {}]) {
+      const body = yield* TestJson.encode({ panelId: "broad", refresh });
       const response = yield* Effect.promise(() =>
         handlers.classifyHttp(
           new Request("http://localhost/api/classify", {
             method: "POST",
-            body: JSON.stringify({ panelId: "broad", refresh }),
+            body,
           }),
         ),
       );
@@ -252,8 +264,9 @@ it.effect("rejects nonboolean refresh values with a safe 400 before any inferenc
       expect(response.headers.get("Cache-Control")).toBe("no-store");
       const wire = yield* Effect.promise(() => response.text());
       expect(wire).not.toContain("SECRET");
+      const document = yield* TestJson.decode(wire);
       const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-        JSON.parse(wire),
+        document,
       );
       expect(failure).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
       expect(calls).toBe(0);
@@ -274,18 +287,20 @@ it.effect("rejects malformed hints without exposing their contents or starting i
       (runtime) => runtime.disposeEffect,
     );
     for (const hints of ["SECRET", null, {}, ["   "], ["SECRET", 1]]) {
+      const body = yield* TestJson.encode({ panelId: "broad", hints });
       const response = yield* Effect.promise(() =>
         makeHandlers(runtime).classifyHttp(
           new Request("http://localhost/api/classify", {
             method: "POST",
-            body: JSON.stringify({ panelId: "broad", hints }),
+            body,
           }),
         ),
       );
       expect(response.status).toBe(400);
       const wire = yield* Effect.promise(() => response.text());
       expect(wire).not.toContain("SECRET");
-      expect(JSON.parse(wire)).toEqual({ _tag: "InvalidHints" });
+      const document = yield* TestJson.decode(wire);
+      expect(document).toEqual({ _tag: "InvalidHints" });
       expect(calls).toBe(0);
     }
   }),
@@ -316,18 +331,22 @@ it.effect("passes exact hint text through HTTP to every Broad batch", () =>
       Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
       (runtime) => runtime.disposeEffect,
     );
+    const requestBody = yield* TestJson.encode({
+      panelId: "broad",
+      hints: ["  contextual note  "],
+    });
     const response = yield* Effect.promise(() =>
       makeHandlers(runtime).classifyHttp(
         new Request("http://localhost/api/classify", {
           method: "POST",
-          body: JSON.stringify({ panelId: "broad", hints: ["  contextual note  "] }),
+          body: requestBody,
         }),
       ),
     );
     expect(response.status).toBe(200);
-    const reply = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
-      yield* Effect.promise(() => response.json()),
-    );
+    const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
+    const value = yield* Effect.promise(() => response.json());
+    const reply = yield* decodeResponse(value);
     expect(reply.rows).toHaveLength(24);
     expect(reply.rows.every((row) => row.matches.length === 6)).toBe(true);
     expect(states).toHaveLength(4);
@@ -354,10 +373,11 @@ it.effect("interrupts provider work when its active HTTP request is cancelled", 
       (runtime) => runtime.disposeEffect,
     );
     const controller = new AbortController();
+    const requestBody = yield* TestJson.encode({ panelId: "broad" });
     const pending = makeHandlers(runtime).classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: requestBody,
         signal: controller.signal,
       }),
     );
@@ -406,10 +426,11 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     );
     const handlers = makeHandlers(runtime);
     const controller = new AbortController();
+    const requestBody = yield* TestJson.encode({ panelId: "broad" });
     const cancelled = handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: requestBody,
         signal: controller.signal,
       }),
     );
@@ -417,7 +438,7 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     const remaining = handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: requestBody,
       }),
     );
     yield* Effect.promise(() => runtime.runPromise(Effect.yieldNow));
@@ -432,9 +453,9 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     const remainingResponse = yield* Effect.promise(() => remaining);
     expect(remainingResponse.status).toBe(200);
     expect(remainingResponse.headers.get("Cache-Control")).toBe("no-store");
-    const reply = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse))(
-      yield* Effect.promise(() => remainingResponse.json()),
-    );
+    const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
+    const value = yield* Effect.promise(() => remainingResponse.json());
+    const reply = yield* decodeResponse(value);
     expect(reply.rows).toHaveLength(24);
     // Both HTTP waiters share the four provider batches for this panel.
     expect(calls).toBe(4);
@@ -453,7 +474,7 @@ it("returns only a safe 500 reply for a provider defect", async () => {
     const response = await handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: TestJson.encodeSync({ panelId: "broad" }),
       }),
     );
     expect(response.status).toBe(500);
@@ -462,12 +483,14 @@ it("returns only a safe 500 reply for a provider defect", async () => {
     expect(wire).not.toContain("SECRET");
     const expected = ClassificationFailure.cases.InternalFailure.make({});
     expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+        TestJson.decodeSync(wire),
+      ),
     ).toEqual(expected);
     const repeated = await handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: TestJson.encodeSync({ panelId: "broad" }),
       }),
     );
     expect(repeated.status).toBe(500);
@@ -498,7 +521,7 @@ it("returns a safe 503 reply when classification fails at the provider", async (
     const response = await makeHandlers(runtime).classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: TestJson.encodeSync({ panelId: "broad" }),
       }),
     );
     expect(response.status).toBe(503);
@@ -506,7 +529,9 @@ it("returns a safe 503 reply when classification fails at the provider", async (
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
     expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+        TestJson.decodeSync(wire),
+      ),
     ).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.RateLimitError.make({}),
@@ -522,7 +547,7 @@ it("classifies the initial Broad groups panel through the POST wire contract", a
   const response = await POST(
     new Request("http://localhost/api/classify", {
       method: "POST",
-      body: JSON.stringify({ panelId: "broad" }),
+      body: TestJson.encodeSync({ panelId: "broad" }),
     }),
   );
   expect(response.status).toBe(200);
@@ -538,7 +563,7 @@ it("classifies the nested panel through the POST wire contract", async () => {
   const response = await POST(
     new Request("http://localhost/api/classify", {
       method: "POST",
-      body: JSON.stringify({ panelId: "nested" }),
+      body: TestJson.encodeSync({ panelId: "nested" }),
     }),
   );
   expect(response.status).toBe(200);
@@ -549,13 +574,13 @@ it("classifies the nested panel through the POST wire contract", async () => {
 });
 
 it.each([
-  JSON.stringify({ panelId: "SECRET invalid panel" }),
+  TestJson.encodeSync({ panelId: "SECRET invalid panel" }),
   "SECRET malformed JSON",
-  JSON.stringify({ panelId: "nested", records: [{ name: "SECRET record" }] }),
-  JSON.stringify({ panelId: "nested", provider: "SECRET provider" }),
-  JSON.stringify({ panelId: "nested", extra: "SECRET extra field" }),
-  JSON.stringify({}),
-  JSON.stringify(null),
+  TestJson.encodeSync({ panelId: "nested", records: [{ name: "SECRET record" }] }),
+  TestJson.encodeSync({ panelId: "nested", provider: "SECRET provider" }),
+  TestJson.encodeSync({ panelId: "nested", extra: "SECRET extra field" }),
+  TestJson.encodeSync({}),
+  TestJson.encodeSync(null),
 ])("rejects invalid input with a safe 400 reply: %s", async (body) => {
   const response = await POST(
     new Request("http://localhost/api/classify", { method: "POST", body }),
@@ -565,7 +590,7 @@ it.each([
   const wire = await response.text();
   expect(wire).not.toContain("SECRET");
   expect(
-    Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+    Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(TestJson.decodeSync(wire)),
   ).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
 });
 
@@ -575,7 +600,7 @@ it("does not serialize an internal failure for an already cancelled request", as
   const response = await POST(
     new Request("http://localhost/api/classify", {
       method: "POST",
-      body: JSON.stringify({ panelId: "nested" }),
+      body: TestJson.encodeSync({ panelId: "nested" }),
       signal: controller.signal,
     }),
   );
