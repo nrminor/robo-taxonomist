@@ -16,7 +16,7 @@ import {
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestConsole } from "effect/testing";
-import { TaxonName } from "robo-taxonomist";
+import { TaxonName, TaxonSet } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
 import * as Documents from "../src/documents.ts";
 import * as TestJson from "./Json.ts";
@@ -449,9 +449,7 @@ it.effect("quotes delimiter-bearing clarification text and preserves it in struc
     );
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
-    const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
-      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus\tFagus") }),
-    });
+    const expectedTaxon = TaxonSet.of(TaxonName.make("Quercus\tFagus"));
     const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: "subset",
       side: "left",
@@ -590,11 +588,11 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
     expect(stderr).toContain("--format json");
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
-    const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
-      record: Documents.RecordDocument.make({
+    const expectedTaxon = TaxonSet.of(
+      Documents.RecordDocument.make({
         taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
       }),
-    });
+    );
     const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: "overlap",
       side: "right",

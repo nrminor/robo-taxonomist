@@ -3,7 +3,7 @@ import { ConfigProvider, Deferred, Effect, Fiber, Layer, Match, Record, Ref, Sch
 import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { TestClock } from "effect/testing";
-import { RecordLabel, TaxonName } from "robo-taxonomist";
+import { RecordLabel, TaxonName, TaxonSet } from "robo-taxonomist";
 import * as Api from "../src/api.ts";
 import * as Documents from "../src/documents.ts";
 import * as Model from "../src/model.ts";
@@ -410,9 +410,7 @@ it.effect(
         },
       });
 
-      const expectedTarget = Documents.SetDocument.cases.Taxon.make({
-        record: Documents.RecordDocument.make({ scientificName: target }),
-      });
+      const expectedTarget = TaxonSet.of(target);
       const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
         quantifier: "any",
         target: expectedTarget,
@@ -840,11 +838,11 @@ it.effect(
         query: { relation: "overlap" },
       });
 
-      const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
-        record: Documents.RecordDocument.make({
+      const expectedTaxon = TaxonSet.of(
+        Documents.RecordDocument.make({
           taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
         }),
-      });
+      );
       const expected = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
         relation: "overlap",
         side: "right",

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
-import { Data, Deferred, Effect, Layer, ManagedRuntime, Record, Schema } from "effect";
+import { Data, Deferred, Effect, Exit, Layer, ManagedRuntime, Record, Schema, Scope } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import { Errors } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
@@ -372,17 +372,20 @@ it.effect("interrupts provider work when its active HTTP request is cancelled", 
       Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
       (runtime) => runtime.disposeEffect,
     );
-    const controller = new AbortController();
+    const clientScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    const signal = yield* Effect.abortSignal.pipe(Scope.provide(clientScope));
     const requestBody = yield* TestJson.encode({ panelId: "broad" });
     const pending = makeHandlers(runtime).classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
         body: requestBody,
-        signal: controller.signal,
+        signal,
       }),
     );
     yield* Effect.promise(() => runtime.runPromise(Deferred.await(started)));
-    controller.abort(new Error("SECRET cancellation"));
+    yield* Scope.close(clientScope, Exit.void);
     const response = yield* Effect.promise(() => pending);
     expect(response.status).toBe(499);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -425,13 +428,20 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
       (runtime) => runtime.disposeEffect,
     );
     const handlers = makeHandlers(runtime);
-    const controller = new AbortController();
+    const clientScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    const signal = yield* Effect.abortSignal.pipe(Scope.provide(clientScope));
+    const remainingClientScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    const remainingSignal = yield* Effect.abortSignal.pipe(Scope.provide(remainingClientScope));
     const requestBody = yield* TestJson.encode({ panelId: "broad" });
     const cancelled = handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
         body: requestBody,
-        signal: controller.signal,
+        signal,
       }),
     );
     yield* Deferred.await(started);
@@ -439,13 +449,15 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
       new Request("http://localhost/api/classify", {
         method: "POST",
         body: requestBody,
+        signal: remainingSignal,
       }),
     );
     yield* Effect.promise(() => runtime.runPromise(Effect.yieldNow));
     expect(calls).toBe(1);
-    controller.abort(new Error("SECRET cancellation"));
+    yield* Scope.close(clientScope, Exit.void);
     const response = yield* Effect.promise(() => cancelled);
     expect(response.status).toBe(499);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
     const body = yield* Effect.promise(() => response.text());
     expect(body).toBe("");
     expect(interruptions).toBe(0);

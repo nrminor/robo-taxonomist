@@ -18,7 +18,7 @@ import {
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestConsole } from "effect/testing";
-import { TaxonName } from "robo-taxonomist";
+import { TaxonName, TaxonSet } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
 import * as Documents from "../src/documents.ts";
 import * as TestJson from "./Json.ts";
@@ -289,9 +289,7 @@ it.effect("retains a quantifier clarification node in JSON after scanning the co
       [["undetermined"], ["multipleTarget0"]],
     );
     expect(Result.isSuccess(result.outcome)).toBe(true);
-    const expectedTarget = Documents.SetDocument.cases.Taxon.make({
-      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
-    });
+    const expectedTarget = TaxonSet.of(TaxonName.make("Quercus"));
     const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
       quantifier: "all",
       target: expectedTarget,
@@ -344,9 +342,7 @@ it.effect("preserves all five native buckets, duplicate records and within-bucke
     const wire = yield* Effect.forEach(result.stdout, (line) =>
       Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
     );
-    const expectedTarget = Documents.SetDocument.cases.Taxon.make({
-      record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
-    });
+    const expectedTarget = TaxonSet.of(TaxonName.make("Quercus"));
     const expectedClarification = Documents.MembershipJudgment.cases.MultipleTaxaInTarget.make({
       target: expectedTarget,
     });
@@ -802,9 +798,7 @@ it.effect(
         [["multipleTarget0"], ["member"]],
       );
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      const expectedTarget = Documents.SetDocument.cases.Taxon.make({
-        record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
-      });
+      const expectedTarget = TaxonSet.of(TaxonName.make("Quercus"));
       const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
         quantifier: "any",
         target: expectedTarget,

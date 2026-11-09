@@ -68,7 +68,12 @@
           "mapSomeCatchNoSuchElement": "error",
           "resultMatchToFromResult": "error",
           "yieldInCallArgument": "error",
-          "matchBooleanToIsSuccess": "error"
+          "matchBooleanToIsSuccess": "error",
+          "preferTypedSchemaDecoder": "error",
+          "unnecessaryTypeofType": "error",
+          "schemaStructWithTag": "error",
+          "schemaClassMissingBrand": "error",
+          "abortControllerInEffect": "error"
         },
         "overrides": [
           {

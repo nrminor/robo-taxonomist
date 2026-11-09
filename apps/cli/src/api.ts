@@ -4,14 +4,20 @@ import { RecordLabel, TaxonName } from "robo-taxonomist";
 import * as Documents from "./documents.ts";
 
 /** Report invalid taxonomic input without exposing its validation cause. */
-export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
+export class InvalidInput extends Schema.TaggedError<
+  InvalidInput,
+  { readonly brand: unique symbol }
+>()(
   "InvalidInput",
   { message: Schema.String },
   { description: "The supplied taxonomic input is invalid.", httpApiStatus: 400 },
 ) {}
 
 /** Report a model request failure without exposing provider details. */
-export class ModelFailure extends Schema.TaggedError<ModelFailure>()(
+export class ModelFailure extends Schema.TaggedError<
+  ModelFailure,
+  { readonly brand: unique symbol }
+>()(
   "ModelFailure",
   {
     message: Schema.String,
@@ -23,7 +29,10 @@ export class ModelFailure extends Schema.TaggedError<ModelFailure>()(
 ) {}
 
 /** Report a result that cannot be encoded for HTTP. */
-export class OutputFailure extends Schema.TaggedError<OutputFailure>()(
+export class OutputFailure extends Schema.TaggedError<
+  OutputFailure,
+  { readonly brand: unique symbol }
+>()(
   "OutputFailure",
   {
     message: Schema.String,
@@ -35,7 +44,7 @@ export class OutputFailure extends Schema.TaggedError<OutputFailure>()(
 ) {}
 
 /** Report a set document that cannot be restored. */
-export class InvalidSet extends Schema.TaggedError<InvalidSet>()(
+export class InvalidSet extends Schema.TaggedError<InvalidSet, { readonly brand: unique symbol }>()(
   "InvalidSet",
   {
     message: Schema.String,
@@ -47,7 +56,10 @@ export class InvalidSet extends Schema.TaggedError<InvalidSet>()(
 ) {}
 
 /** Report the configured byte limit when a request body exceeds it. */
-export class RequestTooLarge extends Schema.TaggedError<RequestTooLarge>()(
+export class RequestTooLarge extends Schema.TaggedError<
+  RequestTooLarge,
+  { readonly brand: unique symbol }
+>()(
   "RequestTooLarge",
   {
     maxBodyBytes: Schema.Int,
@@ -59,7 +71,10 @@ export class RequestTooLarge extends Schema.TaggedError<RequestTooLarge>()(
 ) {}
 
 /** Report a request body that cannot be read. */
-export class RequestReadFailure extends Schema.TaggedError<RequestReadFailure>()(
+export class RequestReadFailure extends Schema.TaggedError<
+  RequestReadFailure,
+  { readonly brand: unique symbol }
+>()(
   "RequestReadFailure",
   {
     message: Schema.String,
@@ -71,7 +86,10 @@ export class RequestReadFailure extends Schema.TaggedError<RequestReadFailure>()
 ) {}
 
 /** Report the configured depth limit when JSON nesting exceeds it. */
-export class RequestTooDeep extends Schema.TaggedError<RequestTooDeep>()(
+export class RequestTooDeep extends Schema.TaggedError<
+  RequestTooDeep,
+  { readonly brand: unique symbol }
+>()(
   "RequestTooDeep",
   {
     maxJsonDepth: Schema.Int,
@@ -83,7 +101,10 @@ export class RequestTooDeep extends Schema.TaggedError<RequestTooDeep>()(
 ) {}
 
 /** Report which record, target or pair count exceeds its configured limit. */
-export class CollectionLimit extends Schema.TaggedError<CollectionLimit>()(
+export class CollectionLimit extends Schema.TaggedError<
+  CollectionLimit,
+  { readonly brand: unique symbol }
+>()(
   "CollectionLimit",
   {
     resource: Schema.Literals(["records", "targets", "recordTargetPairs"]),
@@ -97,7 +118,10 @@ export class CollectionLimit extends Schema.TaggedError<CollectionLimit>()(
 ) {}
 
 /** Report the configured time limit when a request exceeds it. */
-export class RequestDeadline extends Schema.TaggedError<RequestDeadline>()(
+export class RequestDeadline extends Schema.TaggedError<
+  RequestDeadline,
+  { readonly brand: unique symbol }
+>()(
   "RequestDeadline",
   {
     timeoutMs: Schema.Int,

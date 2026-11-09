@@ -61,6 +61,16 @@ type ExpectedRankComparison =
 const label = RecordLabel.make("Voucher A17 | Quercus robur");
 const name = TaxonName.make("Quercus");
 const oaks = TaxonSet.of(name);
+// @ts-expect-error Empty expressions require construction, not a matching object shape.
+TaxonSet.union(oaks, { _tag: "Empty" });
+// @ts-expect-error Taxon expressions require construction even with a valid record.
+TaxonSet.union(oaks, { _tag: "Taxon", record: { scientificName: name } });
+// @ts-expect-error Union expressions require construction even with valid operands.
+TaxonSet.union(oaks, { _tag: "Union", operands: [oaks] });
+// @ts-expect-error Intersection expressions require construction even with valid operands.
+TaxonSet.union(oaks, { _tag: "Intersection", operands: [oaks] });
+// @ts-expect-error Difference expressions require construction even with valid sides.
+TaxonSet.union(oaks, { _tag: "Difference", left: oaks, right: oaks });
 type NamedTarget = { readonly scientificName: TaxonName };
 // Membership APIs also account for the record created by name shorthand.
 type ShorthandTarget = { readonly scientificName: TaxonName };
@@ -396,6 +406,10 @@ export type Contracts = [
 export const identityFixture = TaxonIdentityJudgment.cases.SameTaxon.make({});
 export const decodeIdentity = Schema.decodeUnknownEffect(TaxonIdentityJudgment);
 export const inputHandled = identity.pipe(Effect.catchTag("InvalidInput", (error) => error.cause));
+declare const unbrandedInputError: Omit<Errors.InvalidInput, "brand">;
+// @ts-expect-error Matching error members without the nominal brand are insufficient.
+const nominalInputError: Errors.InvalidInput = unbrandedInputError;
+void nominalInputError;
 export type ErrorContractChecks = [
   Assert<Equal<Effect.Error<typeof inputHandled>, Schema.SchemaError | AiError.AiError>>,
   Assert<Equal<Errors.InvalidInput["cause"], Schema.SchemaError>>,

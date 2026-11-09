@@ -28,8 +28,7 @@ import {
 
 const namedTargetState = Schema.Struct({
   nodes: Schema.Tuple([
-    Schema.Struct({
-      _tag: Schema.Literal("Taxon"),
+    Schema.TaggedStruct("Taxon", {
       record: Schema.Struct({ scientificName: Schema.String }),
     }),
   ]),
