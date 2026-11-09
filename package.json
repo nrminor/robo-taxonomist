@@ -31,7 +31,7 @@
     "fmt:check": "oxfmt --check .",
     "lint": "pnpm run build && effect-tsgo --tsrs-lint=0.23.0-ts7.1.0-beta oxlint --deny-warnings .",
     "lint:lsp": "effect-tsgo --tsrs-lint=0.23.0-ts7.1.0-beta oxlint --lsp",
-    "typecheck": "tsc --noEmit --project tsconfig.json && tsc --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict && pnpm --filter @robo-taxonomist/demo typecheck && pnpm --filter @robo-taxonomist/cli typecheck",
+    "typecheck": "effect-tsgo tsrs@0.23.0-ts7.1.0-beta --noEmit --project tsconfig.json && effect-tsgo tsrs@0.23.0-ts7.1.0-beta --noEmit --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict && pnpm --filter @robo-taxonomist/demo typecheck && pnpm --filter @robo-taxonomist/cli typecheck",
     "test": "vitest run && pnpm --filter @robo-taxonomist/demo test && pnpm --filter @robo-taxonomist/cli test",
     "test:watch": "vitest",
     "knip": "knip",
