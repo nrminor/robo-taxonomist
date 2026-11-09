@@ -3,11 +3,12 @@ import { ConfigProvider, Deferred, Effect, Fiber, Layer, Match, Record, Ref, Sch
 import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { TestClock } from "effect/testing";
-import { RecordLabel, TaxonName } from "robo-taxonomist";
+import { RecordLabel, TaxonName, TaxonSet } from "robo-taxonomist";
 import * as Api from "../src/api.ts";
 import * as Documents from "../src/documents.ts";
 import * as Model from "../src/model.ts";
 import * as Server from "../src/server.ts";
+import * as TestJson from "./Json.ts";
 
 it.effect("checks HTTP record membership against an empty target without model inference", () =>
   Effect.gen(function* () {
@@ -122,14 +123,14 @@ const subsetReply = {
 
 const fixtureProvider = (reply: unknown, status = 200) => {
   const http = HttpClient.make((request) =>
-    Effect.sync(() => {
-      const body = JSON.stringify(reply);
+    Effect.gen(function* () {
+      const body = yield* TestJson.encode(reply);
       const response = new Response(body, {
         status,
         headers: { "content-type": "application/json" },
       });
       return HttpClientResponse.fromWeb(request, response);
-    }),
+    }).pipe(Effect.orDie),
   );
   const configuration = ConfigProvider.layer(
     ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" }),
@@ -188,7 +189,11 @@ it.effect(
               },
             };
           });
-          const response = new Response(JSON.stringify({ model: "fixture-model", answers }), {
+          const body = yield* TestJson.encode({
+            model: "fixture-model",
+            answers,
+          }).pipe(Effect.orDie);
+          const response = new Response(body, {
             headers: { "content-type": "application/json" },
           });
           active--;
@@ -405,9 +410,7 @@ it.effect(
         },
       });
 
-      const expectedTarget = Documents.SetDocument.cases.Taxon.make({
-        record: Documents.RecordDocument.make({ scientificName: target }),
-      });
+      const expectedTarget = TaxonSet.of(target);
       const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
         quantifier: "any",
         target: expectedTarget,
@@ -532,7 +535,8 @@ it.effect("returns a typed provider failure without exposing provider content", 
       _tag: "ModelFailure",
       message: "The decision model request failed",
     });
-    expect(JSON.stringify(failure)).not.toContain(secret);
+    const serializedFailure = yield* TestJson.encode(failure);
+    expect(serializedFailure).not.toContain(secret);
   }).pipe(Effect.provide([failingHandlers, HttpServer.layerServices]));
 });
 
@@ -834,11 +838,11 @@ it.effect(
         query: { relation: "overlap" },
       });
 
-      const expectedTaxon = Documents.SetDocument.cases.Taxon.make({
-        record: Documents.RecordDocument.make({
+      const expectedTaxon = TaxonSet.of(
+        Documents.RecordDocument.make({
           taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
         }),
-      });
+      );
       const expected = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
         relation: "overlap",
         side: "right",

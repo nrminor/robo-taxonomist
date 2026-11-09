@@ -14,7 +14,10 @@ import * as Schema from "effect/Schema";
  *   { taxonId: { taxonomy: "ncbi", id: "" } }, TaxonName.make("Quercus"),
  * ).pipe(Effect.catchTag("InvalidInput", error => Effect.succeed(error.cause.issue)));
  */
-export class InvalidInput extends Schema.TaggedError<InvalidInput>()("InvalidInput", {
+export class InvalidInput extends Schema.TaggedError<
+  InvalidInput,
+  { readonly brand: unique symbol }
+>()("InvalidInput", {
   cause: Schema.declare(Schema.isSchemaError),
 }) {
   /**

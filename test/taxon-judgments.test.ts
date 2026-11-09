@@ -652,7 +652,7 @@ it.effect(
         seen,
         Schema.is(
           Schema.Struct({
-            nodes: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Taxon") })]),
+            nodes: Schema.Tuple([Schema.TaggedStruct("Taxon", {})]),
           }),
         ),
       );

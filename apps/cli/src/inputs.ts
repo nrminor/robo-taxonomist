@@ -6,7 +6,7 @@ import * as Documents from "./documents.ts";
 const inputEncodings = ["text", "json", "jsonl"] as const;
 type InputEncoding = (typeof inputEncodings)[number];
 /** Accept either an original record label or an identifying record with JSON metadata. */
-export type InputRecord = RecordLabel | typeof Documents.RecordDocument.Type;
+export type InputRecord = RecordLabel | Documents.RecordDocument;
 
 /** Configure record batch size and model-request concurrency. */
 export const executionFlags = {
@@ -139,9 +139,9 @@ const decodeRecords = Effect.fnUntraced(function* (unit: SourceUnit) {
     try: () =>
       Match.value(unit.encoding).pipe(
         Match.literalsExhaustive({
-          text: () => [Schema.decodeUnknownSync(RecordLabel)(unit.text)],
-          jsonl: () => [Schema.decodeUnknownSync(recordLine)(unit.text)],
-          json: () => Schema.decodeUnknownSync(recordJson)(unit.text),
+          text: () => [Schema.decodeSync(RecordLabel)(unit.text)],
+          jsonl: () => [Schema.decodeSync(recordLine)(unit.text)],
+          json: () => Schema.decodeSync(recordJson)(unit.text),
         }),
       ),
     catch: (cause) =>
@@ -164,10 +164,10 @@ const decodeTargets = Effect.fnUntraced(function* (unit: SourceUnit) {
     try: () =>
       Match.value(unit.encoding).pipe(
         Match.literalsExhaustive({
-          text: () => [TaxonSet.of(Schema.decodeUnknownSync(TaxonName)(unit.text))],
-          jsonl: () => [TaxonSet.of(Schema.decodeUnknownSync(recordLine)(unit.text))],
+          text: () => [TaxonSet.of(Schema.decodeSync(TaxonName)(unit.text))],
+          jsonl: () => [TaxonSet.of(Schema.decodeSync(recordLine)(unit.text))],
           json: () => {
-            const document = Schema.decodeUnknownSync(targetJson)(unit.text);
+            const document = Schema.decodeSync(targetJson)(unit.text);
             return Array.isArray<typeof document>(document)
               ? document.map((record) => TaxonSet.of(record))
               : [Documents.restoreSet(document)];

@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { Array, Data, Effect, Layer, Option, Predicate, Record, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import { Errors, RecordLabel, TaxonId, TaxonName, TaxonSet, Taxonomy } from "../src/index.ts";
+import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
@@ -288,9 +289,10 @@ it.effect(
             const secondTaxon = Array.get(input.taxa, 1).pipe(Option.getOrThrow);
             expect(secondTaxon).toEqual({ taxonId: { taxonomy: "ncbi", id: "9606" } });
           }
-          expect(JSON.stringify(state)).not.toContain("private-target-metadata");
-          expect(JSON.stringify(state)).not.toContain("private-id");
-          expect(JSON.stringify(state)).not.toContain("abundance");
+          const wire = TestJson.encodeSync(state);
+          expect(wire).not.toContain("private-target-metadata");
+          expect(wire).not.toContain("private-id");
+          expect(wire).not.toContain("abundance");
           return Effect.succeed({
             answers: Record.map(decisions, (question): DecisionModel.ProviderClassifyAnswer => {
               if (!Predicate.isTagged(question, "Classify"))

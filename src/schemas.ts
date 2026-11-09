@@ -212,10 +212,13 @@ export const CollectionOptions = Schema.Struct(collectionOptionFields);
 /** Derive collection options from their shared schema. @internal */
 export type CollectionOptions = typeof CollectionOptions.Type;
 
-class Empty extends Schema.TaggedClass<Empty>("robo-taxonomist/TaxonSet/Empty")("Empty", {}) {}
-export class Taxon<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<Taxon>(
-  "robo-taxonomist/TaxonSet/Taxon",
-)("Taxon", {
+class Empty extends Schema.TaggedClass<Empty, { readonly brand: unique symbol }>(
+  "robo-taxonomist/TaxonSet/Empty",
+)("Empty", {}) {}
+export class Taxon<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
+  Taxon,
+  { readonly brand: unique symbol }
+>("robo-taxonomist/TaxonSet/Taxon")("Taxon", {
   // Retain the supplied record in memory; encode only identifying fields.
   record: Schema.declare(Schema.is(TaxonomicRecord)).pipe(Schema.encodeTo(TaxonomicRecord)),
 }) {
@@ -245,28 +248,28 @@ const expressionRef: Schema.Codec<Expression, EncodedExpression> = Schema.suspen
   () => taxonSetSchema,
 );
 
-export class Union<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<Union>(
-  "robo-taxonomist/TaxonSet/Union",
-)("Union", {
+export class Union<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
+  Union,
+  { readonly brand: unique symbol }
+>("robo-taxonomist/TaxonSet/Union")("Union", {
   operands: Schema.NonEmptyArray(expressionRef),
 }) {
   declare readonly operands: readonly [Expression<R>, ...Expression<R>[]];
 }
 
-export class Intersection<
-  R extends TaxonomicRecord = TaxonomicRecord,
-> extends Schema.TaggedClass<Intersection>("robo-taxonomist/TaxonSet/Intersection")(
-  "Intersection",
-  {
-    operands: Schema.NonEmptyArray(expressionRef),
-  },
-) {
+export class Intersection<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
+  Intersection,
+  { readonly brand: unique symbol }
+>("robo-taxonomist/TaxonSet/Intersection")("Intersection", {
+  operands: Schema.NonEmptyArray(expressionRef),
+}) {
   declare readonly operands: readonly [Expression<R>, ...Expression<R>[]];
 }
 
-export class Difference<
-  R extends TaxonomicRecord = TaxonomicRecord,
-> extends Schema.TaggedClass<Difference>("robo-taxonomist/TaxonSet/Difference")("Difference", {
+export class Difference<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
+  Difference,
+  { readonly brand: unique symbol }
+>("robo-taxonomist/TaxonSet/Difference")("Difference", {
   left: expressionRef,
   right: expressionRef,
 }) {

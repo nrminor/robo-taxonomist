@@ -10,6 +10,7 @@ import {
   TaxonomyHint,
   TaxonomyHints,
 } from "../src/index.ts";
+import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 const subject = RecordLabel.make("subject");
@@ -304,8 +305,8 @@ it.effect("delivers hints across comparison, relation, membership and delegated 
     yield* Taxonomy.anyRecordBelongsTo([subject], target, options);
     yield* Taxonomy.noRecordBelongsTo([subject], target, options);
     expect(states).toHaveLength(13);
-    for (const instruction of instructions.slice(0, 3))
-      expect(instruction).toContain(JSON.stringify(" \tshared prior\n"));
+    const quotedHint = yield* TestJson.encode(" \tshared prior\n");
+    for (const instruction of instructions.slice(0, 3)) expect(instruction).toContain(quotedHint);
     for (const state of states.slice(3)) expect(state).toMatchObject({ hints: hint });
   }).pipe(Effect.provide(model));
 });

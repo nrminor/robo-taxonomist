@@ -21,6 +21,7 @@ import {
   Taxonomy,
   TaxonSet,
 } from "../src/index.ts";
+import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
@@ -182,7 +183,7 @@ function decodeQuotedRecordFields(instructions: string) {
     Iterable.map((match): [string, unknown] => {
       const field = Array.get(match, 1).pipe(Option.getOrThrow);
       const literal = Array.get(match, 2).pipe(Option.getOrThrow);
-      const decoded: unknown = JSON.parse(literal);
+      const decoded = TestJson.decodeSync(literal);
       expect(typeof decoded, field).toBe("string");
       return [field, decoded];
     }),

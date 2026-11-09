@@ -7,6 +7,7 @@ const inputSchema = Schema.Struct({
   taxa: Schema.Array(Schema.Struct({ scientificName: Schema.String })),
 });
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 // Authored teaching placements, not model claims or evidence of natural co-occurrence.
 const ancestors: Readonly<Record<string, readonly string[]>> = {
@@ -41,7 +42,7 @@ const authoredAnswer = (
   const record = records.find(
     (entry) =>
       recordText ===
-      `${entry.kind === "vague" ? "Record label" : "Scientific name"}: ${JSON.stringify(entry.name)}`,
+      `${entry.kind === "vague" ? "Record label" : "Scientific name"}: ${quoteText(entry.name)}`,
   );
   if (record === undefined) throw new Error("Unexpected fixture record");
   const label =

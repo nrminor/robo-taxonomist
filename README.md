@@ -234,6 +234,8 @@ const remaining = TaxonSet.complement(oaks, family);
 const empty = TaxonSet.empty();
 ```
 
+Build expressions through these factories rather than object literals: expression types carry nominal brands, so matching fields alone do not satisfy `TaxonSet.TaxonSet`. The brands are type-only and do not add fields to serialized data. Records supplied to `TaxonSet.of` remain structural and can carry your own metadata.
+
 `union`, `intersection`, and `difference` each take two set expressions. `symmetricDifference` describes organisms in exactly one input set, and `complement(set, universe)` subtracts the set from the explicitly supplied universe. In this example, `remaining` and `otherFamilyMembers` describe the same directed difference.
 
 For a collection of targets, use `unionAll` rather than repeatedly nesting binary unions:

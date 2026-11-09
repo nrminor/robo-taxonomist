@@ -8,6 +8,7 @@ import {
   PublicModelReason,
 } from "../src/lib/contract.ts";
 import { publicModelFailure, publicCauseFailure } from "../src/lib/failures.ts";
+import * as TestJson from "./Json.ts";
 
 it.effect("accepts legacy classification requests and explicit boolean refresh requests", () =>
   Effect.gen(function* () {
@@ -28,7 +29,7 @@ it("round trips safe failures as direct JSON bodies", () => {
   const failure = ClassificationFailure.cases.InvalidPanel.make({});
   const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
   expect(encoded).toEqual({ _tag: "InvalidPanel" });
-  expect(JSON.parse(JSON.stringify(encoded))).toEqual(encoded);
+  expect(TestJson.decodeSync(TestJson.encodeSync(encoded))).toEqual(encoded);
   expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
 });
 
@@ -104,11 +105,11 @@ it("retains all 19 upstream failure categories while allowlisting their fields",
         reason: { _tag: "QuotaExhaustedError", resetAt: "2026-10-29T00:00:00.000Z" },
       });
     }
-    expect(JSON.stringify(failure)).not.toContain("SECRET");
-    expect(JSON.stringify(encoded)).not.toContain("SECRET");
+    expect(TestJson.encodeSync(failure)).not.toContain("SECRET");
+    expect(TestJson.encodeSync(encoded)).not.toContain("SECRET");
     expect(
       Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-        JSON.parse(JSON.stringify(encoded)),
+        TestJson.decodeSync(TestJson.encodeSync(encoded)),
       ),
     ).toEqual(failure);
   }
@@ -133,8 +134,8 @@ it("redacts invalid provider responses while preserving their category and non-r
     reason: { _tag: "InvalidResponseError" },
     retryable: false,
   });
-  expect(JSON.stringify(failure)).not.toContain("SECRET");
-  expect(JSON.stringify(encoded)).not.toContain("SECRET");
+  expect(TestJson.encodeSync(failure)).not.toContain("SECRET");
+  expect(TestJson.encodeSync(encoded)).not.toContain("SECRET");
   expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
 });
 
@@ -167,7 +168,7 @@ it("projects retry guidance without leaking provider descriptions or causes", ()
     }),
   );
   expect(
-    JSON.stringify(Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure)),
+    TestJson.encodeSync(Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure)),
   ).not.toContain("SECRET");
   expect(publicCauseFailure(Cause.interrupt(1))).toEqual(Option.none());
   expect(publicCauseFailure(Cause.die("SECRET"))).toEqual(

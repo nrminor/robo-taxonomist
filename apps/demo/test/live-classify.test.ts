@@ -24,13 +24,14 @@ import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 import * as ClefModel from "../src/server/clef-model.ts";
+import * as TestJson from "./Json.ts";
 
 vi.mock("server-only", () => ({}));
 
 const requestPanel = (panelId = "broad") =>
   new Request("http://localhost/api/classify", {
     method: "POST",
-    body: JSON.stringify({ panelId }),
+    body: TestJson.encodeSync({ panelId }),
   });
 
 const clefRequest = Schema.Struct({
@@ -198,7 +199,9 @@ it.each(invalidConfigurations)(
       expect(wire).not.toContain(token);
       expect(wire).not.toContain("SECRET");
       expect(
-        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+          TestJson.decodeSync(wire),
+        ),
       ).toEqual(expected);
       const repeated = await handlers.classifyHttp(requestPanel());
       expect(repeated.status).toBe(503);
@@ -228,7 +231,7 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
       expect(request.headers.get("Authorization")).toBe(`Bearer ${token}`);
       const body = Schema.decodeUnknownSync(clefRequest)(await request.json());
       expect(body.state.records).toHaveLength(6);
-      expect(JSON.stringify(body.state)).not.toContain(token);
+      expect(TestJson.encodeSync(body.state)).not.toContain(token);
       const questions = body.questions;
       questionCounts.push(Record.size(questions));
       for (const question of Record.values(questions)) {
@@ -354,7 +357,7 @@ it.each([
       expect(wire).not.toContain("SECRET");
       expect(wire).not.toContain(token);
       const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-        JSON.parse(wire),
+        TestJson.decodeSync(wire),
       );
       const expected = ClassificationFailure.cases.ModelFailure.make({ reason, retryable });
       expect(failure).toEqual(expected);
@@ -380,7 +383,9 @@ it("preserves a Clef Retry-After delay in the safe response without retrying", a
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
     expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(JSON.parse(wire)),
+      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
+        TestJson.decodeSync(wire),
+      ),
     ).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.RateLimitError.make({ retryAfterMs: 17000 }),
@@ -429,7 +434,7 @@ it.each([
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
     const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-      JSON.parse(wire),
+      TestJson.decodeSync(wire),
     );
     expect(failure).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
@@ -455,7 +460,7 @@ it("sanitizes transport failures without retrying", async () => {
     expect(wire).not.toContain(token);
     expect(wire).not.toContain("SECRET");
     const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-      JSON.parse(wire),
+      TestJson.decodeSync(wire),
     );
     const expected = ClassificationFailure.cases.ModelFailure.make({
       reason: PublicModelReason.cases.NetworkError.make({}),
@@ -492,7 +497,7 @@ it("aborts the actual transport when the final HTTP waiter cancels", async () =>
     const pending = makeHandlers(runtime).classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
-        body: JSON.stringify({ panelId: "broad" }),
+        body: TestJson.encodeSync({ panelId: "broad" }),
         signal: controller.signal,
       }),
     );

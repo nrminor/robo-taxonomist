@@ -142,12 +142,12 @@ type CompareRecordsFn = (
 ) => Effect.Effect<RankComparisonJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+const encodeHints = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const hintsInstruction = (hints: ReadonlyArray<TaxonomyHint>) =>
   Array.match(hints, {
     onEmpty: () => "",
-    onNonEmpty: (nonempty) =>
-      `\nUse these taxonomic hints as background: ${JSON.stringify(nonempty)}`,
+    onNonEmpty: (nonempty) => `\nUse these taxonomic hints as background: ${encodeHints(nonempty)}`,
   });
 
 const describeField = (name: string, value: string | undefined) =>

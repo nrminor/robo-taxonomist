@@ -24,6 +24,7 @@ import * as Api from "../src/api.ts";
 import * as Documents from "../src/documents.ts";
 import * as Model from "../src/model.ts";
 import * as Server from "../src/server.ts";
+import * as TestJson from "./Json.ts";
 
 const providerRequest = Schema.fromJsonString(Schema.Struct({ model: Schema.String }));
 
@@ -35,12 +36,12 @@ const providerHttp = HttpClient.make((request) =>
         throw new Error("Expected a JSON provider request");
       }),
     );
-    const decoded = yield* Schema.decodeEffect(providerRequest)(payload).pipe(Effect.orDie);
+    const decoded = yield* Schema.decodeEffect(providerRequest)(payload);
 
     expect(decoded.model).toBe("fixture-model");
     expect(request.headers.authorization).toBe("Bearer fixture-key");
 
-    const body = JSON.stringify({
+    const body = yield* TestJson.encode({
       model: "fixture-model",
       answers: {
         identity: {
@@ -60,7 +61,7 @@ const providerHttp = HttpClient.make((request) =>
     });
     const response = new Response(body, { headers: { "content-type": "application/json" } });
     return HttpClientResponse.fromWeb(request, response);
-  }),
+  }).pipe(Effect.orDie),
 );
 const configuration = ConfigProvider.layer(
   ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" }),
@@ -402,7 +403,10 @@ it.effect(
     return Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
       const baseUrl = HttpServer.formatAddress(server.address);
-      const text = JSON.stringify({ left: "A".repeat(100), right: "B".repeat(100) });
+      const text = yield* TestJson.encode({
+        left: "A".repeat(100),
+        right: "B".repeat(100),
+      });
       const bytes = new TextEncoder().encode(text);
       const body = Stream.make(bytes.subarray(0, 32), bytes.subarray(32));
       const request = HttpClientRequest.post(`${baseUrl}/compare/labels`).pipe(

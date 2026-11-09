@@ -11,7 +11,7 @@
     "dev": "node src/main.ts",
     "build": "tsc --project tsconfig.json && chmod +x dist/main.js",
     "compile": "bun build --compile --env=disable --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-tsconfig --no-compile-autoload-package-json --outfile ../../artifacts/cli/robo-taxonomist src/main.ts",
-    "typecheck": "tsc --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict",
+    "typecheck": "effect-tsgo tsrs@0.23.0-ts7.1.0-beta --noEmit --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict",
     "test": "pnpm run build && vitest run",
     "check": "pnpm run build && pnpm run typecheck && pnpm run test"
   },
