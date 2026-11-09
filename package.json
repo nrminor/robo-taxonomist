@@ -29,7 +29,7 @@
     "check:fast": "pnpm run lint && pnpm run typecheck",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
-    "lint": "pnpm run build && oxlint --deny-warnings .",
+    "lint": "pnpm run build && effect-tsgo --tsrs-lint=0.23.0-ts7.1.0-beta oxlint --deny-warnings .",
     "typecheck": "tsc --noEmit --project tsconfig.json && tsc --project tsconfig.test.json && effect-tsgo diagnostics --project tsconfig.test.json --strict && pnpm --filter @robo-taxonomist/demo typecheck && pnpm --filter @robo-taxonomist/cli typecheck",
     "test": "vitest run && pnpm --filter @robo-taxonomist/demo test && pnpm --filter @robo-taxonomist/cli test",
     "test:watch": "vitest",
@@ -37,7 +37,7 @@
     "prepack": "pnpm run build"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.54.1",
+    "@effect/tsgo": "0.67.5",
     "@effect/vitest": "4.1.1",
     "@types/node": "24.19.0",
     "effect": "4.1.1",
@@ -45,7 +45,6 @@
     "knip": "6.42.1",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
-    "oxlint-tsgolint": "7.0.2004",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   },
