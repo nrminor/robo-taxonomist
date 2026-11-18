@@ -2,7 +2,7 @@ import * as Decision from "effect/ai/Decision";
 import * as DecisionModel from "effect/ai/DecisionModel";
 import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
-import { pipe } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -308,7 +308,7 @@ const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRec
         ] as const,
     ),
   );
-  const criteria = pipe(
+  const criteria = Function.pipe(
     TaxonRelations.criteria,
     Struct.assign(leftTaxonChoices),
     Struct.assign(rightTaxonChoices),
@@ -374,7 +374,7 @@ const interpretRelation = <R extends TaxonomicRecord>(
     const support = Record.get(p, `multipleRight${index}`).pipe(Option.getOrThrow);
     return { answer, support };
   });
-  const candidatesWithClarifications = pipe(
+  const candidatesWithClarifications = Function.pipe(
     candidates,
     Array.appendAll(leftClarifications),
     Array.appendAll(rightClarifications),

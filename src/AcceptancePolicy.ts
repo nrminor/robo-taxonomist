@@ -1,6 +1,6 @@
 import * as Array from "effect/Array";
 import * as BigDecimal from "effect/BigDecimal";
-import { pipe } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Iterable from "effect/Iterable";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -95,7 +95,7 @@ export const accepts = (
  * export const support = sumProbabilities([0.1, 0.7]);
  */
 export const sumProbabilities = (values: Iterable<number>): number =>
-  pipe(
+  Function.pipe(
     values,
     Iterable.map(BigDecimal.fromNumberUnsafe),
     BigDecimal.sumAll,

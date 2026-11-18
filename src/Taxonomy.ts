@@ -4,7 +4,7 @@ import * as Array from "effect/Array";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Equivalence from "effect/Equivalence";
-import { pipe } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Iterable from "effect/Iterable";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -190,7 +190,7 @@ const makeRankComparisonQuestion = (
           `Left record:\n${describeRecord(left)}\n` +
           `Right record:\n${describeRecord(right)}` +
           hintsInstruction(hints),
-        criteria: pipe(
+        criteria: Function.pipe(
           TaxonRelations.rankCriteria,
           Struct.assign({
             multipleLeft: "The left assignment combines taxa and needs clarification at this rank.",
@@ -787,7 +787,7 @@ const makeContainmentQuestion = (
           `Left (inner) taxon:\n${describeRecord(input.left)}\n` +
           `Right (outer) taxon:\n${describeRecord(input.right)}` +
           hintsInstruction(hints),
-        criteria: pipe(
+        criteria: Function.pipe(
           TaxonRelations.criteria,
           Struct.assign({
             multipleLeft: "The inner assignment combines taxa and needs clarification.",
@@ -1025,7 +1025,7 @@ const prepareMembershipTarget = Effect.fnUntraced(function* <T extends Taxonomic
   return {
     input,
     targetTaxa,
-    criteria: pipe(membershipChoices, Struct.assign(targetChoices)),
+    criteria: Function.pipe(membershipChoices, Struct.assign(targetChoices)),
   };
 });
 
