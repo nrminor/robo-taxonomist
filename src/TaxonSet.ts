@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+import * as String from "effect/String";
 import * as Struct from "effect/Struct";
 import type * as Types from "effect/Types";
 import * as AcceptancePolicy from "./AcceptancePolicy.ts";
@@ -261,6 +262,29 @@ type SetRelationFn = <A extends TaxonomicRecord, B extends TaxonomicRecord>(
   DecisionModel.DecisionModel
 >;
 
+type SetSide = typeof TaxonSetRelationJudgment.cases.MultipleTaxaInSet.fields.side.Type;
+
+const makeClarificationChoices = (
+  side: SetSide,
+  taxa: readonly Taxon[],
+  nodeIds: Pick<WeakMap<Expression, number>, "get">,
+) => {
+  const sideLabel = String.capitalize(side);
+
+  return Function.pipe(
+    taxa,
+    Array.map((taxon, index) => {
+      const nodeId = Option.fromUndefinedOr(nodeIds.get(taxon)).pipe(Option.getOrThrow);
+
+      return [
+        `multiple${sideLabel}${index}`,
+        `${sideLabel} taxon node ${nodeId} identifies multiple entities and needs clarification.`,
+      ] as const;
+    }),
+    Record.fromEntries,
+  );
+};
+
 const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRecord>(
   input: {
     readonly left: TaxonSet<R>;
@@ -269,14 +293,12 @@ const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRec
   hints: ReadonlyArray<TaxonomyHint>,
 ) {
   const compiled = yield* TaxonSetGraph.compile(input);
-  const taxa = {
-    leftTaxa: compiled.taxa.left,
-    rightTaxa: compiled.taxa.right,
-  };
+
   const graphInput = {
     nodes: compiled.nodes,
     ...compiled.roots,
   };
+
   const inputWithHints = Array.match(hints, {
     onEmpty: () => graphInput,
     onNonEmpty: (nonempty) =>
@@ -285,105 +307,137 @@ const makeRelationQuestion = Effect.fnUntraced(function* <R extends TaxonomicRec
         instructions: "Use the supplied taxonomic hints as background.",
       }),
   });
-  const encoded = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)(
+
+  const encodedInput = yield* Schema.encodeEffect(TaxonSetGraph.relationInputSchema)(
     inputWithHints,
   ).pipe(Effect.mapError(Errors.InvalidInput.from));
-  const leftTaxonChoices = Record.fromEntries(
-    Array.map(
-      taxa.leftTaxa,
-      (taxon, index) =>
-        [
-          `multipleLeft${index}`,
-          `Left taxon node ${Option.getOrThrow(Option.fromUndefinedOr(compiled.nodeIds.get(taxon)))} identifies multiple entities and needs clarification.`,
-        ] as const,
-    ),
-  );
-  const rightTaxonChoices = Record.fromEntries(
-    Array.map(
-      taxa.rightTaxa,
-      (taxon, index) =>
-        [
-          `multipleRight${index}`,
-          `Right taxon node ${Option.getOrThrow(Option.fromUndefinedOr(compiled.nodeIds.get(taxon)))} identifies multiple entities and needs clarification.`,
-        ] as const,
-    ),
-  );
+
+  const leftChoices = makeClarificationChoices("left", compiled.taxa.left, compiled.nodeIds);
+  const rightChoices = makeClarificationChoices("right", compiled.taxa.right, compiled.nodeIds);
+
   const criteria = Function.pipe(
     TaxonRelations.criteria,
-    Struct.assign(leftTaxonChoices),
-    Struct.assign(rightTaxonChoices),
+    Struct.assign(leftChoices),
+    Struct.assign(rightChoices),
   );
-  return {
-    input: encoded,
-    taxa,
-    definition: Decision.make({
-      input: Schema.toEncoded(TaxonSetGraph.relationInputSchema),
-      decisions: {
-        relation: Decision.classify({
-          instructions: `Compare the organisms in the complete left and right sets.\n${TaxonSetGraph.instructions} Roots are left and right.`,
-          criteria,
-        }),
-      },
-    }),
-  };
+
+  const definition = Decision.make({
+    input: Schema.toEncoded(TaxonSetGraph.relationInputSchema),
+    decisions: {
+      relation: Decision.classify({
+        instructions:
+          `Compare the organisms in the complete left and right sets.\n` +
+          `${TaxonSetGraph.instructions} Roots are left and right.`,
+        criteria,
+      }),
+    },
+  });
+
+  return { input: encodedInput, taxa: compiled.taxa, definition };
 });
 
-type RelationAnswer = Decision.Answer<
-  Effect.Success<ReturnType<typeof makeRelationQuestion>>["definition"]["decisions"]["relation"]
+type RelationAnswer = Decision.ClassifyAnswer<
+  keyof typeof TaxonRelations.criteria | keyof ReturnType<typeof makeClarificationChoices>
 >;
+
+const makeClarificationCandidates = <R extends TaxonomicRecord>(
+  side: SetSide,
+  taxa: readonly Taxon<R>[],
+  relation: TaxonRelations.Relation,
+  modelAnswer: RelationAnswer,
+): AcceptancePolicy.Scored<TaxonSetRelationJudgment<R>>[] => {
+  const sideLabel = String.capitalize(side);
+  const probabilities = modelAnswer.probabilities;
+
+  return Array.map(taxa, (taxon, index) => {
+    const judgment = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
+      relation,
+      side,
+      taxon,
+    });
+
+    const answer = Struct.assign(judgment, { taxon });
+    const support = Record.get(probabilities, `multiple${sideLabel}${index}`).pipe(
+      Option.getOrThrow,
+    );
+
+    return { answer, support };
+  });
+};
 
 const interpretRelation = <R extends TaxonomicRecord>(
   requestedRelation: TaxonRelations.Relation,
   answer: RelationAnswer,
-  input: { readonly leftTaxa: readonly Taxon<R>[]; readonly rightTaxa: readonly Taxon<R>[] },
+  taxa: {
+    readonly left: readonly Taxon<R>[];
+    readonly right: readonly Taxon<R>[];
+  },
   policy: AcceptancePolicy.AcceptancePolicy,
 ): TaxonSetRelationJudgment<R> => {
-  const p = answer.probabilities;
-  const support = TaxonRelations.predicateSupports(requestedRelation, p);
+  const probabilities = answer.probabilities;
+  const relationSupport = TaxonRelations.predicateSupports(requestedRelation, probabilities);
+
   const undetermined = TaxonSetRelationJudgment.cases.Undetermined.make({
     relation: requestedRelation,
   });
-  const candidates = Array.make(
+
+  const relationCandidates = Array.make(
     {
       answer: TaxonSetRelationJudgment.cases.Yes.make({ relation: requestedRelation }),
-      support: support.yes,
+      support: relationSupport.yes,
     },
     {
       answer: TaxonSetRelationJudgment.cases.No.make({ relation: requestedRelation }),
-      support: support.no,
+      support: relationSupport.no,
     },
-    { answer: undetermined, support: p.undetermined },
+    { answer: undetermined, support: probabilities.undetermined },
   );
-  const leftClarifications = Array.map(input.leftTaxa, (taxon, index) => {
-    const judgment = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
-      relation: requestedRelation,
-      side: "left",
-      taxon,
-    });
-    const answer = Struct.assign(judgment, { taxon });
-    const support = Record.get(p, `multipleLeft${index}`).pipe(Option.getOrThrow);
-    return { answer, support };
-  });
-  const rightClarifications = Array.map(input.rightTaxa, (taxon, index) => {
-    const judgment = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
-      relation: requestedRelation,
-      side: "right",
-      taxon,
-    });
-    const answer = Struct.assign(judgment, { taxon });
-    const support = Record.get(p, `multipleRight${index}`).pipe(Option.getOrThrow);
-    return { answer, support };
-  });
-  const candidatesWithClarifications = Function.pipe(
-    candidates,
+
+  const leftClarifications = makeClarificationCandidates(
+    "left",
+    taxa.left,
+    requestedRelation,
+    answer,
+  );
+  const rightClarifications = makeClarificationCandidates(
+    "right",
+    taxa.right,
+    requestedRelation,
+    answer,
+  );
+
+  const candidates = Function.pipe(
+    relationCandidates,
     Array.appendAll(leftClarifications),
     Array.appendAll(rightClarifications),
   );
-  return AcceptancePolicy.select<TaxonSetRelationJudgment<R>>(
-    candidatesWithClarifications,
-    policy,
-  ).pipe(Option.getOrElse(() => undetermined));
+
+  return AcceptancePolicy.select(candidates, policy).pipe(Option.getOrElse(() => undetermined));
 };
+
+const judgeRelation = Effect.fnUntraced(function* <R extends TaxonomicRecord>(
+  relation: TaxonRelations.Relation,
+  input: {
+    readonly left: TaxonSet<R>;
+    readonly right: TaxonSet<R>;
+  },
+  options: JudgmentOptions,
+): Effect.fn.Return<
+  TaxonSetRelationJudgment<R>,
+  Errors.TaxonomyError,
+  DecisionModel.DecisionModel
+> {
+  const hints = yield* TaxonomyHints.snapshot(options.hints);
+  const question = yield* makeRelationQuestion(input, hints);
+
+  const { answers } = yield* DecisionModel.decide(question.definition, {
+    input: question.input,
+  });
+
+  const policy = options.policy ?? AcceptancePolicy.defaultPolicy;
+
+  return interpretRelation(relation, answers.relation, question.taxa, policy);
+});
 
 /**
  * Check whether every left-set organism belongs to the right set; equality counts.
@@ -400,17 +454,11 @@ export const isSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isSubsetOf")(functi
   A extends TaxonomicRecord,
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
-  if (taxonSetSchema.guards.Empty(left))
+  if (taxonSetSchema.guards.Empty(left)) {
     return TaxonSetRelationJudgment.cases.Yes.make({ relation: "subset" });
-  const hints = yield* TaxonomyHints.snapshot(options.hints);
-  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
-  const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
-  return interpretRelation(
-    "subset",
-    answers.relation,
-    request.taxa,
-    options.policy ?? AcceptancePolicy.defaultPolicy,
-  );
+  }
+
+  return yield* judgeRelation<A | B>("subset", { left, right }, options);
 });
 
 /**
@@ -428,17 +476,11 @@ export const isProperSubsetOf: SetRelationFn = Effect.fn("TaxonSet.isProperSubse
   A extends TaxonomicRecord,
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
-  if (taxonSetSchema.guards.Empty(right))
+  if (taxonSetSchema.guards.Empty(right)) {
     return TaxonSetRelationJudgment.cases.No.make({ relation: "proper-subset" });
-  const hints = yield* TaxonomyHints.snapshot(options.hints);
-  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
-  const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
-  return interpretRelation(
-    "proper-subset",
-    answers.relation,
-    request.taxa,
-    options.policy ?? AcceptancePolicy.defaultPolicy,
-  );
+  }
+
+  return yield* judgeRelation<A | B>("proper-subset", { left, right }, options);
 });
 
 /**
@@ -456,17 +498,11 @@ export const equivalent: SetRelationFn = Effect.fn("TaxonSet.equivalent")(functi
   A extends TaxonomicRecord,
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
-  if (taxonSetSchema.guards.Empty(left) && taxonSetSchema.guards.Empty(right))
+  if (taxonSetSchema.guards.Empty(left) && taxonSetSchema.guards.Empty(right)) {
     return TaxonSetRelationJudgment.cases.Yes.make({ relation: "equivalent" });
-  const hints = yield* TaxonomyHints.snapshot(options.hints);
-  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
-  const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
-  return interpretRelation(
-    "equivalent",
-    answers.relation,
-    request.taxa,
-    options.policy ?? AcceptancePolicy.defaultPolicy,
-  );
+  }
+
+  return yield* judgeRelation<A | B>("equivalent", { left, right }, options);
 });
 
 /**
@@ -485,17 +521,11 @@ export const overlaps: SetRelationFn = Effect.fn("TaxonSet.overlaps")(function* 
   A extends TaxonomicRecord,
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
-  if (taxonSetSchema.guards.Empty(left) || taxonSetSchema.guards.Empty(right))
+  if (taxonSetSchema.guards.Empty(left) || taxonSetSchema.guards.Empty(right)) {
     return TaxonSetRelationJudgment.cases.No.make({ relation: "overlap" });
-  const hints = yield* TaxonomyHints.snapshot(options.hints);
-  const request = yield* makeRelationQuestion<A | B>({ left, right }, hints);
-  const { answers } = yield* DecisionModel.decide(request.definition, { input: request.input });
-  return interpretRelation(
-    "overlap",
-    answers.relation,
-    request.taxa,
-    options.policy ?? AcceptancePolicy.defaultPolicy,
-  );
+  }
+
+  return yield* judgeRelation<A | B>("overlap", { left, right }, options);
 });
 
 /**
