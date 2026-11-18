@@ -1,5 +1,4 @@
 import * as AiError from "effect/ai/AiError";
-import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Graph from "effect/Graph";
 import * as Match from "effect/Match";
@@ -16,7 +15,7 @@ import {
   type Taxon,
 } from "./schemas.ts";
 
-const fields = Schema.Union([
+const sourceNodeFields = Schema.Union([
   Schema.Struct(taxonSetSchema.cases.Empty.fields),
   Schema.Struct(taxonSetSchema.cases.Taxon.fields),
   Schema.Struct(taxonSetSchema.cases.Union.fields),
@@ -24,8 +23,9 @@ const fields = Schema.Union([
   Schema.Struct(taxonSetSchema.cases.Difference.fields),
 ]);
 // Check nominal acceptance before the node's fields and immediate children.
-const sourceNodeSchema = Schema.toType(taxonSetSchema).pipe(Schema.decodeTo(Schema.toType(fields)));
-type SourceNode = typeof fields.Type;
+const sourceNodeSchema = Schema.toType(taxonSetSchema).pipe(
+  Schema.decodeTo(Schema.toType(sourceNodeFields)),
+);
 const nodeRef = Schema.Natural;
 const nodeSchema = Schema.TaggedUnion({
   Empty: {},
@@ -56,6 +56,90 @@ export const instructions =
   "Difference keeps left organisms outside right. Node identity is not biological identity. " +
   "Flag a taxon entry that identifies multiple entities for clarification.";
 
+type SourceGraph<R extends TaxonomicRecord> = {
+  readonly graph: Graph.MutableDirectedGraph<Expression<R>, void>;
+  readonly nodeIds: WeakMap<Expression, Graph.NodeIndex>;
+};
+
+const intern = Effect.fnUntraced(function* <R extends TaxonomicRecord>(
+  sourceGraph: SourceGraph<R>,
+  source: Expression<R>,
+): Effect.fn.Return<Graph.NodeIndex, Errors.InvalidInput> {
+  const existingId = sourceGraph.nodeIds.get(source);
+  if (existingId !== undefined) return existingId;
+
+  // Validate the shape, then retain the caller's original object.
+  yield* Schema.decodeEffect(sourceNodeSchema, { reportInput: false })(source).pipe(
+    Effect.mapError(Errors.InvalidInput.from),
+  );
+
+  const nodeId = Graph.addNode(sourceGraph.graph, source);
+  sourceGraph.nodeIds.set(source, nodeId);
+
+  return nodeId;
+});
+
+const linkChild = Effect.fnUntraced(function* <R extends TaxonomicRecord>(
+  sourceGraph: SourceGraph<R>,
+  parentId: Graph.NodeIndex,
+  child: Expression<R>,
+): Effect.fn.Return<Graph.NodeIndex, Errors.InvalidInput> {
+  const childId = yield* intern(sourceGraph, child);
+
+  Graph.addEdge(sourceGraph.graph, parentId, childId, undefined);
+
+  return childId;
+});
+
+const compileNode = <R extends TaxonomicRecord>(
+  sourceGraph: SourceGraph<R>,
+  nodeId: Graph.NodeIndex,
+): Effect.Effect<Node, Errors.InvalidInput> => {
+  const source = Graph.getNode(sourceGraph.graph, nodeId).pipe(Option.getOrThrow);
+
+  return Match.value(source).pipe(
+    Match.tagsExhaustive({
+      Empty: () => Effect.succeed(nodeSchema.cases.Empty.make({})),
+
+      Taxon: ({ record }) => Effect.succeed(nodeSchema.cases.Taxon.make({ record })),
+
+      Union: ({ operands }) =>
+        Effect.forEach(operands, (child) => linkChild(sourceGraph, nodeId, child)).pipe(
+          Effect.map((operandIds) => nodeSchema.cases.Union.make({ operands: operandIds })),
+        ),
+
+      Intersection: ({ operands }) =>
+        Effect.forEach(operands, (child) => linkChild(sourceGraph, nodeId, child)).pipe(
+          Effect.map((operandIds) => nodeSchema.cases.Intersection.make({ operands: operandIds })),
+        ),
+
+      Difference: ({ left, right }) =>
+        Effect.gen(function* () {
+          const leftId = yield* linkChild(sourceGraph, nodeId, left);
+          const rightId = yield* linkChild(sourceGraph, nodeId, right);
+
+          return nodeSchema.cases.Difference.make({ left: leftId, right: rightId });
+        }),
+    }),
+  );
+};
+
+const collectTaxa = <R extends TaxonomicRecord>(
+  graph: Graph.DirectedGraph<Expression<R>, void>,
+  root: Graph.NodeIndex,
+): Taxon<R>[] => {
+  const reachableExpressions = graph.pipe(Graph.dfs({ start: [root] }), Graph.values);
+  const taxa: Taxon<R>[] = [];
+
+  for (const source of reachableExpressions) {
+    if (Predicate.isTagged(source, "Taxon")) {
+      taxa.push(source);
+    }
+  }
+
+  return taxa;
+};
+
 // Keep the recursive input named in emitted declarations.
 type CompileFn = <K extends string, R extends TaxonomicRecord>(
   sources: Readonly<Record<K, Expression<R>>>,
@@ -70,7 +154,8 @@ type CompileFn = <K extends string, R extends TaxonomicRecord>(
 >;
 
 /**
- * Compile named roots into one shared node table. Finish each root before starting the next.
+ * Compile named roots into one shared node table.
+ * Finish each root's pending nodes before starting the next.
  * Collect original taxon entries in traversal order independently for each root.
  * Shared entries occur once per root; graph data stays local to preparation.
  * @example
@@ -82,69 +167,40 @@ export const compile: CompileFn = Effect.fnUntraced(function* <
   K extends string,
   R extends TaxonomicRecord,
 >(sources: Readonly<Record<K, Expression<R>>>) {
-  const mutable = Graph.beginMutation(Graph.directed<SourceNode, void>());
-  const references = new WeakMap<Expression, number>();
-  const originals: Expression<R>[] = [];
-  const intern = Effect.fnUntraced(function* (
-    source: Expression<R>,
-  ): Effect.fn.Return<number, Errors.InvalidInput> {
-    const previous = references.get(source);
-    if (previous !== undefined) return previous;
-    const node = yield* Schema.decodeEffect(sourceNodeSchema, { reportInput: false })(source).pipe(
-      Effect.mapError(Errors.InvalidInput.from),
-    );
-    const id = Graph.addNode(mutable, node);
-    originals.push(source);
-    references.set(source, id);
-    return id;
-  });
+  const mutableGraph = Graph.directed<Expression<R>, void>().pipe(Graph.beginMutation);
+  const nodeIds = new WeakMap<Expression, Graph.NodeIndex>();
+
+  const sourceGraph: SourceGraph<R> = {
+    graph: mutableGraph,
+    nodeIds,
+  };
+
   const nodes: Node[] = [];
+
   const graph = yield* Effect.gen(function* () {
     for (const source of Record.values(sources)) {
-      yield* intern(source);
-      // Append-only Graph IDs are table offsets. New children extend the graph.
-      while (nodes.length < Graph.nodeCount(mutable)) {
-        const id = nodes.length;
-        const source = Array.getUnsafe(originals, id);
-        const link = Effect.fnUntraced(function* (child: Expression<R>) {
-          const target = yield* intern(child);
-          Graph.addEdge(mutable, id, target, undefined);
-          return target;
-        });
-        const node = yield* Match.value(source).pipe(
-          Match.tagsExhaustive({
-            Empty: () => Effect.succeed(nodeSchema.cases.Empty.make({})),
-            Taxon: ({ record }) => Effect.succeed(nodeSchema.cases.Taxon.make({ record })),
-            Union: ({ operands }) =>
-              Effect.forEach(operands, link).pipe(
-                Effect.map((operands) => nodeSchema.cases.Union.make({ operands })),
-              ),
-            Intersection: ({ operands }) =>
-              Effect.forEach(operands, link).pipe(
-                Effect.map((operands) => nodeSchema.cases.Intersection.make({ operands })),
-              ),
-            Difference: ({ left, right }) =>
-              Effect.gen(function* () {
-                const leftRef = yield* link(left);
-                const rightRef = yield* link(right);
-                return nodeSchema.cases.Difference.make({
-                  left: leftRef,
-                  right: rightRef,
-                });
-              }),
-          }),
-        );
-        nodes.push(node);
+      yield* intern(sourceGraph, source);
+
+      // IDs below nodes.length are compiled; higher IDs are pending.
+      while (nodes.length < Graph.nodeCount(mutableGraph)) {
+        const nodeId = nodes.length;
+        const compiledNode = yield* compileNode(sourceGraph, nodeId);
+
+        nodes.push(compiledNode);
       }
     }
-    return Graph.endMutation(mutable);
+
+    return Graph.endMutation(mutableGraph);
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
-        if (mutable.mutable) Graph.endMutation(mutable);
+        if (mutableGraph.mutable) {
+          Graph.endMutation(mutableGraph);
+        }
       }),
     ),
   );
+
   if (!Graph.isAcyclic(graph)) {
     const reason = new AiError.InvalidUserInputError({
       description: "Taxon-set expression contains a cycle.",
@@ -152,16 +208,11 @@ export const compile: CompileFn = Effect.fnUntraced(function* <
 
     return yield* AiError.make({ module: "TaxonSetGraph", method: "compile", reason });
   }
+
   const roots = Record.map(sources, (source) =>
-    Option.fromUndefinedOr(references.get(source)).pipe(Option.getOrThrow),
+    Option.fromUndefinedOr(nodeIds.get(source)).pipe(Option.getOrThrow),
   );
-  const taxa = Record.map(roots, (root) => {
-    const taxa: Taxon<R>[] = [];
-    for (const ref of Graph.indices(Graph.dfs(graph, { start: [root] }))) {
-      const source = Array.getUnsafe(originals, ref);
-      if (Predicate.isTagged(source, "Taxon")) taxa.push(source);
-    }
-    return taxa;
-  });
-  return { nodes, roots, taxa, nodeIds: references };
+  const taxa = Record.map(roots, (root) => collectTaxa(graph, root));
+
+  return { nodes, roots, taxa, nodeIds };
 });
