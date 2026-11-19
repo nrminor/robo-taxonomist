@@ -1,5 +1,8 @@
 # `robo-taxonomist`
 
+[![Latest npm version](https://img.shields.io/npm/v/robo-taxonomist)](https://www.npmjs.com/package/robo-taxonomist)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/robo-taxonomist)](https://www.npmjs.com/package/robo-taxonomist)
+
 `robo-taxonomist` is a TypeScript library for biologists that provides utilities for resolving ambiguous taxonomic labels with decision models. For example, let's say you have the following taxon labels:
 
 - "Voucher A17 | Quercus robur"
