@@ -1,11 +1,11 @@
 import { Data, Effect, Predicate, Schema, Stream } from "effect";
 import { CliError } from "effect/cli";
 import {
+  CollectionMembershipJudgment,
   RecordLabel,
+  TaxonMembershipJudgment,
   TaxonName,
-  type CollectionMembershipJudgment,
-  type TaxonMembershipJudgment,
-  type TaxonSet,
+  TaxonSetRelationJudgment,
   type Taxonomy,
 } from "robo-taxonomist";
 
@@ -14,9 +14,10 @@ const namedTarget = Schema.Union([
   Schema.Struct({ scientificName: TaxonName }),
   Schema.Struct({ label: RecordLabel }),
 ]);
-const Relation = Data.taggedEnum<TaxonSet.TaxonSetRelationJudgment>();
-const Quantifier = Data.taggedEnum<CollectionMembershipJudgment>();
 const Membership = Data.taggedEnum<TaxonMembershipJudgment>();
+const needsSetClarification = TaxonSetRelationJudgment.isAnyOf(["MultipleTaxaInSet"]);
+const needsCollectionClarification = CollectionMembershipJudgment.isAnyOf(["MultipleTaxaInTarget"]);
+const needsMembershipClarification = TaxonMembershipJudgment.isAnyOf(["MultipleTaxaInTarget"]);
 
 const recordText = Effect.fnUntraced(function* (record: unknown) {
   const labeled = yield* Schema.decodeUnknownEffect(labeledRecord)(record).pipe(
@@ -51,10 +52,8 @@ const targetText = Effect.fnUntraced(function* (
 });
 
 /** Keep the original set relation judgment with ready-to-print clarification text. */
-export const relationRow = Effect.fnUntraced(function* (
-  judgment: TaxonSet.TaxonSetRelationJudgment,
-) {
-  if (!Relation.$is("MultipleTaxaInSet")(judgment)) return { judgment, clarification: "" };
+export const relationRow = Effect.fnUntraced(function* (judgment: TaxonSetRelationJudgment) {
+  if (!needsSetClarification(judgment)) return { judgment, clarification: "" };
 
   const clarification = yield* targetText(judgment.taxon.record, "json");
   return { judgment, clarification };
@@ -62,7 +61,7 @@ export const relationRow = Effect.fnUntraced(function* (
 
 /** Keep the original collection judgment with ready-to-print clarification text. */
 export const quantifierRow = Effect.fnUntraced(function* (judgment: CollectionMembershipJudgment) {
-  if (!Quantifier.$is("MultipleTaxaInTarget")(judgment)) return { judgment, clarification: "" };
+  if (!needsCollectionClarification(judgment)) return { judgment, clarification: "" };
 
   const clarification = yield* targetText(judgment.target.record, "json");
   return { judgment, clarification };
@@ -77,8 +76,7 @@ export type MembershipEntry = {
 /** Keep the original membership entry with its record label and clarification text. */
 export const membershipRow = Effect.fnUntraced(function* (entry: MembershipEntry) {
   const record = yield* recordText(entry.record);
-  if (!Membership.$is("MultipleTaxaInTarget")(entry.judgment))
-    return { entry, record, clarification: "" };
+  if (!needsMembershipClarification(entry.judgment)) return { entry, record, clarification: "" };
 
   const clarification = yield* targetText(entry.judgment.target.record, "jsonl");
   return { entry, record, clarification };

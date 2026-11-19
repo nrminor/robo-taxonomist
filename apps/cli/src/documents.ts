@@ -11,9 +11,7 @@ import {
   TaxonIdentityJudgment,
   TaxonName,
   TaxonSet,
-  TaxonSetRelation,
   Taxonomy,
-  TaxonomicRank as Rank,
 } from "robo-taxonomist";
 
 const jsonFields = Schema.Record(Schema.String, Schema.Json);
@@ -80,10 +78,6 @@ export const restoreSet = (document: typeof SetDocument.Type): TaxonSet.TaxonSet
     Difference: ({ left, right }) => TaxonSet.difference(restoreSet(left), restoreSet(right)),
   });
 
-/** Select a supported level of taxonomic classification. */
-export const TaxonomicRank = Rank;
-/** Select the relationship to test between two taxon sets. */
-export const SetRelation = TaxonSetRelation;
 const taxonDocument = SetDocument.cases.Taxon;
 
 /** Describe whether two taxonomic assignments identify the same taxon. */

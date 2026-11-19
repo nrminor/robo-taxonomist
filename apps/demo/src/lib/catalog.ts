@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { TaxonomicRank } from "robo-taxonomist";
 
 /** Closed set of panel identifiers accepted by the demo request and response schemas. */
 export const PanelId = Schema.Literals(["broad", "focused", "nested"]);
@@ -42,7 +43,7 @@ export const records = [
   },
 ] as const;
 
-const target = (name: string, rank: string) => ({
+const target = (name: string, rank: TaxonomicRank) => ({
   id: name.toLowerCase().replaceAll(" ", "-"),
   name,
   rank,
@@ -63,7 +64,7 @@ export const panels: ReadonlyArray<{
   readonly targets: ReadonlyArray<{
     readonly id: string;
     readonly name: string;
-    readonly rank: string;
+    readonly rank: TaxonomicRank;
   }>;
 }> = [
   {

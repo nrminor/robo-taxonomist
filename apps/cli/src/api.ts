@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
-import { RecordLabel, TaxonName } from "robo-taxonomist";
+import { RecordLabel, TaxonName, TaxonomicRank, TaxonSetRelation } from "robo-taxonomist";
 import * as Documents from "./documents.ts";
 
 /** Report invalid taxonomic input without exposing its validation cause. */
@@ -177,7 +177,7 @@ const comparisons = HttpApiGroup.make("comparisons").add(
   }),
   HttpApiEndpoint.post("rank", "/compare/rank", {
     payload: Schema.Struct({ left: record, right: record }),
-    query: { rank: Documents.TaxonomicRank },
+    query: { rank: TaxonomicRank },
     success: Documents.RankJudgment,
     error: [InvalidInput, ModelFailure],
   }),
@@ -206,7 +206,7 @@ const sets = HttpApiGroup.make("sets").add(
   }),
   HttpApiEndpoint.post("relation", "/sets/relation", {
     payload: setPair,
-    query: { relation: Documents.SetRelation },
+    query: { relation: TaxonSetRelation },
     success: Documents.SetRelationJudgment,
     error: [InvalidSet, InvalidInput, ModelFailure, OutputFailure],
   }),

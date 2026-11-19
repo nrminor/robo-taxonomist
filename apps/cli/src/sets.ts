@@ -1,6 +1,6 @@
 import { Effect, Match, Option } from "effect";
 import { Command, Flag } from "effect/cli";
-import { TaxonSet } from "robo-taxonomist";
+import { TaxonSet, TaxonSetRelation } from "robo-taxonomist";
 import * as Documents from "./documents.ts";
 import * as Inputs from "./inputs.ts";
 import * as Model from "./model.ts";
@@ -127,13 +127,9 @@ const relation = Command.make(
   {
     left: Inputs.targetFlags("left-"),
     right: Inputs.targetFlags("right-"),
-    relation: Flag.Literals("relation", [
-      "subset",
-      "proper-subset",
-      "equivalent",
-      "overlap",
-      "disjoint",
-    ]).pipe(Flag.withDescription("Relationship to test between the left and right sets.")),
+    relation: Flag.Literals("relation", TaxonSetRelation.literals).pipe(
+      Flag.withDescription("Relationship to test between the left and right sets."),
+    ),
     model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "json"]).pipe(
       Flag.withDefault("tsv"),

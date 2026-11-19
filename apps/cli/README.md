@@ -241,9 +241,9 @@ A membership line can look like this:
 { "record": "Quercus robur", "judgment": { "_tag": "Member" } }
 ```
 
-Each classification JSONL line contains `panel`, `records` and `usage`. Each record has all candidate outcomes in `taxa` and accepted `SameTaxon` and `WithinTaxon` entries in `ranking`, sorted by descending individual support. Ties retain target order. Each judgment reports the selected relationship and its support when accepted; otherwise it is `Undetermined`. Match entries retain the complete model answer.
+Each classification JSONL line contains `panel`, `records` and `usage`. Each record has all candidate outcomes in `taxa` and accepted `SameTaxon` and `WithinTaxon` entries in `ranking`, sorted by descending support. Ties retain target order. An accepted judgment reports the selected relationship and its support, including `NotMatched` for an accepted negative answer. `Undetermined` carries no support. Match entries retain the complete model answer.
 
-Support combines the model's probabilities for `sameTaxon` and `withinTaxon`, normalized over all four classification answers. Support across targets need not sum to one. It is neither an abundance estimate nor measured accuracy.
+Support is the probability the model reported for the accepted answer. For example, a `WithinTaxon` judgment reports the `withinTaxon` probability alone. Support across targets need not sum to one. It is neither an abundance estimate nor measured accuracy.
 
 Negative and unresolved judgments are successful results. Invalid input, provider failures and output failures exit nonzero. If a command fails after writing results, the written output is incomplete; check its exit status before using it downstream.
 

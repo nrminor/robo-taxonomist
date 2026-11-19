@@ -90,6 +90,8 @@ export const judgmentPresentation = TaxonMatchJudgment.match({
   }),
 });
 
+const isAcceptedMatch = TaxonMatchJudgment.isAnyOf(["SameTaxon", "WithinTaxon"]);
+
 const panelFindings = (response: Contract.PanelResponse) => {
   const panel = Option.getOrThrow(
     Array.findFirst(panels, (entry) => entry.id === response.panelId),
@@ -97,13 +99,7 @@ const panelFindings = (response: Contract.PanelResponse) => {
   const findings = response.rows.map((row) => ({
     record: Option.getOrThrow(Array.findFirst(records, (record) => record.id === row.recordId)),
     acceptedTargets: new Set(
-      row.matches
-        .filter(
-          (match) =>
-            TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
-            TaxonMatchJudgment.guards.WithinTaxon(match.judgment),
-        )
-        .map((match) => match.targetId),
+      row.matches.filter((match) => isAcceptedMatch(match.judgment)).map((match) => match.targetId),
     ),
     matches: row.matches.map((match) => ({
       ...match,

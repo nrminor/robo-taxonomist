@@ -1,6 +1,6 @@
 import { Effect, Match } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
-import { RecordLabel, TaxonName, Taxonomy } from "robo-taxonomist";
+import { RecordLabel, TaxonName, TaxonomicRank, Taxonomy } from "robo-taxonomist";
 import appPackage from "../package.json" with { type: "json" };
 import { classify } from "./classification.ts";
 import * as Documents from "./documents.ts";
@@ -123,16 +123,9 @@ const rank = Command.make(
   {
     left: Argument.String("left").pipe(Argument.withSchema(RecordLabel)),
     right: Argument.String("right").pipe(Argument.withSchema(RecordLabel)),
-    rank: Flag.Literals("rank", [
-      "domain",
-      "kingdom",
-      "phylum",
-      "class",
-      "order",
-      "family",
-      "genus",
-      "species",
-    ]).pipe(Flag.withDescription("Taxonomic rank at which to compare the records.")),
+    rank: Flag.Literals("rank", TaxonomicRank.literals).pipe(
+      Flag.withDescription("Taxonomic rank at which to compare the records."),
+    ),
     model: Model.modelFlag,
     format: Flag.Literals("format", ["tsv", "json"]).pipe(
       Flag.withDefault("tsv"),

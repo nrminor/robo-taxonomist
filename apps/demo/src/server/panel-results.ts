@@ -29,17 +29,19 @@ const lookup = Effect.fn("PanelResults.lookup")(function* ({
   const panel = panels.find((entry) => entry.id === panelId);
   if (panel === undefined)
     return yield* Effect.fail(Contract.ClassificationFailure.cases.InvalidPanel.make({}));
-  const taxonSet = panel.targets.reduce<TaxonSet.TaxonSet<{ readonly scientificName: TaxonName }>>(
-    (set, target) => TaxonSet.union(set, TaxonSet.of(TaxonName.make(target.name))),
-    TaxonSet.empty(),
-  );
+  const taxonSet = panel.targets.reduce<
+    TaxonSet.TaxonSet<{ readonly id: string; readonly scientificName: TaxonName }>
+  >((set, target) => {
+    const taxon = TaxonSet.of({ id: target.id, scientificName: TaxonName.make(target.name) });
+    return TaxonSet.union(set, taxon);
+  }, TaxonSet.empty());
   const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution, hints });
-  return yield* Schema.decodeUnknownEffect(Contract.PanelResponse)({
+  return yield* Schema.decodeEffect(Contract.PanelResponse)({
     panelId,
     rows: result.records.map((row) => ({
       recordId: row.record.id,
-      matches: row.taxa.map((match, index) => ({
-        targetId: panel.targets[index]?.id,
+      matches: row.taxa.map((match) => ({
+        targetId: match.taxon.record.id,
         judgment: match.judgment,
         answer: match.answer,
       })),
