@@ -18,10 +18,15 @@ export {
   CollectionExecution,
   RecordLabel,
   TaxonId,
+  TaxonSource,
   TaxonomicRecord,
   TaxonName,
   TaxonomyHint,
 } from "./schemas.ts";
+export { IdLookup, NameHit, TaxonEntry, TaxonLookup, TaxonSummary } from "./TaxonLookup.ts";
+export { NcbiDump, NcbiTaxonId } from "./TaxonLookupLayers/NcbiDump.ts";
+/** Provide taxonomy lookup backed by a loaded NCBI dump. */
+export * as NcbiTaxonomy from "./TaxonLookupLayers/NcbiTaxonomy.ts";
 /**
  * Compare record labels, ask about taxa and ranks, and test records against targets.
  * Model-backed questions return Effects that require a DecisionModel service

@@ -70,7 +70,9 @@ const modelMessage = (error: AiError.AiError) =>
   );
 
 /** Translate taxonomy failures once while retaining their causes for inspection. */
-export const cliFailure = (error: Errors.TaxonomyError | CliError.UserError) =>
+export const cliFailure = (
+  error: Errors.TaxonomyError | Errors.TaxonIdQueryError | CliError.UserError,
+) =>
   Match.value(error).pipe(
     Match.tagsExhaustive({
       InvalidInput: (cause) =>
@@ -79,6 +81,18 @@ export const cliFailure = (error: Errors.TaxonomyError | CliError.UserError) =>
           userMessage: "Check the supplied taxonomic identifying fields",
         }),
       AiError: (cause) => new CliError.UserError({ cause, userMessage: modelMessage(cause) }),
+      TaxonSourceMismatch: (cause) =>
+        new CliError.UserError({
+          cause,
+          userMessage: "Check the taxonomy and release of the supplied identifier",
+        }),
+      TaxonRequestError: (cause) =>
+        new CliError.UserError({ cause, userMessage: "The taxonomy lookup request failed" }),
+      InvalidTaxonResponse: (cause) =>
+        new CliError.UserError({
+          cause,
+          userMessage: "The taxonomy lookup returned unusable data",
+        }),
       UserError: (cause) => cause,
     }),
   );

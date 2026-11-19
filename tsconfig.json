@@ -104,6 +104,7 @@
               "src/Taxonomy.ts",
               "src/TaxonSet.ts",
               "src/TaxonSetGraph.ts",
+              "src/TaxonLookupLayers/NcbiDump.ts",
               "src/errors.ts",
               "test/rank-comparison.test.ts",
               "test/taxon-judgments.test.ts",

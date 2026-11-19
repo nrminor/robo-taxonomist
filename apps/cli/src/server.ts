@@ -117,6 +117,19 @@ const taxonomyFailure = (error: Errors.TaxonomyError) =>
     }),
   );
 
+const lookupFailure = () => new Api.LookupFailure({ message: "The taxonomy lookup failed" });
+
+const rankFailure = (error: Errors.TaxonomyError | Errors.TaxonIdQueryError) =>
+  Match.value(error).pipe(
+    Match.tagsExhaustive({
+      InvalidInput: taxonomyFailure,
+      AiError: taxonomyFailure,
+      TaxonSourceMismatch: lookupFailure,
+      TaxonRequestError: lookupFailure,
+      InvalidTaxonResponse: lookupFailure,
+    }),
+  );
+
 const setDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetDocument));
 const relationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetRelationJudgment));
 const membershipDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.MembershipJudgment));
@@ -209,7 +222,7 @@ export const comparisons = HttpApiBuilder.group(
       .handle("rank", ({ payload, query }) =>
         Taxonomy.sameTaxonAtRank(payload.left, payload.right, query.rank).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
-          Effect.mapError(taxonomyFailure),
+          Effect.mapError(rankFailure),
         ),
       );
   }),

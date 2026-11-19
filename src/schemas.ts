@@ -118,6 +118,42 @@ export const TaxonId = Schema.Struct({
  */
 export type TaxonId = typeof TaxonId.Type;
 
+/**
+ * Select a rank from domain through species.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const TaxonomicRank = Schema.Literals([
+  "domain",
+  "kingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+]).annotate({ identifier: "TaxonomicRank", description: "A level of taxonomic classification." });
+
+/**
+ * Select the taxonomic rank to look up or compare.
+ * @category models
+ * @since 0.1.0
+ */
+export type TaxonomicRank = typeof TaxonomicRank.Type;
+
+/**
+ * Describe whether a provider serves one fixed taxonomy view or a rolling source.
+ * @category schemas
+ * @since 0.7.0
+ */
+export const TaxonSource = Schema.TaggedUnion({
+  Snapshot: { taxonomy: TaxonId.fields.taxonomy, release: TaxonId.fields.release },
+  Live: { taxonomy: TaxonId.fields.taxonomy },
+});
+
+/** The taxonomy view served by a lookup layer. */
+export type TaxonSource = typeof TaxonSource.Type;
+
 const recordFields = {
   label: Schema.optionalKey(RecordLabel),
   scientificName: Schema.optionalKey(TaxonName),
