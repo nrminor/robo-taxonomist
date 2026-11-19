@@ -28,6 +28,16 @@ export class ModelFailure extends Schema.TaggedError<
   },
 ) {}
 
+/** Report a taxonomy lookup failure without exposing provider details. */
+export class LookupFailure extends Schema.TaggedError<
+  LookupFailure,
+  { readonly brand: unique symbol }
+>()(
+  "LookupFailure",
+  { message: Schema.String },
+  { description: "The taxonomy lookup failed.", httpApiStatus: 502 },
+) {}
+
 /** Report a result that cannot be encoded for HTTP. */
 export class OutputFailure extends Schema.TaggedError<
   OutputFailure,
@@ -179,7 +189,7 @@ const comparisons = HttpApiGroup.make("comparisons").add(
     payload: Schema.Struct({ left: record, right: record }),
     query: { rank: TaxonomicRank },
     success: Documents.RankJudgment,
-    error: [InvalidInput, ModelFailure],
+    error: [InvalidInput, ModelFailure, LookupFailure],
   }),
 );
 

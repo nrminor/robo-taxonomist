@@ -5,8 +5,10 @@ import * as RoboTaxonomist from "robo-taxonomist";
 import {
   AcceptancePolicy,
   Errors,
+  NcbiTaxonId,
   RecordLabel,
   TaxonId,
+  TaxonLookup,
   TaxonName,
   Taxonomy,
   TaxonomyHint,
@@ -31,9 +33,9 @@ type Equal<A, B> =
 type Assert<T extends true> = T;
 type UnionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Union">["operands"];
 type IntersectionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Intersection">["operands"];
-type Judgment<T, A> =
+type Judgment<T, A, E = Errors.TaxonomyError> =
   Equal<Effect.Success<T>, A> extends true
-    ? Equal<Effect.Error<T>, Errors.TaxonomyError> extends true
+    ? Equal<Effect.Error<T>, E> extends true
       ? Equal<Effect.Services<T>, DecisionModel.DecisionModel>
       : false
     : false;
@@ -93,6 +95,13 @@ const specimen: { readonly label: RecordLabel; readonly voucher: "A17" } = {
 const records: readonly (typeof specimen)[] = [specimen];
 const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
 const rank = Taxonomy.sameSpecies(specimen, specimen, { policy });
+const ncbiId = NcbiTaxonId.make({ id: "58334" });
+const ncbiRecord = { taxonId: ncbiId, voucher: "A17" } as const;
+const ncbiTarget = TaxonSet.of(ncbiRecord);
+const ncbiPanelMatch = Taxonomy.classifyRecords([specimen], ncbiTarget);
+const ncbiComparison = Taxonomy.sameGenus(ncbiRecord, specimen);
+const ncbiMembership = Taxonomy.recordBelongsTo(ncbiRecord, ncbiTarget);
+const lookup = TaxonLookup.byId(ncbiId);
 const identity = Taxonomy.sameTaxon(name, name, { policy });
 const containment = Taxonomy.taxonWithin(name, name, { policy });
 const contextHint = TaxonomyHint.make("context");
@@ -362,7 +371,21 @@ export type Contracts = [
     Equal<Types.ExtractTag<TaxonMatchJudgment, "Undetermined">, { readonly _tag: "Undetermined" }>
   >,
   Assert<Judgment<typeof classifiedVouchers, "A17"[]>>,
-  Assert<Judgment<typeof rank, RankComparisonJudgment>>,
+  Assert<
+    Judgment<typeof rank, RankComparisonJudgment, Errors.TaxonomyError | Errors.TaxonIdQueryError>
+  >,
+  Assert<
+    Judgment<
+      typeof ncbiComparison,
+      RankComparisonJudgment,
+      Errors.TaxonomyError | Errors.TaxonIdQueryError
+    >
+  >,
+  Assert<Judgment<typeof ncbiMembership, TaxonMembershipJudgment<typeof ncbiRecord>>>,
+  Assert<Equal<(typeof ncbiTarget)["record"], typeof ncbiRecord>>,
+  Assert<Equal<Effect.Services<typeof ncbiPanelMatch>, DecisionModel.DecisionModel>>,
+  Assert<Equal<Effect.Services<typeof lookup>, TaxonLookup>>,
+  Assert<Equal<Effect.Error<typeof lookup>, Errors.TaxonIdQueryError>>,
   Assert<Equal<RankComparisonJudgment, ExpectedRankComparison>>,
   Assert<Equal<IsAny<RankComparisonJudgment>, false>>,
   Assert<

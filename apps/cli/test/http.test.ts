@@ -3,7 +3,14 @@ import { ConfigProvider, Deferred, Effect, Fiber, Layer, Match, Record, Ref, Sch
 import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { TestClock } from "effect/testing";
-import { RecordLabel, TaxonName, TaxonSet } from "robo-taxonomist";
+import {
+  Errors,
+  RecordLabel,
+  TaxonLookup,
+  TaxonName,
+  TaxonSet,
+  TaxonSource,
+} from "robo-taxonomist";
 import * as Api from "../src/api.ts";
 import * as Documents from "../src/documents.ts";
 import * as Model from "../src/model.ts";
@@ -627,6 +634,40 @@ it.effect(
     }).pipe(Effect.provide([rankHandlers, HttpServer.layerServices]));
   },
 );
+
+it.effect("reports a rank lookup failure without exposing the provider response", () => {
+  const source = TaxonSource.cases.Snapshot.make({ taxonomy: "fixture" });
+  const invalidResponse = Schema.decodeUnknownEffect(Schema.String)({ detail: "private" }).pipe(
+    Effect.matchEffect({
+      onFailure: (cause) => new Errors.InvalidTaxonResponse({ source, cause }),
+      onSuccess: () => Effect.die("Expected the fixture to fail schema decoding"),
+    }),
+  );
+  const lookup = Layer.succeed(TaxonLookup, {
+    source,
+    byId: () => invalidResponse,
+    byName: () => Effect.succeed([]),
+  });
+  const rankHandlers = Server.comparisons.pipe(
+    Layer.provide(fixtureProvider({})),
+    Layer.provideMerge(bounds),
+  );
+
+  return Effect.gen(function* () {
+    const client = yield* HttpApiTest.groups(Api.api, ["comparisons"]);
+    const record = Documents.RecordDocument.make({ taxonId: { taxonomy: "fixture", id: "oak" } });
+    const failure = yield* client.comparisons
+      .rank({
+        payload: { left: record, right: record },
+        query: { rank: "genus" },
+      })
+      .pipe(Effect.flip);
+
+    expect(failure).toBeInstanceOf(Api.LookupFailure);
+    expect(failure).toMatchObject({ message: "The taxonomy lookup failed" });
+    expect(failure).not.toHaveProperty("cause");
+  }).pipe(Effect.provide([rankHandlers, HttpServer.layerServices, lookup]));
+});
 
 it.effect(
   "creates a reusable symbolic set from names and identifying records without losing metadata",

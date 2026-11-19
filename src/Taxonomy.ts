@@ -15,10 +15,13 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as AcceptancePolicy from "./AcceptancePolicy.ts";
 import type { TaxonSet } from "./TaxonSet.ts";
+import * as Lookup from "./TaxonLookup.ts";
 import * as Errors from "./errors.ts";
 import {
   CollectionExecution,
   RecordLabel,
+  TaxonSource,
+  TaxonomicRank,
   TaxonomicRecord,
   TaxonName,
   Taxon,
@@ -46,32 +49,7 @@ import * as TaxonomyHints from "./TaxonomyHints.ts";
  */
 export const sameLabel: (left: RecordLabel, right: RecordLabel) => boolean = Equivalence.String;
 
-/** Supported taxonomic ranks, from domain through species.
- * @category schemas
- */
-export const TaxonomicRank = Schema.Literals([
-  "domain",
-  "kingdom",
-  "phylum",
-  "class",
-  "order",
-  "family",
-  "genus",
-  "species",
-]).annotate({ identifier: "TaxonomicRank", description: "A level of taxonomic classification." });
-
-/**
- * Taxonomy.sameTaxonAtRank accepts this type to select the rank to compare.
- * The supported ranks start with domain at the highest level down to species
- * at the lowest level.
- *
- * @category models
- * @since 0.1.0
- * @example
- * import type { TaxonomicRank } from "robo-taxonomist";
- * export const requestedRank: TaxonomicRank = "species";
- */
-export type TaxonomicRank = typeof TaxonomicRank.Type;
+export { TaxonomicRank } from "./schemas.ts";
 
 /** Construct or validate a rank comparison judgment.
  * @category schemas
@@ -127,19 +105,25 @@ export type RankComparisonJudgment = typeof RankComparisonJudgment.Type;
 const recordInputSchema = Schema.Union([RecordLabel, TaxonomicRecord]);
 type RecordInput = typeof recordInputSchema.Type;
 
+type RankComparison = Effect.Effect<
+  RankComparisonJudgment,
+  Errors.TaxonomyError | Errors.TaxonIdQueryError,
+  DecisionModel.DecisionModel
+>;
+
 // Fn aliases keep public calling contracts separate from traced implementations.
 type CompareRecordsAtRankFn = (
   left: RecordInput,
   right: RecordInput,
   rank: TaxonomicRank,
   options?: JudgmentOptions,
-) => Effect.Effect<RankComparisonJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
+) => RankComparison;
 
 type CompareRecordsFn = (
   left: RecordInput,
   right: RecordInput,
   options?: JudgmentOptions,
-) => Effect.Effect<RankComparisonJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
+) => RankComparison;
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const encodeHints = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -174,6 +158,65 @@ const rankComparisonInputSchema = Schema.Struct({
   left: recordInputSchema,
   right: recordInputSchema,
   rank: TaxonomicRank,
+});
+
+// Use the already validated identifying fields, leaving the model input untouched.
+const recordedRankComparison = Effect.fnUntraced(function* ({
+  left,
+  right,
+  rank,
+}: typeof rankComparisonInputSchema.Encoded) {
+  if (Predicate.isString(left) || Predicate.isString(right)) return Option.none();
+  if (left.label !== undefined || right.label !== undefined) return Option.none();
+
+  const leftId = left.taxonId;
+  const rightId = right.taxonId;
+  if (leftId === undefined || rightId === undefined) return Option.none();
+
+  const provided = yield* Effect.serviceOption(Lookup.TaxonLookup);
+  if (Option.isNone(provided)) return Option.none();
+
+  const lookup = provided.value;
+  const { source } = lookup;
+  if (!TaxonSource.guards.Snapshot(source)) return Option.none();
+  if (!Lookup.servesId(source, leftId) || !Lookup.servesId(source, rightId)) {
+    return Option.none();
+  }
+
+  const leftResult = yield* lookup.byId(leftId);
+  const rightResult = yield* lookup.byId(rightId);
+
+  const leftEntry = Lookup.entryFromLookup(leftResult);
+  if (Option.isNone(leftEntry)) return Option.none();
+  if (
+    left.scientificName !== undefined &&
+    left.scientificName !== leftEntry.value.taxon.scientificName
+  ) {
+    return Option.none();
+  }
+
+  const leftAtRank = Lookup.taxonAtRank(leftEntry.value, rank);
+  if (Option.isNone(leftAtRank)) return Option.none();
+
+  const rightEntry = Lookup.entryFromLookup(rightResult);
+  if (Option.isNone(rightEntry)) return Option.none();
+  if (
+    right.scientificName !== undefined &&
+    right.scientificName !== rightEntry.value.taxon.scientificName
+  ) {
+    return Option.none();
+  }
+
+  const rightAtRank = Lookup.taxonAtRank(rightEntry.value, rank);
+  if (Option.isNone(rightAtRank)) return Option.none();
+
+  const judgments = RankComparisonJudgment.cases;
+  const sameId = Lookup.sameResolvedId(leftAtRank.value.taxonId, rightAtRank.value.taxonId);
+  const judgment = sameId
+    ? judgments.SameTaxonAtRank.make({ rank })
+    : judgments.NoSharedTaxaAtRank.make({ rank });
+
+  return Option.some(judgment);
 });
 
 const makeRankComparisonQuestion = (
@@ -403,6 +446,9 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
       right,
       rank,
     }).pipe(Effect.mapError(Errors.InvalidInput.from));
+    const recorded = yield* recordedRankComparison(encoded);
+    if (Option.isSome(recorded)) return recorded.value;
+
     const definition = makeRankComparisonQuestion(encoded, hints);
     const { answers } = yield* DecisionModel.decide(definition, { input: null });
 

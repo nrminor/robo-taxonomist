@@ -99,6 +99,7 @@ The example returns the comparisons alongside your original sample identifiers a
 - [Checking membership](#checking-membership)
 - [Classifying records against a panel](#classifying-records-against-a-panel)
 - [Supplying taxonomic hints](#supplying-taxonomic-hints)
+- [Looking up taxa in a third-party reference taxonomy](#looking-up-taxa-in-a-third-party-reference-taxonomy)
 - [Choosing an acceptance policy](#choosing-an-acceptance-policy)
 - [Working with collections](#working-with-collections)
 - [Running model-backed operations](#running-model-backed-operations)
@@ -117,7 +118,7 @@ const specimen = {
   location: "Wytham Woods",
   label: RecordLabel.make("Voucher A17 | Quercus robur"),
   scientificName: TaxonName.make("Quercus robur"),
-  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
+  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "38942" }),
 };
 
 const reference = {
@@ -252,7 +253,7 @@ import { TaxonId, TaxonName, TaxonSet } from "robo-taxonomist";
 
 const oakAssignment = {
   scientificName: TaxonName.make("Quercus robur"),
-  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
+  taxonId: TaxonId.make({ taxonomy: "ncbi", id: "38942" }),
   referenceId: "oak-reference",
 };
 const oakSpecies = TaxonSet.of(oakAssignment);
@@ -382,7 +383,7 @@ That said, neither a support value of `0.90` nor the underlying model provider's
 
 ## Supplying taxonomic hints
 
-Sometimes, provided labels still aren't quite enough information on their own for the model to make a correct decision. `robo-taxonomist` provides the `TaxonomyHints` API for this. Hints allow the user to give the model additional context that could improve decisions without changing the labels or loosening the acceptance policy. As we'll demonstrate below, these hints can be provided to the whole application or just small parts.
+Sometimes, provided labels aren't quite enough information on their own for the model to make a correct decision. `robo-taxonomist` provides two solutions for this, with the first being the `TaxonomyHints` API. Hints allow the user to give the model additional context that could improve decisions without changing the labels or loosening the acceptance policy. As we'll demonstrate below, these hints can be provided to the whole application or just small parts.
 
 As an example, let's say a label contains an older taxonomic name or a shorthand from a reference catalog. A hint could spell that out:
 
@@ -432,6 +433,84 @@ await Effect.runPromise(checkIsolates.pipe(Effect.provide([CatalogHints, Decisio
 ```
 
 A call inherits its surrounding hints when you omit the `hints` option. An explicit `{ hints: [...] }` replaces them for that call; `{ hints: [] }` turns them off. Likewise, `withHints([])` turns them off for the wrapped workflow, as mentioned in the example above.
+
+## Looking up taxa in a third-party reference taxonomy
+
+In addition to hints, `robo-taxonomist` also supports supplementing decision model intelligence with a known, third-party taxonomy lookup, such as NCBI's "taxonomy dump" system. Currently, only local taxonomy dump lookups are supported, but support for other taxonomies, including GTDB and ICTV, is planned.
+
+To use NCBI, unpack a [taxonomy dump](https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump_archive/) into a directory containing `nodes.dmp`, `names.dmp`, `merged.dmp`, and `delnodes.dmp` files. If that directory is called `taxdump/`, you can work with it in the `TaxonLookup` API like so:
+
+```ts
+import { NodeServices } from "@effect/platform-node";
+import { Effect, Layer } from "effect";
+import {
+  IdLookup,
+  NcbiDump,
+  NcbiTaxonId,
+  NcbiTaxonomy,
+  TaxonLookup,
+  TaxonName,
+} from "robo-taxonomist";
+
+// construct a live lookup layer, giving it access to the dump files and the node runtime
+// for filesystem access
+const LookupLive = NcbiTaxonomy.layer.pipe(
+  Layer.provide(NcbiDump.layerAt({ directory: "./taxdump", release: "2025-07-01" })),
+  Layer.provide(NodeServices.layer),
+);
+
+// use TaxonId.make or NcbiTaxonId.make here. The latter enables more internal checks
+// when comparing an ID against a particular dump release.
+const oakId = NcbiTaxonId.make({ id: "38942" });
+const oakName = TaxonName.make("Quercus robur");
+
+const inspectOak = Effect.gen(function* () {
+  // lookup by taxid. The result is tagged Found, Merged, Deleted, or NotFound and can
+  // be matched on exhaustively
+  const result = yield* TaxonLookup.byId(oakId);
+  const reportId = IdLookup.match(result, {
+    Found: ({ entry }) => Effect.log("Current taxon", entry.taxon),
+    Merged: ({ requested, entry }) => Effect.log("Merged ID", requested, entry.taxon.taxonId),
+    Deleted: ({ requested }) => Effect.log("Deleted ID", requested),
+    NotFound: ({ requested }) => Effect.log("Unknown ID", requested),
+  });
+  yield* reportId;
+
+  // lookup by name is also supported
+  const candidates = yield* TaxonLookup.byName(oakName);
+  yield* Effect.log("Name candidates", candidates);
+
+  // lookup within the taxonomic hierarchy is also supported
+  const genus = yield* TaxonLookup.genusOf(oakId);
+  const nameMatches = yield* TaxonLookup.hasName(oakId, oakName);
+
+  yield* Effect.log({ genus, nameMatches });
+});
+
+await Effect.runPromise(inspectOak.pipe(Effect.provide(LookupLive)));
+```
+
+The `NcbiDump` release property is optional; if you omit it, `robo-taxonomist` can't check to make sure a given taxid is being checked against the right dump release.
+
+When provided, a deterministic check against a taxonomy lookup takes precedence over the decision model and can spare a model call entirely. If the lookup can't resolve a given question, `robo-taxonomist` will fall back to the provided decision model. For example, here we compare two ID-backed records with the same `sameGenus` call, using the model layer from the opening example:
+
+```ts
+import { TaxonId, Taxonomy } from "robo-taxonomist";
+
+const reference = { taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58331" }) };
+const comparison = Taxonomy.sameGenus({ taxonId: oakId, scientificName: oakName }, reference);
+
+await Effect.runPromise(
+  comparison.pipe(
+    Effect.tap((judgment) => Effect.log(judgment)),
+    Effect.provide([LookupLive, DecisionModelLive]),
+  ),
+);
+```
+
+Let's say you want to provide the lookup at the application level but opt out of it in a particular scope. To force a model-only comparison, use `Effect.updateContext(Context.omit(TaxonLookup))` (with `Context` from `effect`). This hides the service for that comparison, leaving the loaded lookup for use elsewhere.
+
+You can also use the model first when you start with a free-text label. For example, use `classifyRecords` against a panel of known scientific names with taxon IDs. Once you've chosen a match that identifies the taxon, pass its target ID to `TaxonLookup.genusOf` and compare the returned genus ID with the one you're checking. If you only have the selected name, use `byName` to find candidates and resolve any ambiguity before choosing an ID. The model interprets the label; the taxonomy lookup tells you where a known taxon belongs.
 
 ## Choosing an acceptance policy
 
