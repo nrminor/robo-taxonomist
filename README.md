@@ -98,6 +98,7 @@ The example returns the comparisons alongside your original sample identifiers a
 - [Building taxon sets](#building-taxon-sets)
 - [Checking membership](#checking-membership)
 - [Classifying records against a panel](#classifying-records-against-a-panel)
+- [Supplying taxonomic hints](#supplying-taxonomic-hints)
 - [Choosing an acceptance policy](#choosing-an-acceptance-policy)
 - [Working with collections](#working-with-collections)
 - [Running model-backed operations](#running-model-backed-operations)
@@ -378,6 +379,59 @@ For our _Saccharomyces cerevisiae_ example, all three matches are useful--it joi
 Support is the probability assigned to the model's selected answer. The [acceptance policy](#choosing-an-acceptance-policy) sets the required support and lead over competing answers for a positive or negative judgment. Unresolved cases are `Undetermined`.
 
 That said, neither a support value of `0.90` nor the underlying model provider's confidence establishes 90% empirical accuracy. Evaluate the model and acceptance policy on representative records with independently checked answers when you need a measured error rate.
+
+## Supplying taxonomic hints
+
+Sometimes, provided labels still aren't quite enough information on their own for the model to make a correct decision. `robo-taxonomist` provides the `TaxonomyHints` API for this. Hints allow the user to give the model additional context that could improve decisions without changing the labels or loosening the acceptance policy. As we'll demonstrate below, these hints can be provided to the whole application or just small parts.
+
+As an example, let's say a label contains an older taxonomic name or a shorthand from a reference catalog. A hint could spell that out:
+
+```ts
+import { Effect } from "effect";
+import { RecordLabel, TaxonName, Taxonomy, TaxonomyHint, TaxonomyHints } from "robo-taxonomist";
+
+// construct a couple labels and put them in a collection
+const first = RecordLabel.make("Isolate A17 | A. aceti");
+const second = RecordLabel.make("Isolate B42 | Acetobacter aceti");
+const isolates = [first, second];
+
+// the target will be the family Acetobacteraceae
+const family = TaxonName.make("Acetobacteraceae");
+
+// APIs like Taxonomy.partitionRecordsByMembership take hints in a collection
+const hints = [TaxonomyHint.make("In these records, A. aceti means Acetobacter aceti.")];
+
+const partition = Taxonomy.partitionRecordsByMembership(isolates, family, { hints });
+```
+
+When several decisions might need the same hints, you can wrap the whole workflow with `withHints`. Use `withAddedHints` when one part of it needs extra context without replacing what it inherited:
+
+```ts
+const archived = RecordLabel.make("Archive B19 | AA");
+const archiveHints = [TaxonomyHint.make("In this archive, AA means Acetobacter aceti.")];
+
+const checkIsolates = Effect.gen(function* () {
+  const membership = yield* Taxonomy.partitionRecordsByMembership(isolates, family);
+  const sameSpecies = yield* Taxonomy.sameSpecies(first, archived).pipe(
+    TaxonomyHints.withAddedHints(archiveHints),
+  );
+
+  return { membership, sameSpecies };
+});
+
+// Taxonomy.withHints replaces the hints provided in checkIsolates
+const withCatalogHints = checkIsolates.pipe(TaxonomyHints.withHints(hints));
+```
+
+You can also provide hints as part of your Effect application's configuration in an Effect layer. Here we provide it alongside the model layer from the opening example:
+
+```ts
+const CatalogHints = TaxonomyHints.layer(hints);
+
+await Effect.runPromise(checkIsolates.pipe(Effect.provide([CatalogHints, DecisionModelLive])));
+```
+
+A call inherits its surrounding hints when you omit the `hints` option. An explicit `{ hints: [...] }` replaces them for that call; `{ hints: [] }` turns them off. Likewise, `withHints([])` turns them off for the wrapped workflow, as mentioned in the example above.
 
 ## Choosing an acceptance policy
 
