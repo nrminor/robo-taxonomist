@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Cause, DateTime, Duration, Effect, Option, Schema } from "effect";
 import { AiError } from "effect/ai";
+import { panels, records } from "../src/lib/catalog.ts";
 import {
   ClassificationFailure,
   ClassifyRequest,
@@ -9,6 +10,40 @@ import {
 } from "../src/lib/contract.ts";
 import { publicModelFailure, publicCauseFailure } from "../src/lib/failures.ts";
 import * as TestJson from "./Json.ts";
+
+it("preserves optional confidence at the panel response JSON boundary", () => {
+  const [panel] = panels;
+  if (panel === undefined) throw new Error("Expected a catalog panel");
+
+  const response = (confidence: { readonly confidence?: number | null | undefined }) => ({
+    panelId: panel.id,
+    rows: records.map((record) => ({
+      recordId: record.id,
+      matches: panel.targets.map((target) => ({
+        targetId: target.id,
+        judgment: { _tag: "Undetermined" },
+        answer: {
+          label: "undetermined",
+          probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
+          ...confidence,
+        },
+      })),
+    })),
+  });
+  const codec = Schema.toCodecJson(PanelResponse);
+  const decode = Schema.decodeUnknownSync(codec);
+  const encode = Schema.encodeSync(codec);
+
+  for (const [wire, value] of [
+    [response({}), response({})],
+    [response({ confidence: 0.75 }), response({ confidence: 0.75 })],
+    [response({ confidence: null }), response({ confidence: undefined })],
+  ]) {
+    const decoded = decode(wire);
+    expect(decoded).toStrictEqual(value);
+    expect(encode(decoded)).toStrictEqual(wire);
+  }
+});
 
 it.effect("accepts legacy classification requests and explicit boolean refresh requests", () =>
   Effect.gen(function* () {

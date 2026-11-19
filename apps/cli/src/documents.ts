@@ -9,10 +9,10 @@ import {
   TaxonContainmentJudgment,
   TaxonId,
   TaxonIdentityJudgment,
-  TaxonMatchJudgment,
   TaxonName,
   TaxonSet,
   TaxonSetRelation,
+  Taxonomy,
   TaxonomicRank as Rank,
 } from "robo-taxonomist";
 
@@ -134,23 +134,7 @@ export const MembershipPartition = Schema.Struct({
   description: "Records grouped by taxon set membership judgment.",
 });
 
-const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
-const classificationAnswer = Schema.Struct({
-  label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
-  probabilities: Schema.Struct({
-    sameTaxon: probability,
-    withinTaxon: probability,
-    noMatch: probability,
-    undetermined: probability,
-  }),
-  confidence: Schema.optionalKey(probability),
-});
-const taxonMatch = Schema.Struct({
-  record: RecordInput,
-  taxon: taxonDocument,
-  judgment: TaxonMatchJudgment,
-  answer: classificationAnswer,
-});
+const taxonMatch = Taxonomy.TaxonMatch(RecordInput, RecordDocument);
 /** Preserve the panel, record outcomes, accepted rankings, model answers and usage. */
 export const Classification = Schema.Struct({
   panel: SetDocument,

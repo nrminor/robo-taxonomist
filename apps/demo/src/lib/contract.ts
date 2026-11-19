@@ -4,23 +4,25 @@ import { TaxonMatchJudgment, TaxonomyHint } from "robo-taxonomist";
 import { PanelId, panels, records } from "./catalog.ts";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
-const Match = Schema.Struct({
-  targetId: Schema.String,
-  judgment: TaxonMatchJudgment,
-  answer: Schema.Struct({
-    confidence: Schema.optional(probability),
-    label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
-    probabilities: Schema.Struct({
-      sameTaxon: probability,
-      withinTaxon: probability,
-      noMatch: probability,
-      undetermined: probability,
-    }),
+const browserAnswer = Schema.Struct({
+  label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
+  probabilities: Schema.Struct({
+    sameTaxon: probability,
+    withinTaxon: probability,
+    noMatch: probability,
+    undetermined: probability,
   }),
+  confidence: Schema.optional(probability),
 });
 
-const matchFor = (targetId: string) =>
-  Schema.Struct({ ...Match.fields, targetId: Schema.Literal(targetId) });
+const matchFor = <Id extends Schema.Schema<string>>(targetId: Id) =>
+  Schema.Struct({
+    targetId,
+    judgment: TaxonMatchJudgment,
+    answer: browserAnswer,
+  });
+
+const Match = matchFor(Schema.String);
 
 /**
  * Validated panel result: the codec enforces every catalog record and selected target in order,
@@ -45,7 +47,9 @@ export const PanelResponse: Schema.Codec<PanelResponse> = Schema.Union(
         records.map((record) =>
           Schema.Struct({
             recordId: Schema.Literal(record.id),
-            matches: Schema.Tuple(panel.targets.map((target) => matchFor(target.id))),
+            matches: Schema.Tuple(
+              panel.targets.map((target) => matchFor(Schema.Literal(target.id))),
+            ),
           }),
         ),
       ),

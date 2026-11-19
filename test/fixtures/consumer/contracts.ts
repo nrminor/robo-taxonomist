@@ -147,6 +147,20 @@ const classified = Taxonomy.classifyRecords(records, oaks, { policy });
 type Classified = Effect.Success<typeof classified>;
 type ClassifiedRow = Classified["records"][number];
 type ClassifiedMatch = ClassifiedRow["ranking"][number];
+const StoredRecord = Schema.Struct({
+  scientificName: TaxonName,
+  abundance: Schema.NumberFromString,
+});
+const StoredTarget = Schema.Struct({
+  scientificName: TaxonName,
+  assignmentId: Schema.String,
+});
+const StoredMatch = Taxonomy.TaxonMatch(StoredRecord, StoredTarget);
+const storedRecord = Schema.Struct({ abundance: Schema.NumberFromString });
+// @ts-expect-error Metadata alone is not a record input.
+Taxonomy.TaxonMatch(storedRecord, StoredTarget);
+// @ts-expect-error A record label is not a structured target record.
+Taxonomy.TaxonMatch(StoredRecord, RecordLabel);
 const all = Taxonomy.allRecordsBelongTo(records, oaks);
 const some = Taxonomy.anyRecordBelongsTo(records, name);
 const none = Taxonomy.noRecordBelongsTo(records, oaks);
@@ -323,6 +337,10 @@ export type Contracts = [
   Assert<Equal<TaxonMatch<typeof specimen>["record"], typeof specimen>>,
   Assert<Equal<TaxonMatch<typeof specimen>["taxon"], Types.ExtractTag<TaxonSet.TaxonSet, "Taxon">>>,
   Assert<Equal<ClassifiedMatch["judgment"], TaxonMatchJudgment>>,
+  Assert<Equal<typeof StoredMatch.fields.record.Type, typeof StoredRecord.Type>>,
+  Assert<Equal<typeof StoredMatch.fields.record.Encoded, typeof StoredRecord.Encoded>>,
+  Assert<Equal<typeof StoredMatch.fields.taxon.fields.record.Type, typeof StoredTarget.Type>>,
+  Assert<Equal<typeof StoredMatch.fields.judgment.Type, TaxonMatchJudgment>>,
   Assert<
     Equal<TaxonMatchJudgment["_tag"], "SameTaxon" | "WithinTaxon" | "NotMatched" | "Undetermined">
   >,

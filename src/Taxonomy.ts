@@ -1225,6 +1225,7 @@ const defaultCollectionExecution = CollectionExecution.make({ batchSize: 16, con
  *
  * @category schemas
  * @since 0.5.0
+ * @see {@link TaxonMatch} for saving a classification result.
  * @example
  * import { TaxonMatchJudgment } from "robo-taxonomist";
  * export const within = TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.97 });
@@ -1242,6 +1243,7 @@ export const TaxonMatchJudgment = Schema.TaggedUnion({
  *
  * @category models
  * @since 0.2.0
+ * @see {@link TaxonMatch} for saving a classification result.
  */
 export type TaxonMatchJudgment = typeof TaxonMatchJudgment.Type;
 
@@ -1254,16 +1256,84 @@ const taxonMatchCriteria = {
 
 type TaxonMatchAnswer = Decision.ClassifyAnswer<keyof typeof taxonMatchCriteria>;
 
+const matchAnswerSchema = Schema.Struct({
+  label: Schema.Literals(Record.keys(taxonMatchCriteria)),
+  probabilities: Schema.Struct({
+    sameTaxon: AcceptancePolicy.UnitInterval,
+    withinTaxon: AcceptancePolicy.UnitInterval,
+    noMatch: AcceptancePolicy.UnitInterval,
+    undetermined: AcceptancePolicy.UnitInterval,
+  }),
+  confidence: Schema.optionalKey(AcceptancePolicy.UnitInterval),
+});
+
 /**
- * Keep an original record and taxon node with their scored match judgment.
- * Accepted judgments carry the selected answer's support as a finite number in [0, 1].
- * The complete validated model answer is retained without modification.
- * The record's concrete type and caller metadata remain available through R.
+ * Save a match returned by `classifyRecords`. Pass the schemas for your input
+ * and target records to keep fields like voucher IDs and catalog IDs alongside
+ * the match. When you load it, use `TaxonSet.of(loaded.taxon.record)` if you want
+ * to ask a new question about that target.
  *
- * @category models
- * @since 0.2.0
+ * The answer records what the model reported; the judgment records what the
+ * policy accepted. If the model selects `sameTaxon` at 0.60 and the minimum is
+ * 0.80, saving the `Undetermined` judgment still keeps the original answer.
+ * The schema checks that all four scores and any supplied confidence are finite
+ * numbers in [0, 1]. Loading does not change the scores, choose a label, or
+ * apply the policy again.
+ *
+ * @category schemas
+ * @since 0.7.0
+ * @param record - Schema for the original record label or taxonomic record.
+ * @param targetRecord - Schema for the record carried by the taxon node.
+ * @see {@link TaxonMatchJudgment}
+ * @example
+ * import { Effect, Schema } from "effect";
+ * import { TaxonName, TaxonSet, Taxonomy } from "robo-taxonomist";
+ *
+ * const Specimen = Schema.Struct({
+ *   scientificName: TaxonName,
+ *   voucherId: Schema.String,
+ * });
+ * const CatalogTarget = Schema.Struct({
+ *   scientificName: TaxonName,
+ *   catalogId: Schema.String,
+ * });
+ * const specimen = Specimen.make({
+ *   scientificName: TaxonName.make("Quercus robur"),
+ *   voucherId: "A17",
+ * });
+ * const target = TaxonSet.of(CatalogTarget.make({
+ *   scientificName: TaxonName.make("Quercus"),
+ *   catalogId: "oaks",
+ * }));
+ *
+ * const Match = Taxonomy.TaxonMatch(Specimen, CatalogTarget);
+ * const MatchJson = Schema.fromJsonString(Schema.toCodecJson(Match));
+ *
+ * const roundTrip = Effect.gen(function* () {
+ *   const result = yield* Taxonomy.classifyRecords([specimen], target);
+ *   const matches = result.records.flatMap((row) => row.taxa);
+ *
+ *   return yield* Effect.forEach(matches, (match) => Effect.gen(function* () {
+ *     const saved = yield* Schema.encodeUnknownEffect(MatchJson)(match);
+ *     return yield* Schema.decodeEffect(MatchJson)(saved);
+ *   }));
+ * });
  */
-class TaxonMatch<
+export const TaxonMatch = <
+  R extends Schema.Schema<RecordInput>,
+  T extends Schema.Schema<TaxonomicRecord>,
+>(
+  record: R,
+  targetRecord: T,
+) =>
+  Schema.Struct({
+    record,
+    taxon: Schema.TaggedStruct("Taxon", { record: targetRecord }),
+    judgment: TaxonMatchJudgment,
+    answer: matchAnswerSchema,
+  });
+
+class TaxonMatchValue<
   R extends RecordInput,
   T extends TaxonomicRecord = TaxonomicRecord,
 > extends Data.Class<{
@@ -1273,7 +1343,19 @@ class TaxonMatch<
   readonly answer: TaxonMatchAnswer;
 }> {}
 
-export type { TaxonMatch };
+/**
+ * Keep an original record and taxon node with their scored match judgment.
+ * Accepted judgments carry the selected answer's support as a finite number in [0, 1].
+ * The complete validated model answer is retained without modification.
+ * The record's concrete type and caller metadata remain available through R.
+ *
+ * @category models
+ * @since 0.2.0
+ */
+export type TaxonMatch<
+  R extends RecordInput,
+  T extends TaxonomicRecord = TaxonomicRecord,
+> = TaxonMatchValue<R, T>;
 
 const isPositiveMatch = Predicate.Struct({
   judgment: TaxonMatchJudgment.isAnyOf(["SameTaxon", "WithinTaxon"]),
@@ -1329,7 +1411,7 @@ const makeTaxonMatch = <R extends RecordInput, T extends TaxonomicRecord>(
   policy: AcceptancePolicy.AcceptancePolicy,
 ) => {
   const judgment = interpretTaxonMatch(answer, policy);
-  return new TaxonMatch({ record, taxon, judgment, answer });
+  return new TaxonMatchValue({ record, taxon, judgment, answer });
 };
 
 const taxaOf = <T extends TaxonomicRecord>(panel: TaxonSet<T>) => {

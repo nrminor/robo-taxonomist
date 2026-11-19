@@ -83,6 +83,41 @@ assert.equal(firstTaxon.taxon, oaks);
 assert.equal(secondRanked.taxon, species);
 assert.equal(species.record, assignment);
 assert.equal(secondRanked.taxon.record.assignmentId, "oak-species");
+const StoredRecord = Schema.Struct({
+  scientificName: TaxonName,
+  abundance: Schema.NumberFromString,
+});
+const StoredTarget = Schema.Struct({
+  scientificName: TaxonName,
+  taxonId: TaxonId,
+  assignmentId: Schema.String,
+});
+const StoredMatch = Taxonomy.TaxonMatch(StoredRecord, StoredTarget);
+const MatchJson = Schema.fromJsonString(Schema.toCodecJson(StoredMatch));
+const saved = Effect.runSync(Schema.encodeUnknownEffect(MatchJson)(secondRanked));
+const loaded = Schema.decodeSync(MatchJson)(saved);
+
+assert.equal(Schema.encodeSync(StoredMatch)(loaded).record.abundance, "8");
+assert.deepEqual(loaded.record, record);
+assert.deepEqual(loaded.taxon.record, assignment);
+assert.deepEqual(loaded.judgment, TaxonMatchJudgment.cases.SameTaxon.make({ support: 0.94 }));
+assert.equal(loaded.answer.label, "sameTaxon");
+assert.deepEqual(loaded.answer.probabilities, {
+  sameTaxon: 0.94,
+  withinTaxon: 0.01,
+  noMatch: 0.02,
+  undetermined: 0.03,
+});
+assert.equal(Object.hasOwn(loaded.answer, "confidence"), false);
+assert.equal(TaxonSet.of(loaded.taxon.record).record, loaded.taxon.record);
+assert.throws(() =>
+  Schema.encodeUnknownSync(MatchJson)({
+    record: secondRanked.record,
+    taxon: secondRanked.taxon,
+    judgment: secondRanked.judgment,
+    answer: { ...secondRanked.answer, confidence: undefined },
+  }),
+);
 assert.deepEqual(
   row.ranking.map((match) => Schema.decodeUnknownSync(TaxonMatchJudgment)(match.judgment)),
   [
