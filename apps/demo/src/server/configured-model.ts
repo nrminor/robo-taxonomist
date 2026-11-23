@@ -24,6 +24,7 @@ export const ConfiguredPanelResults = Layer.unwrap(
     const mode = yield* Config.Literals(["fixture", "clef"], "DEMO_MODEL").pipe(
       Config.withDefault("fixture"),
     );
+
     return yield* Match.value(mode).pipe(
       Match.literalsExhaustive({
         fixture: () => Effect.succeed(PanelResults.layer),

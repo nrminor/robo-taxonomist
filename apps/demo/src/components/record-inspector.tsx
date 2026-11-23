@@ -24,6 +24,7 @@ export const RecordInspector = ({
       {finding.matches.map((match) => {
         const { target, answer } = match;
         const result = Display.judgmentPresentation(match.judgment);
+
         const answerLabel = Match.value(answer.label).pipe(
           Match.literalsExhaustive({
             sameTaxon: () => "Same taxon",
@@ -32,7 +33,9 @@ export const RecordInspector = ({
             undetermined: () => "Undetermined",
           }),
         );
+
         const p = answer.probabilities;
+
         return (
           <div key={target.id} className={styles.judgment} role="group" aria-label={target.name}>
             <div className={styles.header}>

@@ -103,6 +103,7 @@ export const RankComparisonJudgment = Schema.TaggedUnion({
 export type RankComparisonJudgment = typeof RankComparisonJudgment.Type;
 
 const recordInputSchema = Schema.Union([RecordLabel, TaxonomicRecord]);
+
 type RecordInput = typeof recordInputSchema.Type;
 
 type RankComparison = Effect.Effect<
@@ -126,6 +127,7 @@ type CompareRecordsFn = (
 ) => RankComparison;
 
 const quoteText = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
 const encodeHints = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const hintsInstruction = (hints: ReadonlyArray<TaxonomyHint>) =>
@@ -167,18 +169,23 @@ const recordedRankComparison = Effect.fnUntraced(function* ({
   rank,
 }: typeof rankComparisonInputSchema.Encoded) {
   if (Predicate.isString(left) || Predicate.isString(right)) return Option.none();
+
   if (left.label !== undefined || right.label !== undefined) return Option.none();
 
   const leftId = left.taxonId;
   const rightId = right.taxonId;
+
   if (leftId === undefined || rightId === undefined) return Option.none();
 
   const provided = yield* Effect.serviceOption(Lookup.TaxonLookup);
+
   if (Option.isNone(provided)) return Option.none();
 
   const lookup = provided.value;
   const { source } = lookup;
+
   if (!TaxonSource.guards.Snapshot(source)) return Option.none();
+
   if (!Lookup.servesId(source, leftId) || !Lookup.servesId(source, rightId)) {
     return Option.none();
   }
@@ -187,7 +194,9 @@ const recordedRankComparison = Effect.fnUntraced(function* ({
   const rightResult = yield* lookup.byId(rightId);
 
   const leftEntry = Lookup.entryFromLookup(leftResult);
+
   if (Option.isNone(leftEntry)) return Option.none();
+
   if (
     left.scientificName !== undefined &&
     left.scientificName !== leftEntry.value.taxon.scientificName
@@ -196,10 +205,13 @@ const recordedRankComparison = Effect.fnUntraced(function* ({
   }
 
   const leftAtRank = Lookup.taxonAtRank(leftEntry.value, rank);
+
   if (Option.isNone(leftAtRank)) return Option.none();
 
   const rightEntry = Lookup.entryFromLookup(rightResult);
+
   if (Option.isNone(rightEntry)) return Option.none();
+
   if (
     right.scientificName !== undefined &&
     right.scientificName !== rightEntry.value.taxon.scientificName
@@ -208,10 +220,12 @@ const recordedRankComparison = Effect.fnUntraced(function* ({
   }
 
   const rightAtRank = Lookup.taxonAtRank(rightEntry.value, rank);
+
   if (Option.isNone(rightAtRank)) return Option.none();
 
   const judgments = RankComparisonJudgment.cases;
   const sameId = Lookup.sameResolvedId(leftAtRank.value.taxonId, rightAtRank.value.taxonId);
+
   const judgment = sameId
     ? judgments.SameTaxonAtRank.make({ rank })
     : judgments.NoSharedTaxaAtRank.make({ rank });
@@ -258,6 +272,7 @@ const interpretRankComparison = (
   const p = answer.probabilities;
   const support = TaxonRelations.rankSupports(p);
   const judgments = RankComparisonJudgment.cases;
+
   const unresolvedSupport = Math.max(
     p.undetermined,
     p.multipleLeft,
@@ -268,6 +283,7 @@ const interpretRankComparison = (
   // Refinement competes with every detailed alternative, including the other broad group.
   const sameCompetitorSupport = Math.max(support.different, unresolvedSupport);
   const sameAccepted = AcceptancePolicy.accepts(support.same, sameCompetitorSupport, policy);
+
   if (sameAccepted) {
     const differentOrUnresolvedSupport = Math.max(
       p.properSubset,
@@ -278,33 +294,40 @@ const interpretRankComparison = (
     );
 
     const equalSingleCompetitorSupport = Math.max(p.equalMultiple, differentOrUnresolvedSupport);
+
     const equalSingleAccepted = AcceptancePolicy.accepts(
       p.equalSingle,
       equalSingleCompetitorSupport,
       policy,
     );
+
     if (equalSingleAccepted) {
       return judgments.SameTaxonAtRank.make({ rank });
     }
 
     const equalMultipleCompetitorSupport = Math.max(p.equalSingle, differentOrUnresolvedSupport);
+
     const equalMultipleAccepted = AcceptancePolicy.accepts(
       p.equalMultiple,
       equalMultipleCompetitorSupport,
       policy,
     );
+
     if (equalMultipleAccepted) {
       return judgments.SameMultipleTaxaAtRank.make({ rank });
     }
+
     return judgments.SameTaxaAtRank.make({ rank });
   }
 
   const differentCompetitorSupport = Math.max(support.same, unresolvedSupport);
+
   const differentAccepted = AcceptancePolicy.accepts(
     support.different,
     differentCompetitorSupport,
     policy,
   );
+
   if (differentAccepted) {
     const sameOrUnresolvedSupport = Math.max(p.equalSingle, p.equalMultiple, unresolvedSupport);
 
@@ -314,11 +337,13 @@ const interpretRankComparison = (
       p.disjoint,
       sameOrUnresolvedSupport,
     );
+
     const properSubsetAccepted = AcceptancePolicy.accepts(
       p.properSubset,
       properSubsetCompetitorSupport,
       policy,
     );
+
     if (properSubsetAccepted) {
       return judgments.LeftTaxaWithinRightAtRank.make({ rank });
     }
@@ -329,11 +354,13 @@ const interpretRankComparison = (
       p.disjoint,
       sameOrUnresolvedSupport,
     );
+
     const properSupersetAccepted = AcceptancePolicy.accepts(
       p.properSuperset,
       properSupersetCompetitorSupport,
       policy,
     );
+
     if (properSupersetAccepted) {
       return judgments.RightTaxaWithinLeftAtRank.make({ rank });
     }
@@ -344,11 +371,13 @@ const interpretRankComparison = (
       p.disjoint,
       sameOrUnresolvedSupport,
     );
+
     const partialOverlapAccepted = AcceptancePolicy.accepts(
       p.partialOverlap,
       partialOverlapCompetitorSupport,
       policy,
     );
+
     if (partialOverlapAccepted) {
       return judgments.PartlySharedTaxaAtRank.make({ rank });
     }
@@ -359,14 +388,17 @@ const interpretRankComparison = (
       p.partialOverlap,
       sameOrUnresolvedSupport,
     );
+
     const disjointAccepted = AcceptancePolicy.accepts(
       p.disjoint,
       disjointCompetitorSupport,
       policy,
     );
+
     if (disjointAccepted) {
       return judgments.NoSharedTaxaAtRank.make({ rank });
     }
+
     return judgments.DifferentTaxaAtRank.make({ rank });
   }
 
@@ -377,11 +409,13 @@ const interpretRankComparison = (
     p.multipleBoth,
     otherBroadSupport,
   );
+
   const multipleLeftAccepted = AcceptancePolicy.accepts(
     p.multipleLeft,
     multipleLeftCompetitorSupport,
     policy,
   );
+
   if (multipleLeftAccepted) {
     return judgments.MultipleTaxaAtRank.make({ rank, side: "left" });
   }
@@ -391,11 +425,13 @@ const interpretRankComparison = (
     p.multipleBoth,
     otherBroadSupport,
   );
+
   const multipleRightAccepted = AcceptancePolicy.accepts(
     p.multipleRight,
     multipleRightCompetitorSupport,
     policy,
   );
+
   if (multipleRightAccepted) {
     return judgments.MultipleTaxaAtRank.make({ rank, side: "right" });
   }
@@ -405,14 +441,17 @@ const interpretRankComparison = (
     p.multipleRight,
     otherBroadSupport,
   );
+
   const multipleBothAccepted = AcceptancePolicy.accepts(
     p.multipleBoth,
     multipleBothCompetitorSupport,
     policy,
   );
+
   if (multipleBothAccepted) {
     return judgments.MultipleTaxaAtRank.make({ rank, side: "both" });
   }
+
   return judgments.Undetermined.make({ rank });
 };
 
@@ -441,12 +480,15 @@ export const sameTaxonAtRank: CompareRecordsAtRankFn = Effect.fn("Taxonomy.sameT
     options: JudgmentOptions = {},
   ) {
     const hints = yield* TaxonomyHints.snapshot(options.hints);
+
     const encoded = yield* Schema.encodeEffect(rankComparisonInputSchema)({
       left,
       right,
       rank,
     }).pipe(Effect.mapError(Errors.InvalidInput.from));
+
     const recorded = yield* recordedRankComparison(encoded);
+
     if (Option.isSome(recorded)) return recorded.value;
 
     const definition = makeRankComparisonQuestion(encoded, hints);
@@ -644,8 +686,10 @@ type CompareTaxaFn = (
 ) => Effect.Effect<TaxonIdentityJudgment, Errors.TaxonomyError, DecisionModel.DecisionModel>;
 
 const scalarInputSchema = Schema.Struct({ left: TaxonomicRecord, right: TaxonomicRecord });
+
 const asTaxonomicRecord = (input: TaxonName | TaxonomicRecord): TaxonomicRecord =>
   Predicate.isString(input) ? { scientificName: input } : input;
+
 const makeIdentityQuestion = (
   input: typeof scalarInputSchema.Encoded,
   hints: ReadonlyArray<TaxonomyHint>,
@@ -676,11 +720,13 @@ const makeIdentityQuestion = (
 type IdentityAnswer = Decision.Answer<
   ReturnType<typeof makeIdentityQuestion>["decisions"]["identity"]
 >;
+
 const interpretIdentity = Match.fn(
   (answer: IdentityAnswer, _policy: AcceptancePolicy.AcceptancePolicy) => answer,
 ).pipe(
   Match.when({ label: "same" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.same;
+
     const competitorSupport = Math.max(
       p.different,
       p.undetermined,
@@ -688,12 +734,14 @@ const interpretIdentity = Match.fn(
       p.multipleRight,
       p.multipleBoth,
     );
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonIdentityJudgment.cases.SameTaxon.make({})
       : TaxonIdentityJudgment.cases.Undetermined.make({});
   }),
   Match.when({ label: "different" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.different;
+
     const competitorSupport = Math.max(
       p.same,
       p.undetermined,
@@ -701,12 +749,14 @@ const interpretIdentity = Match.fn(
       p.multipleRight,
       p.multipleBoth,
     );
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonIdentityJudgment.cases.DifferentTaxa.make({})
       : TaxonIdentityJudgment.cases.Undetermined.make({});
   }),
   Match.when({ label: "multipleLeft" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.multipleLeft;
+
     const competitorSupport = Math.max(
       p.same,
       p.different,
@@ -714,12 +764,14 @@ const interpretIdentity = Match.fn(
       p.multipleRight,
       p.multipleBoth,
     );
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "left" })
       : TaxonIdentityJudgment.cases.Undetermined.make({});
   }),
   Match.when({ label: "multipleRight" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.multipleRight;
+
     const competitorSupport = Math.max(
       p.same,
       p.different,
@@ -727,12 +779,14 @@ const interpretIdentity = Match.fn(
       p.multipleLeft,
       p.multipleBoth,
     );
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "right" })
       : TaxonIdentityJudgment.cases.Undetermined.make({});
   }),
   Match.when({ label: "multipleBoth" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.multipleBoth;
+
     const competitorSupport = Math.max(
       p.same,
       p.different,
@@ -740,6 +794,7 @@ const interpretIdentity = Match.fn(
       p.multipleLeft,
       p.multipleRight,
     );
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "both" })
       : TaxonIdentityJudgment.cases.Undetermined.make({});
@@ -765,13 +820,16 @@ export const sameTaxon: CompareTaxaFn = Effect.fn("Taxonomy.sameTaxon")(function
   options: JudgmentOptions = {},
 ) {
   const hints = yield* TaxonomyHints.snapshot(options.hints);
+
   const encoded = yield* Schema.encodeEffect(scalarInputSchema)({
     left: asTaxonomicRecord(left),
     right: asTaxonomicRecord(right),
   }).pipe(Effect.mapError(Errors.InvalidInput.from));
+
   const { answers } = yield* DecisionModel.decide(makeIdentityQuestion(encoded, hints), {
     input: null,
   });
+
   return interpretIdentity(answers.identity, options.policy ?? AcceptancePolicy.defaultPolicy);
 });
 
@@ -848,6 +906,7 @@ const makeContainmentQuestion = (
 type ContainmentAnswer = Decision.Answer<
   ReturnType<typeof makeContainmentQuestion>["decisions"]["containment"]
 >;
+
 const interpretContainment = (
   answer: ContainmentAnswer,
   policy: AcceptancePolicy.AcceptancePolicy,
@@ -855,6 +914,7 @@ const interpretContainment = (
   const p = answer.probabilities;
   const support = TaxonRelations.containmentSupports(p);
   const judgments = TaxonContainmentJudgment.cases;
+
   const unresolvedSupport = Math.max(
     p.undetermined,
     p.multipleLeft,
@@ -871,6 +931,7 @@ const interpretContainment = (
   ) {
     return judgments.Contained.make({});
   }
+
   if (
     AcceptancePolicy.accepts(
       support.notContained,
@@ -880,6 +941,7 @@ const interpretContainment = (
   ) {
     // Contained remains a competitor when refining the accepted NotContained answer.
     const containedOrUnresolvedSupport = Math.max(support.contained, unresolvedSupport);
+
     if (
       AcceptancePolicy.accepts(
         support.partlyContained,
@@ -889,6 +951,7 @@ const interpretContainment = (
     ) {
       return judgments.PartlyContained.make({});
     }
+
     if (
       AcceptancePolicy.accepts(
         support.disjoint,
@@ -898,10 +961,12 @@ const interpretContainment = (
     ) {
       return judgments.Disjoint.make({});
     }
+
     return judgments.NotContained.make({});
   }
 
   const otherBroadSupport = Math.max(support.contained, support.notContained, p.undetermined);
+
   if (
     AcceptancePolicy.accepts(
       p.multipleLeft,
@@ -911,6 +976,7 @@ const interpretContainment = (
   ) {
     return judgments.MultipleTaxa.make({ side: "left" });
   }
+
   if (
     AcceptancePolicy.accepts(
       p.multipleRight,
@@ -920,6 +986,7 @@ const interpretContainment = (
   ) {
     return judgments.MultipleTaxa.make({ side: "right" });
   }
+
   if (
     AcceptancePolicy.accepts(
       p.multipleBoth,
@@ -929,6 +996,7 @@ const interpretContainment = (
   ) {
     return judgments.MultipleTaxa.make({ side: "both" });
   }
+
   return judgments.Undetermined.make({});
 };
 
@@ -959,13 +1027,16 @@ export const taxonWithin: TaxonWithinFn = Effect.fn("Taxonomy.taxonWithin")(func
   options: JudgmentOptions = {},
 ) {
   const hints = yield* TaxonomyHints.snapshot(options.hints);
+
   const encoded = yield* Schema.encodeEffect(scalarInputSchema)({
     left: asTaxonomicRecord(inner),
     right: asTaxonomicRecord(outer),
   }).pipe(Effect.mapError(Errors.InvalidInput.from));
+
   const { answers } = yield* DecisionModel.decide(makeContainmentQuestion(encoded, hints), {
     input: null,
   });
+
   return interpretContainment(
     answers.containment,
     options.policy ?? AcceptancePolicy.defaultPolicy,
@@ -1019,6 +1090,7 @@ export type TaxonMembershipJudgment<T extends TaxonomicRecord = TaxonomicRecord>
 >;
 
 type MembershipTarget<T extends TaxonomicRecord = TaxonomicRecord> = TaxonName | T | TaxonSet<T>;
+
 type Named = { readonly scientificName: TaxonName };
 
 const batchRecordsSchema = Schema.NonEmptyArray(recordInputSchema);
@@ -1034,30 +1106,38 @@ const prepareMembershipTarget = Effect.fnUntraced(function* <T extends Taxonomic
       Effect.mapError(Errors.InvalidInput.from),
     );
   }
+
   let expression: TaxonSet<T | { readonly scientificName: TaxonName }>;
+
   if (Predicate.isString(target)) {
     const scientificName = yield* Schema.decodeEffect(TaxonName)(target).pipe(
       Effect.mapError(Errors.InvalidInput.from),
     );
+
     expression = new Taxon({ record: { scientificName } });
   } else {
     expression = isTaxonSet(target) ? target : new Taxon({ record: target });
   }
+
   const compiled = yield* TaxonSetGraph.compile<
     "target",
     T | { readonly scientificName: TaxonName }
   >({ target: expression });
+
   const targetTaxa = compiled.taxa.target;
+
   const input = yield* Schema.encodeEffect(TaxonSetGraph.membershipTargetSchema)({
     nodes: compiled.nodes,
     ...compiled.roots,
   }).pipe(Effect.mapError(Errors.InvalidInput.from));
+
   const membershipChoices = {
     member: "Everything represented by the record belongs.",
     notMember: "Everything represented by the record is outside.",
     mixed: "The record jointly represents taxa inside and outside.",
     undetermined: "The available information is insufficient.",
   };
+
   const targetChoices = Record.fromEntries(
     Array.map(
       targetTaxa,
@@ -1068,6 +1148,7 @@ const prepareMembershipTarget = Effect.fnUntraced(function* <T extends Taxonomic
         ] as const,
     ),
   );
+
   return {
     input,
     targetTaxa,
@@ -1082,6 +1163,7 @@ const makeMembershipBatchQuestion = Effect.fnUntraced(function* (
   const encoded = yield* Schema.encodeEffect(batchRecordsSchema)(records).pipe(
     Effect.mapError(Errors.InvalidInput.from),
   );
+
   return Decision.make({
     input: Schema.toEncoded(TaxonSetGraph.membershipTargetSchema),
     decisions: Record.fromEntries(
@@ -1117,8 +1199,10 @@ const interpretMembership = <T extends TaxonomicRecord>(
   policy: AcceptancePolicy.AcceptancePolicy,
 ): TaxonMembershipJudgment<T> => {
   let clarificationCompetitorSupport = 0;
+
   for (let index = 0; index < targetTaxa.length; index++) {
     const label = `multipleTarget${index}` as const;
+
     if (label === answer.label) continue;
     const support = Record.get(answer.probabilities, label).pipe(Option.getOrThrow);
     clarificationCompetitorSupport = Math.max(clarificationCompetitorSupport, support);
@@ -1127,39 +1211,48 @@ const interpretMembership = <T extends TaxonomicRecord>(
   return Match.value(answer).pipe(
     Match.when({ label: "member" }, ({ probabilities: p }) => {
       const support = p.member;
+
       const competitorSupport = Math.max(
         p.notMember,
         p.mixed,
         p.undetermined,
         clarificationCompetitorSupport,
       );
+
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
+
       return accepted
         ? TaxonMembershipJudgment.cases.Member.make({})
         : TaxonMembershipJudgment.cases.Undetermined.make({});
     }),
     Match.when({ label: "notMember" }, ({ probabilities: p }) => {
       const support = p.notMember;
+
       const competitorSupport = Math.max(
         p.member,
         p.mixed,
         p.undetermined,
         clarificationCompetitorSupport,
       );
+
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
+
       return accepted
         ? TaxonMembershipJudgment.cases.NotMember.make({})
         : TaxonMembershipJudgment.cases.Undetermined.make({});
     }),
     Match.when({ label: "mixed" }, ({ probabilities: p }) => {
       const support = p.mixed;
+
       const competitorSupport = Math.max(
         p.member,
         p.notMember,
         p.undetermined,
         clarificationCompetitorSupport,
       );
+
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
+
       return accepted
         ? TaxonMembershipJudgment.cases.MixedMembership.make({})
         : TaxonMembershipJudgment.cases.Undetermined.make({});
@@ -1169,6 +1262,7 @@ const interpretMembership = <T extends TaxonomicRecord>(
     ),
     Match.when({ label: isTargetClarificationLabel }, ({ label, probabilities: p }) => {
       const support = Record.get(p, label).pipe(Option.getOrThrow);
+
       const competitorSupport = Math.max(
         p.member,
         p.notMember,
@@ -1176,14 +1270,18 @@ const interpretMembership = <T extends TaxonomicRecord>(
         p.undetermined,
         clarificationCompetitorSupport,
       );
+
       const accepted = AcceptancePolicy.accepts(support, competitorSupport, policy);
+
       if (!accepted) return TaxonMembershipJudgment.cases.Undetermined.make({});
 
       const target = Array.findFirst(
         targetTaxa,
         (_taxon, index) => label === `multipleTarget${index}`,
       ).pipe(Option.getOrThrow);
+
       const judgment = TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({ target });
+
       return { ...judgment, target };
     }),
     Match.exhaustive,
@@ -1196,6 +1294,7 @@ const decideMembershipBatch = Effect.fnUntraced(function* (
   hints: ReadonlyArray<TaxonomyHint>,
 ) {
   const definition = yield* makeMembershipBatchQuestion(records, prepared);
+
   const input = Array.match(hints, {
     onEmpty: () => prepared.input,
     onNonEmpty: (nonempty) =>
@@ -1204,7 +1303,9 @@ const decideMembershipBatch = Effect.fnUntraced(function* (
         instructions: "Use the supplied taxonomic hints as background.",
       }),
   });
+
   const { answers } = yield* DecisionModel.decide(definition, { input });
+
   return Array.map(records, (_record, index) =>
     Record.get(answers, `record${index}`).pipe(Option.getOrThrow),
   );
@@ -1256,6 +1357,7 @@ const recordBelongsToEffect = Effect.fn("Taxonomy.recordBelongsTo")(function* <
   const hints = yield* TaxonomyHints.snapshot(options.hints);
   const prepared = yield* prepareMembershipTarget(target);
   const answers = yield* decideMembershipBatch([record], prepared, hints);
+
   return interpretMembership(
     Array.headNonEmpty(answers),
     prepared.targetTaxa,
@@ -1428,6 +1530,7 @@ const interpretTaxonMatch = Match.fn(
   Match.when({ label: "sameTaxon" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.sameTaxon;
     const competitorSupport = Math.max(p.withinTaxon, p.noMatch, p.undetermined);
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonMatchJudgment.cases.SameTaxon.make({ support })
       : TaxonMatchJudgment.cases.Undetermined.make({});
@@ -1435,6 +1538,7 @@ const interpretTaxonMatch = Match.fn(
   Match.when({ label: "withinTaxon" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.withinTaxon;
     const competitorSupport = Math.max(p.sameTaxon, p.noMatch, p.undetermined);
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonMatchJudgment.cases.WithinTaxon.make({ support })
       : TaxonMatchJudgment.cases.Undetermined.make({});
@@ -1442,6 +1546,7 @@ const interpretTaxonMatch = Match.fn(
   Match.when({ label: "noMatch" }, ({ probabilities: p }, _answer, policy) => {
     const support = p.noMatch;
     const competitorSupport = Math.max(p.sameTaxon, p.withinTaxon, p.undetermined);
+
     return AcceptancePolicy.accepts(support, competitorSupport, policy)
       ? TaxonMatchJudgment.cases.NotMatched.make({ support })
       : TaxonMatchJudgment.cases.Undetermined.make({});
@@ -1457,6 +1562,7 @@ const makeTaxonMatch = <R extends RecordInput, T extends TaxonomicRecord>(
   policy: AcceptancePolicy.AcceptancePolicy,
 ) => {
   const judgment = interpretTaxonMatch(answer, policy);
+
   return new TaxonMatchValue({ record, taxon, judgment, answer });
 };
 
@@ -1464,22 +1570,28 @@ const taxaOf = <T extends TaxonomicRecord>(panel: TaxonSet<T>) => {
   const taxa: Taxon<T>[] = [];
   const emptyIncluded = new WeakSet<TaxonSet<T>>();
   const emptyExcluded = new WeakSet<TaxonSet<T>>();
+
   const pending: {
     readonly expression: TaxonSet<T>;
     readonly include: boolean;
     readonly start?: number;
   }[] = [{ expression: panel, include: true }];
+
   while (pending.length > 0) {
     const next = pending.pop();
+
     if (next === undefined) break;
     const { expression, include, start } = next;
     const empty = include ? emptyIncluded : emptyExcluded;
+
     if (empty.has(expression)) continue;
+
     if (start !== undefined) {
       // Productive shared subtrees retain every original occurrence.
       if (taxa.length === start) empty.add(expression);
       continue;
     }
+
     pending.push({ expression, include, start: taxa.length });
     Match.value(expression).pipe(
       Match.tagsExhaustive({
@@ -1504,6 +1616,7 @@ const taxaOf = <T extends TaxonomicRecord>(panel: TaxonSet<T>) => {
       }),
     );
   }
+
   return taxa;
 };
 
@@ -1564,8 +1677,10 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
   const selected = options.hints === undefined ? inherited : options.hints;
   const snapshot = Array.isArray(selected) ? Array.copy(selected) : selected;
   const graph = yield* TaxonSetGraph.compile({ panel });
+
   if (records.length === 0) return { panel, records: [], usage: [] };
   const panelTaxa = taxaOf(panel);
+
   if (panelTaxa.length === 0) {
     return {
       panel,
@@ -1577,12 +1692,15 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
   const hints = yield* Schema.decodeUnknownEffect(Schema.Array(TaxonomyHint))(snapshot).pipe(
     Effect.mapError(Errors.InvalidInput.from),
   );
+
   const policy = options.policy ?? AcceptancePolicy.defaultPolicy;
   const execution = options.execution ?? defaultCollectionExecution;
+
   const classifyBatch = Effect.fnUntraced(function* (batch: readonly R[]) {
     const encoded = yield* Schema.encodeEffect(Schema.Array(recordInputSchema))(batch).pipe(
       Effect.mapError(Errors.InvalidInput.from),
     );
+
     const rows = batch.map((record, row) => ({
       record,
       taxa: panelTaxa.map((taxon, column) => ({
@@ -1596,15 +1714,18 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
         }),
       })),
     }));
+
     const definition = Decision.make({
       input: Schema.toEncoded(taxonMatchInputSchema),
       decisions: Record.fromEntries(
         rows.flatMap((row) => row.taxa.map(({ key, decision }) => [key, decision] as const)),
       ),
     });
+
     const encodedTaxa = yield* Schema.encodeEffect(Schema.Array(TaxonomicRecord))(
       panelTaxa.map((taxon) => taxon.record),
     ).pipe(Effect.mapError(Errors.InvalidInput.from));
+
     const preparedInput = {
       instructions: taxonMatchInstructions,
       records: encoded.map(describeRecord),
@@ -1612,6 +1733,7 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
       nodes: graph.nodes,
       panel: graph.roots.panel,
     };
+
     const input = Array.match(hints, {
       onEmpty: () => preparedInput,
       onNonEmpty: (nonempty) =>
@@ -1621,26 +1743,35 @@ export const classifyRecords: ClassifyRecordsFn = Effect.fn("Taxonomy.classifyRe
             taxonMatchInstructions + "\nUse the supplied taxonomic hints as background.",
         }),
     });
+
     const response = yield* DecisionModel.decide(definition, { input });
+
     const classified = rows.map((row) => {
       const taxa = row.taxa.map(({ taxon, key }) => {
         const answer = Struct.get(response.answers, key);
+
         return makeTaxonMatch(row.record, taxon, answer, policy);
       });
+
       const accepted = taxa.filter((match) => isPositiveMatch(match));
+
       const ranking = Array.sort(
         accepted,
         Order.Struct({ judgment: Order.Struct({ support: Order.flip(Order.Number) }) }),
       );
+
       return { record: row.record, taxa, ranking };
     });
+
     return { records: classified, usage: response.usage };
   });
+
   const completed = yield* Effect.forEach(
     Iterable.chunksOf(records, execution.batchSize),
     classifyBatch,
     { concurrency: execution.concurrency },
   );
+
   return {
     panel,
     records: completed.flatMap((batch) => batch.records),
@@ -1677,6 +1808,7 @@ class MembershipPartition<
 
     for (const [batchIndex, batch] of batches.entries()) {
       const judgments = Array.getUnsafe(judgmentsByBatch, batchIndex);
+
       for (const [recordIndex, record] of batch.entries()) {
         const judgment = Array.getUnsafe(judgments, recordIndex);
         Match.value(judgment).pipe(
@@ -1806,16 +1938,20 @@ const partitionRecordsByMembershipEffect = Effect.fn("Taxonomy.partitionRecordsB
         MultipleTaxaInTarget: [],
       });
     }
+
     if (!Array.isReadonlyArrayNonEmpty(records))
       return MembershipPartition.fromBatches<A, T>([], []);
 
     const hints = yield* TaxonomyHints.snapshot(options.hints);
     const execution = options.execution ?? defaultCollectionExecution;
+
     const batches = Array.fromIterable(
       Iterable.filter(Iterable.chunksOf(records, execution.batchSize), Array.isArrayNonEmpty),
     );
+
     const prepared = yield* prepareMembershipTarget(target);
     const policy = options.policy ?? AcceptancePolicy.defaultPolicy;
+
     const judgmentsByBatch = yield* Effect.forEach(
       batches,
       (batch) =>
@@ -1828,6 +1964,7 @@ const partitionRecordsByMembershipEffect = Effect.fn("Taxonomy.partitionRecordsB
         ),
       { concurrency: execution.concurrency },
     );
+
     return MembershipPartition.fromBatches(batches, judgmentsByBatch);
   },
 );
@@ -1917,10 +2054,12 @@ const groupRecordsByTaxaEffect = Effect.fn("Taxonomy.groupRecordsByTaxa")(functi
   T extends TaxonomicRecord,
 >(records: readonly A[], targets: readonly MembershipTarget<T>[], options: CollectionOptions = {}) {
   let scopedOptions = options;
+
   if (records.length > 0 && targets.some((target) => !taxonSetSchema.guards.Empty(target))) {
     const hints = yield* TaxonomyHints.snapshot(options.hints);
     scopedOptions = Struct.assign(options, { hints });
   }
+
   const groups = yield* Effect.forEach(
     targets,
     (target) =>
@@ -1929,10 +2068,12 @@ const groupRecordsByTaxaEffect = Effect.fn("Taxonomy.groupRecordsByTaxa")(functi
       ),
     { concurrency: 1 },
   );
+
   return new MembershipPartitionsByTarget<A, T | Named>({ groups });
 });
 
 const quantifierSchema = Schema.Literals(["all", "any", "none"]);
+
 type RecordQuantifier = typeof quantifierSchema.Type;
 
 /** Describe a collection membership judgment and any target requiring clarification.
@@ -1979,6 +2120,7 @@ export type CollectionMembershipJudgment<T extends TaxonomicRecord = TaxonomicRe
 
 const yes = (quantifier: RecordQuantifier) =>
   CollectionMembershipJudgment.cases.Yes.make({ quantifier });
+
 const no = (quantifier: RecordQuantifier) =>
   CollectionMembershipJudgment.cases.No.make({ quantifier });
 
@@ -2005,6 +2147,7 @@ const interpretQuantifierAnswer = <T extends TaxonomicRecord>(
   for (let index = 0; index < targetTaxa.length; index++) {
     const label = `multipleTarget${index}` as const;
     const support = Record.get(p, label).pipe(Option.getOrThrow);
+
     if (support > clarificationSupport) {
       clarificationCompetitorSupport = Math.max(
         clarificationCompetitorSupport,
@@ -2022,7 +2165,9 @@ const interpretQuantifierAnswer = <T extends TaxonomicRecord>(
     p.undetermined,
     clarificationSupport,
   );
+
   const memberAccepted = AcceptancePolicy.accepts(p.member, memberCompetitorSupport, policy);
+
   if (memberAccepted) {
     return Match.value(quantifier).pipe(
       Match.when("all", () => Option.none()),
@@ -2033,11 +2178,13 @@ const interpretQuantifierAnswer = <T extends TaxonomicRecord>(
   }
 
   const notWhollyMemberCompetitorSupport = Math.max(p.member, p.undetermined, clarificationSupport);
+
   const notWhollyMemberAccepted = AcceptancePolicy.accepts(
     notWhollyMemberSupport,
     notWhollyMemberCompetitorSupport,
     policy,
   );
+
   if (notWhollyMemberAccepted) {
     return Match.value(quantifier).pipe(
       Match.when("all", () => Option.some(no(quantifier))),
@@ -2052,15 +2199,18 @@ const interpretQuantifierAnswer = <T extends TaxonomicRecord>(
     clarificationCompetitorSupport,
     policy,
   );
+
   if (clarificationAccepted && clarificationTarget !== undefined) {
     const judgment = CollectionMembershipJudgment.cases.MultipleTaxaInTarget.make({
       quantifier,
       target: clarificationTarget,
     });
+
     return Option.some({ ...judgment, target: clarificationTarget });
   }
 
   const judgment = CollectionMembershipJudgment.cases.Undetermined.make({ quantifier });
+
   return Option.some(judgment);
 };
 
@@ -2075,6 +2225,7 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
   DecisionModel.DecisionModel
 > {
   if (!Array.isReadonlyArrayNonEmpty(records)) return completedScanJudgment(quantifier);
+
   if (taxonSetSchema.guards.Empty(target))
     return Match.value(quantifier).pipe(
       Match.when("all", () => no(quantifier)),
@@ -2088,10 +2239,12 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
   const input = Array.copy(records);
   const prepared = yield* prepareMembershipTarget(target);
   const policy = options.policy ?? AcceptancePolicy.defaultPolicy;
+
   const batches = Iterable.filter(
     Iterable.chunksOf(input, execution.batchSize),
     Array.isArrayNonEmpty,
   );
+
   const windows = Iterable.chunksOf(batches, execution.concurrency);
   let encounteredUncertainty = false;
 
@@ -2101,12 +2254,15 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
       (batch) => decideMembershipBatch(batch, prepared, hints),
       { concurrency: execution.concurrency },
     );
+
     for (const results of resultsByBatch) {
       for (const answer of results) {
         const step = interpretQuantifierAnswer(quantifier, answer, prepared.targetTaxa, policy);
+
         if (Option.isNone(step)) continue;
 
         const judgment = step.value;
+
         const decisive = Match.value(judgment).pipe(
           Match.tagsExhaustive({
             Yes: () => true,
@@ -2115,13 +2271,16 @@ const quantifyRecords = Effect.fnUntraced(function* <T extends TaxonomicRecord>(
             MultipleTaxaInTarget: () => true,
           }),
         );
+
         if (decisive) return judgment;
         encounteredUncertainty = true;
       }
     }
   }
+
   if (encounteredUncertainty)
     return CollectionMembershipJudgment.cases.Undetermined.make({ quantifier });
+
   return completedScanJudgment(quantifier);
 });
 

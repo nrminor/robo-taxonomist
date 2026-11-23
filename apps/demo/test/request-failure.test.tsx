@@ -21,6 +21,7 @@ const renderHttpDemo = async (fetch: typeof globalThis.fetch) => {
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
@@ -28,6 +29,7 @@ const renderHttpDemo = async (fetch: typeof globalThis.fetch) => {
       </RegistryProvider>
     </StrictMode>,
   );
+
   await expect
     .poll(
       () =>
@@ -35,6 +37,7 @@ const renderHttpDemo = async (fetch: typeof globalThis.fetch) => {
         view.getByRole("region", { name: "Panel targets" }).elements().length,
     )
     .toBe(1);
+
   return view;
 };
 
@@ -69,9 +72,11 @@ it("waits for an explicit retry after showing the initial rate limit and sends t
       requestId: "req-rate-limit",
     }),
   );
+
   const mockFetch = vi.fn<typeof globalThis.fetch>(() =>
     Promise.resolve(Response.json(initial, { status: 503 })),
   );
+
   await renderDemo(initial, mockFetch, 503);
 
   await expect
@@ -82,6 +87,7 @@ it("waits for an explicit retry after showing the initial rate limit and sends t
   await page.getByRole("button", { name: "Try again" }).click();
   await expect.poll(() => mockFetch.mock.calls.length).toBe(1);
   const call = mockFetch.mock.calls[0];
+
   if (call === undefined) throw new Error("Expected a classification request");
   const [url, init] = call;
   const requestUrl = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
@@ -108,6 +114,7 @@ it.each([
       requestId: "req-auth",
     }),
   );
+
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(initial, mockFetch, 503);
 
@@ -126,6 +133,7 @@ it("shows the quota reset time without offering a request that cannot succeed ye
       retryable: true,
     }),
   );
+
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(initial, mockFetch, 503);
 
@@ -171,19 +179,24 @@ it.each([
     const initial = failedReply(
       ClassificationFailure.cases.ModelFailure.make({ reason, retryable }),
     );
+
     const broad = await Effect.runPromise(
       classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
     );
+
     const success = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(broad);
     const mockFetch = vi.fn(() => Promise.resolve(Response.json(success)));
     await renderDemo(initial, mockFetch, 503);
 
     await expect.element(page.getByRole("alert")).toMatchTextContent(message);
     expect(mockFetch).not.toHaveBeenCalled();
+
     if (!offersRetry) {
       await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+
       return;
     }
+
     await page.getByRole("button", { name: "Try again" }).click();
     await expect.element(page.getByRole("region", { name: "Broad groups" })).toBeVisible();
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -209,6 +222,7 @@ it("does not display an invalid authentication kind from a malformed reply", asy
     reason: { _tag: "AuthenticationError", kind: "SECRET invalid authentication kind" },
     retryable: false,
   };
+
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(invalid, mockFetch, 503);
 
@@ -241,6 +255,7 @@ it.each([
     const broad = await Effect.runPromise(
       classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
     );
+
     const initial = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(broad);
     const mockFetch = vi.fn<typeof globalThis.fetch>(response);
     await renderDemo(initial, mockFetch);
@@ -252,6 +267,7 @@ it.each([
     await page.getByRole("button", { name: "Try again" }).click();
     await expect.poll(() => mockFetch.mock.calls.length).toBe(2);
     const retry = mockFetch.mock.calls[1];
+
     if (retry === undefined) throw new Error("Expected a retry request");
     expect(retry[1]?.method).toBe("POST");
     expect(

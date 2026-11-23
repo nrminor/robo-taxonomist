@@ -15,9 +15,11 @@ export const RequestFailure = Schema.TaggedUnion({
   TransportFailure: { cause: Schema.Defect() },
   ResponseDecodingFailure: { cause: Schema.Defect() },
 });
+
 export type RequestFailure = typeof RequestFailure.Type;
 
 const transportFailure = (cause: unknown) => RequestFailure.cases.TransportFailure.make({ cause });
+
 const responseDecodingFailure = (cause: unknown) =>
   RequestFailure.cases.ResponseDecodingFailure.make({ cause });
 
@@ -48,6 +50,7 @@ const postClassification = Effect.fn("postClassification")(function* (
   const client = yield* HttpClient.HttpClient;
   const request = yield* encodeRequest(input);
   const response = yield* client.execute(request).pipe(Effect.mapError(transportFailure));
+
   return yield* HttpClientResponse.matchStatus(response, {
     "2xx": (response) => readSuccess(response, input.panelId),
     orElse: readFailure,
@@ -56,10 +59,12 @@ const postClassification = Effect.fn("postClassification")(function* (
 
 /** Shared atom runtime supplying browser Fetch for classification requests. */
 export const browserRuntime = Atom.runtime(FetchHttpClient.layer);
+
 /** Initial panel request with a server-renderable initial state and no idle retention. */
 export const initialQueryAtom = browserRuntime
   .atom(postClassification({ panelId: initialPanelId }))
   .pipe(Atom.setIdleTTL(0), Atom.withServerValueInitial);
+
 /** Run a selected-panel request, including explicit refresh, validating its response and panel identity. */
 export const selectPanelAtom = browserRuntime.fn(postClassification);
 

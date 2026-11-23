@@ -32,6 +32,7 @@ describe.each([
         SchemaIssue.Issue,
         never
       >(schema.makeEffect(" \t"));
+
       expect(SchemaIssue.makeFormatterDefault()(issue)).toContain(expected);
     }),
   );

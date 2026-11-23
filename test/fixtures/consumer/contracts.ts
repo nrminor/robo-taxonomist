@@ -28,11 +28,16 @@ import {
 } from "robo-taxonomist";
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
+
 type Equal<A, B> =
   IsAny<A> extends true ? false : IsAny<B> extends true ? false : Types.Equals<A, B>;
+
 type Assert<T extends true> = T;
+
 type UnionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Union">["operands"];
+
 type IntersectionOperands = Types.ExtractTag<TaxonSet.TaxonSet, "Intersection">["operands"];
+
 type Judgment<T, A, E = Errors.TaxonomyError> =
   Equal<Effect.Success<T>, A> extends true
     ? Equal<Effect.Error<T>, E> extends true
@@ -50,6 +55,7 @@ type RankRelationTag =
   | "NoSharedTaxaAtRank"
   | "DifferentTaxaAtRank"
   | "Undetermined";
+
 type ExpectedRankComparison =
   | {
       [Tag in RankRelationTag]: { readonly _tag: Tag; readonly rank: TaxonomicRank };
@@ -61,117 +67,185 @@ type ExpectedRankComparison =
     };
 
 const label = RecordLabel.make("Voucher A17 | Quercus robur");
+
 const name = TaxonName.make("Quercus");
+
 const oaks = TaxonSet.of(name);
+
 // @ts-expect-error Empty expressions require construction, not a matching object shape.
 TaxonSet.union(oaks, { _tag: "Empty" });
+
 // @ts-expect-error Taxon expressions require construction even with a valid record.
 TaxonSet.union(oaks, { _tag: "Taxon", record: { scientificName: name } });
+
 // @ts-expect-error Union expressions require construction even with valid operands.
 TaxonSet.union(oaks, { _tag: "Union", operands: [oaks] });
+
 // @ts-expect-error Intersection expressions require construction even with valid operands.
 TaxonSet.union(oaks, { _tag: "Intersection", operands: [oaks] });
+
 // @ts-expect-error Difference expressions require construction even with valid sides.
 TaxonSet.union(oaks, { _tag: "Difference", left: oaks, right: oaks });
+
 type NamedTarget = { readonly scientificName: TaxonName };
+
 // Membership APIs also account for the record created by name shorthand.
 type ShorthandTarget = { readonly scientificName: TaxonName };
+
 const trees = TaxonSet.union(oaks, TaxonSet.empty());
+
 if (trees._tag === "Union") {
   // @ts-expect-error Inspectable expression tags remain readonly after narrowing.
   trees._tag = "Union";
   // @ts-expect-error Nonempty expression operands remain readonly after narrowing.
   trees.operands.push(oaks);
 }
+
 const shared = TaxonSet.intersection(oaks, oaks);
+
 if (shared._tag === "Intersection") {
   // @ts-expect-error Intersection operands remain readonly after narrowing too.
   shared.operands.push(oaks);
 }
+
 const specimen: { readonly label: RecordLabel; readonly voucher: "A17" } = {
   label,
   voucher: "A17",
 };
+
 const records: readonly (typeof specimen)[] = [specimen];
+
 const policy = AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0.1 });
+
 const rank = Taxonomy.sameSpecies(specimen, specimen, { policy });
+
 const ncbiId = NcbiTaxonId.make({ id: "58334" });
+
 const ncbiRecord = { taxonId: ncbiId, voucher: "A17" } as const;
+
 const ncbiTarget = TaxonSet.of(ncbiRecord);
+
 const ncbiPanelMatch = Taxonomy.classifyRecords([specimen], ncbiTarget);
+
 const ncbiComparison = Taxonomy.sameGenus(ncbiRecord, specimen);
+
 const ncbiMembership = Taxonomy.recordBelongsTo(ncbiRecord, ncbiTarget);
+
 const lookup = TaxonLookup.byId(ncbiId);
+
 const identity = Taxonomy.sameTaxon(name, name, { policy });
+
 const containment = Taxonomy.taxonWithin(name, name, { policy });
+
 const contextHint = TaxonomyHint.make("context");
+
 const readonlyHints: readonly TaxonomyHint[] = [contextHint];
+
 const hintSnapshot = TaxonomyHints.snapshot(readonlyHints);
+
 const inheritedHintSnapshot: typeof hintSnapshot = TaxonomyHints.snapshot(undefined);
+
 void inheritedHintSnapshot;
+
 const hinted = Taxonomy.classifyRecords(records, oaks, { hints: readonlyHints });
+
 const hintedWithLayer = hinted.pipe(Effect.provide(TaxonomyHints.layer(readonlyHints)));
+
 const hintedRequiresOnlyModel: Effect.Effect<
   Effect.Success<typeof hinted>,
   Errors.TaxonomyError,
   DecisionModel.DecisionModel
 > = hintedWithLayer;
+
 void hintedRequiresOnlyModel;
+
 const inheritedHints: typeof hintedRequiresOnlyModel = Taxonomy.classifyRecords(records, oaks, {
   hints: undefined,
 });
+
 void inheritedHints;
+
 const hintedScalar = Taxonomy.sameTaxon(name, name, { hints: readonlyHints });
+
 const hintedRelation = TaxonSet.isSubsetOf(oaks, oaks, { hints: readonlyHints });
+
 const inheritedScalar = Taxonomy.sameTaxon(name, name, { hints: undefined });
+
 const inheritedRelation = TaxonSet.isSubsetOf(oaks, oaks, { hints: undefined });
+
 const hintedWithHelpers: typeof hintedRequiresOnlyModel = hinted.pipe(
   TaxonomyHints.withAddedHints(readonlyHints),
   TaxonomyHints.withHints(readonlyHints),
   Effect.updateService(TaxonomyHints.Current, Array.append(contextHint)),
 );
+
 void hintedWithHelpers;
+
 void inheritedScalar;
+
 void inheritedRelation;
+
 // @ts-expect-error Scalar hints require validated branded text.
 Taxonomy.sameTaxon(name, name, { hints: ["raw"] });
+
 // @ts-expect-error Set-relation hints require validated branded text too.
 TaxonSet.isSubsetOf(oaks, oaks, { hints: ["raw"] });
+
 // @ts-expect-error Collection hints cannot bypass the public constructor.
 Taxonomy.classifyRecords(records, oaks, { hints: ["raw"] });
+
 // @ts-expect-error Scoped layer inputs also require branded hints.
 TaxonomyHints.layer(["raw"]);
+
 // @ts-expect-error Replacement inputs require branded hints.
 TaxonomyHints.withHints(["raw"]);
+
 // @ts-expect-error Appended inputs require branded hints.
 TaxonomyHints.withAddedHints(["raw"]);
+
 // @ts-expect-error Snapshot inputs require branded hints.
 TaxonomyHints.snapshot(["raw"]);
 
 const relation = TaxonSet.isSubsetOf(oaks, TaxonSet.union(oaks, TaxonSet.empty()));
+
 const membership = Taxonomy.recordBelongsTo(specimen, oaks);
+
 const partition = Taxonomy.partitionRecordsByMembership(records, name);
+
 const grouped = Taxonomy.groupRecordsByTaxa(records, [name, oaks]);
+
 const classified = Taxonomy.classifyRecords(records, oaks, { policy });
+
 type Classified = Effect.Success<typeof classified>;
+
 type ClassifiedRow = Classified["records"][number];
+
 type ClassifiedMatch = ClassifiedRow["ranking"][number];
+
 const StoredRecord = Schema.Struct({
   scientificName: TaxonName,
   abundance: Schema.NumberFromString,
 });
+
 const StoredTarget = Schema.Struct({
   scientificName: TaxonName,
   assignmentId: Schema.String,
 });
+
 const StoredMatch = Taxonomy.TaxonMatch(StoredRecord, StoredTarget);
+
 const storedRecord = Schema.Struct({ abundance: Schema.NumberFromString });
+
 // @ts-expect-error Metadata alone is not a record input.
 Taxonomy.TaxonMatch(storedRecord, StoredTarget);
+
 // @ts-expect-error A record label is not a structured target record.
 Taxonomy.TaxonMatch(StoredRecord, RecordLabel);
+
 const all = Taxonomy.allRecordsBelongTo(records, oaks);
+
 const some = Taxonomy.anyRecordBelongsTo(records, name);
+
 const none = Taxonomy.noRecordBelongsTo(records, oaks);
 
 // A named assignment retains caller metadata in every returned target record.
@@ -180,7 +254,9 @@ const assignment: {
   readonly assignmentId: "oak-genus";
   readonly rank: "genus";
 } = { scientificName: name, assignmentId: "oak-genus", rank: "genus" };
+
 const assignedOaks = TaxonSet.of(assignment);
+
 const identifiedTarget: {
   readonly taxonId: TaxonId;
   readonly source: "reference-panel";
@@ -188,18 +264,31 @@ const identifiedTarget: {
   taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
   source: "reference-panel",
 };
+
 const mixedPanel = TaxonSet.union(assignedOaks, TaxonSet.of(identifiedTarget));
+
 const assignedClassification = Taxonomy.classifyRecords(records, assignedOaks);
+
 const mixedClassification = Taxonomy.classifyRecords(records, mixedPanel);
+
 const assignedIdentity = Taxonomy.sameTaxon(assignment, identifiedTarget);
+
 const assignedContainment = Taxonomy.taxonWithin(identifiedTarget, assignment);
+
 const assignedMembership = Taxonomy.recordBelongsTo(specimen, assignment);
+
 const assignedSetMembership = Taxonomy.recordBelongsTo(specimen, assignedOaks);
+
 const namedMembership = Taxonomy.recordBelongsTo(specimen, name);
+
 const assignedPartition = Taxonomy.partitionRecordsByMembership(records, assignment);
+
 const assignedSetPartition = Taxonomy.partitionRecordsByMembership(records, assignedOaks);
+
 const assignedGroups = Taxonomy.groupRecordsByTaxa(records, [assignment, assignedOaks]);
+
 const assignedCollection = Taxonomy.allRecordsBelongTo(records, assignment);
+
 const assignedSetCollection = Taxonomy.allRecordsBelongTo(records, assignedOaks);
 
 // Narrowing a diagnostic exposes the original record, with no name-only fallback.
@@ -207,22 +296,28 @@ const assignedDiagnostic = assignedMembership.pipe(
   Effect.map((judgment) => {
     if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
     const { scientificName, assignmentId, rank } = judgment.target.record;
+
     return { scientificName, assignmentId, rank };
   }),
 );
+
 const assignedSetDiagnostic = assignedSetMembership.pipe(
   Effect.map((judgment) => {
     if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
     const { scientificName, assignmentId, rank } = judgment.target.record;
+
     return { scientificName, assignmentId, rank };
   }),
 );
+
 const namedDiagnostic = namedMembership.pipe(
   Effect.map((judgment) => {
     if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+
     return judgment.target.record.scientificName;
   }),
 );
+
 type AssignmentDiagnostic =
   | {
       scientificName: TaxonName;
@@ -230,24 +325,40 @@ type AssignmentDiagnostic =
       rank: "genus";
     }
   | undefined;
+
 type MixedTarget = typeof assignment | typeof identifiedTarget;
+
 const unionInputs = [assignedOaks, TaxonSet.of(identifiedTarget)] as const;
+
 const collectedPanel = TaxonSet.unionAll(unionInputs);
+
 const unionIterable: Iterable<TaxonSet.TaxonSet<MixedTarget>> = unionInputs;
+
 const iterablePanel = TaxonSet.unionAll(unionIterable);
+
 const collectedClassification = Taxonomy.classifyRecords(records, collectedPanel);
+
 const emptyCollection = TaxonSet.unionAll([]);
+
 const emptyIterable: Iterable<TaxonSet.TaxonSet<never>> = [TaxonSet.empty()];
+
 const emptyIterableUnion = TaxonSet.unionAll(emptyIterable);
+
 const collectedWithEmpty = TaxonSet.unionAll([TaxonSet.empty(), assignedOaks]);
+
 declare const narrowedDifference: Types.ExtractTag<
   TaxonSet.TaxonSet<typeof assignment>,
   "Difference"
 >;
+
 const collectedDifference = TaxonSet.unionAll([narrowedDifference]);
+
 type AssignedClassification = Effect.Success<typeof assignedClassification>;
+
 type MixedClassification = Effect.Success<typeof mixedClassification>;
+
 type MixedMatch = MixedClassification["records"][number]["ranking"][number];
+
 const mixedTargetLabels = mixedClassification.pipe(
   Effect.map((result) =>
     result.records.flatMap((row) =>
@@ -260,11 +371,13 @@ const mixedTargetLabels = mixedClassification.pipe(
 
 // Both the outer Effect and the inner partition/group value must remain pipeable.
 const members = partition.pipe(Effect.map((value) => value.pipe((p) => p.Member)));
+
 const groupedMembers = grouped.pipe(
   Effect.map((value) =>
     value.pipe((g) => g.groups.map(({ partition: p }) => p.pipe((buckets) => buckets.Member))),
   ),
 );
+
 const classifiedVouchers = classified.pipe(
   Effect.map((value) =>
     value.records.flatMap((row) => row.ranking.map((match) => match.pipe((m) => m.record.voucher))),
@@ -445,17 +558,24 @@ export type Contracts = [
 ];
 
 export const identityFixture = TaxonIdentityJudgment.cases.SameTaxon.make({});
+
 export const decodeIdentity = Schema.decodeUnknownEffect(TaxonIdentityJudgment);
+
 export const inputHandled = identity.pipe(Effect.catchTag("InvalidInput", (error) => error.cause));
+
 declare const unbrandedInputError: Omit<Errors.InvalidInput, "brand">;
+
 // @ts-expect-error Matching error members without the nominal brand are insufficient.
 const nominalInputError: Errors.InvalidInput = unbrandedInputError;
+
 void nominalInputError;
+
 export type ErrorContractChecks = [
   Assert<Equal<Effect.Error<typeof inputHandled>, Schema.SchemaError | AiError.AiError>>,
   Assert<Equal<Errors.InvalidInput["cause"], Schema.SchemaError>>,
   Assert<Equal<Effect.Success<ReturnType<typeof decodeIdentity>>, TaxonIdentityJudgment>>,
 ];
+
 // @ts-expect-error The schema retains the existing side literals.
 export const rejectedIdentity = TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "neither" });
 
@@ -484,44 +604,61 @@ const malformed: {
 
 // @ts-expect-error A numeric taxon name remains invalid through two recursive children.
 export const rejectedMembership = Taxonomy.recordBelongsTo(label, malformed);
+
 // @ts-expect-error Subset operands must retain recursive validation.
 export const rejectedSubset = TaxonSet.isSubsetOf(malformed, oaks);
+
 // @ts-expect-error Proper-subset operands must retain recursive validation.
 export const rejectedProperSubset = TaxonSet.isProperSubsetOf(oaks, malformed);
+
 // @ts-expect-error Equivalence operands must retain recursive validation.
 export const rejectedEquivalent = TaxonSet.equivalent(malformed, oaks);
+
 // @ts-expect-error Overlap operands must retain recursive validation.
 export const rejectedOverlap = TaxonSet.overlaps(oaks, malformed);
+
 // @ts-expect-error Disjointness operands must retain recursive validation.
 export const rejectedDisjoint = TaxonSet.disjoint(malformed, oaks);
+
 // @ts-expect-error Partition targets must retain recursive validation.
 export const rejectedPartition = Taxonomy.partitionRecordsByMembership(records, malformed);
+
 // @ts-expect-error Each grouping target must retain recursive validation.
 export const rejectedGroup = Taxonomy.groupRecordsByTaxa(records, [oaks, malformed]);
+
 // @ts-expect-error Universal targets must retain recursive validation.
 export const rejectedAll = Taxonomy.allRecordsBelongTo(records, malformed);
+
 // @ts-expect-error Existential targets must retain recursive validation.
 export const rejectedSome = Taxonomy.anyRecordBelongsTo(records, malformed);
+
 // @ts-expect-error Negative existential targets must retain recursive validation.
 export const rejectedNone = Taxonomy.noRecordBelongsTo(records, malformed);
 
 // Input roles are intentionally distinct even though both brands wrap strings.
 // @ts-expect-error A record label is not a whole-taxon name.
 export const rejectedTaxonName = TaxonSet.of(label);
+
 // @ts-expect-error A whole-taxon name is not a record operand.
 export const rejectedRecord = Taxonomy.recordBelongsTo(name, oaks);
+
 // @ts-expect-error Raw text must not bypass validated record labels.
 export const rejectedRawRecord = Taxonomy.recordBelongsTo("unvalidated", name);
 
 // @ts-expect-error Classification panels retain recursive expression validation.
 export const rejectedClassificationPanel = Taxonomy.classifyRecords(records, malformed);
+
 // @ts-expect-error Raw text cannot bypass the record-label schema.
 export const rejectedClassificationRecord = Taxonomy.classifyRecords(["unvalidated"], oaks);
+
 // @ts-expect-error Caller metadata alone is not an identifying description.
 export const rejectedClassificationMetadata = Taxonomy.classifyRecords([{ abundance: 8 }], oaks);
+
 // @ts-expect-error TaxonMatch is exported only as a type, not a runtime constructor.
 void RoboTaxonomist.TaxonMatch;
+
 // @ts-expect-error The support constructor is not part of the root API.
 void RoboTaxonomist.Support;
+
 // @ts-expect-error The shared internal bound is not part of the root API.
 void RoboTaxonomist.UnitInterval;

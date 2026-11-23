@@ -38,6 +38,7 @@ it.effect("checks HTTP record membership against an empty target without model i
 it.effect("returns all five native HTTP partition buckets with repeated identifying records", () =>
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["membership"]);
+
     const record = Documents.RecordDocument.make({
       taxonId: { taxonomy: "ncbi", id: "123" },
       metadata: ["caller"],
@@ -72,6 +73,7 @@ it.effect.each([
 ] as const)("asks the native HTTP whole-collection question: $quantifier", ({ quantifier, tag }) =>
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["membership"]);
+
     const result = yield* client.membership[quantifier]({
       payload: { records: [], target: Documents.SetDocument.cases.Empty.make({}) },
     });
@@ -132,16 +134,20 @@ const fixtureProvider = (reply: unknown, status = 200) => {
   const http = HttpClient.make((request) =>
     Effect.gen(function* () {
       const body = yield* TestJson.encode(reply);
+
       const response = new Response(body, {
         status,
         headers: { "content-type": "application/json" },
       });
+
       return HttpClientResponse.fromWeb(request, response);
     }).pipe(Effect.orDie),
   );
+
   const configuration = ConfigProvider.layer(
     ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" }),
   );
+
   const transport = Layer.succeed(HttpClient.HttpClient, http);
 
   return Model.modelLayer("fixture-model").pipe(Layer.provide([configuration, transport]));
@@ -158,9 +164,11 @@ it.effect(
       let active = 0;
       let peak = 0;
       const questionCounts: number[] = [];
+
       const wireRequest = Schema.fromJsonString(
         Schema.Struct({ questions: Schema.Record(Schema.String, Schema.Unknown) }),
       );
+
       const http = HttpClient.make(
         Effect.fnUntraced(function* (request) {
           const text = Match.value(request.body).pipe(
@@ -169,20 +177,24 @@ it.effect(
               throw new Error("Expected a JSON provider request");
             }),
           );
+
           const payload = yield* Schema.decodeEffect(wireRequest)(text).pipe(Effect.orDie);
           const questionCount = Record.size(payload.questions);
           questionCounts.push(questionCount);
           calls++;
           active++;
           peak = Math.max(peak, active);
+
           if (calls === 2) yield* Deferred.succeed(firstWindow, undefined);
           yield* Deferred.await(firstWindow);
+
           const answers = Record.map(payload.questions, (_question, questionId) => {
             const choice = questionId.endsWith("t2")
               ? "noMatch"
               : questionId.endsWith("t3")
                 ? "undetermined"
                 : "withinTaxon";
+
             return {
               type: "choice",
               choice,
@@ -196,24 +208,32 @@ it.effect(
               },
             };
           });
+
           const body = yield* TestJson.encode({
             model: "fixture-model",
             answers,
           }).pipe(Effect.orDie);
+
           const response = new Response(body, {
             headers: { "content-type": "application/json" },
           });
+
           active--;
+
           return HttpClientResponse.fromWeb(request, response);
         }),
       );
+
       const configuration = ConfigProvider.layer(
         ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" }),
       );
+
       const transport = Layer.succeed(HttpClient.HttpClient, http);
+
       const provider = Model.modelLayer("fixture-model").pipe(
         Layer.provide([configuration, transport]),
       );
+
       const handlers = Server.classification({
         maxRecords: 5,
         maxTargets: 5,
@@ -221,10 +241,12 @@ it.effect(
         batchSize: 2,
         concurrency: 2,
       }).pipe(Layer.provide(provider), Layer.provideMerge(bounds));
+
       const first = Documents.RecordDocument.make({
         taxonId: { taxonomy: "ncbi", id: "123" },
         metadata: [null, true],
       });
+
       const records = [
         first,
         first,
@@ -232,23 +254,28 @@ it.effect(
         RecordLabel.make("C"),
         RecordLabel.make("D"),
       ];
+
       const oak = Documents.RecordDocument.make({
         scientificName: TaxonName.make("Quercus"),
         caller: "target",
       });
+
       const beech = Documents.RecordDocument.make({ scientificName: TaxonName.make("Fagus") });
       const birch = Documents.RecordDocument.make({ scientificName: TaxonName.make("Betula") });
       const leaf = Documents.SetDocument.cases.Taxon.make({ record: oak });
       const other = Documents.SetDocument.cases.Taxon.make({ record: beech });
       const birchLeaf = Documents.SetDocument.cases.Taxon.make({ record: birch });
+
       const left = Documents.SetDocument.cases.Union.make({
         operands: [leaf, leaf, other, birchLeaf],
       });
+
       const right = other;
       const panel = Documents.SetDocument.cases.Difference.make({ left, right });
 
       const result = yield* Effect.gen(function* () {
         const client = yield* HttpApiTest.groups(Api.api, ["classification"]);
+
         return yield* client.classification.classify({ payload: { records, panel } });
       }).pipe(Effect.provide([handlers, HttpServer.layerServices]));
 
@@ -258,6 +285,7 @@ it.effect(
       expect(result.panel).toEqual(panel);
       expect(result.records.map(({ record }) => record)).toEqual(records);
       expect(result.usage).toEqual([{}, {}, {}]);
+
       for (const row of result.records) {
         expect(row.taxa.map(({ judgment }) => judgment)).toEqual([
           { _tag: "WithinTaxon", support: 1 },
@@ -336,6 +364,7 @@ it.effect(
       "multipleTarget0",
       "member",
     ]);
+
     const membershipHandlers = Server.membership().pipe(
       Layer.provide(fixtureProvider(replies)),
       Layer.provideMerge(bounds),
@@ -343,10 +372,12 @@ it.effect(
 
     return Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(Api.api, ["membership"]);
+
       const first = Documents.RecordDocument.make({
         label: RecordLabel.make("A"),
         metadata: [null, true],
       });
+
       const records = [
         first,
         RecordLabel.make("B"),
@@ -355,6 +386,7 @@ it.effect(
         RecordLabel.make("E"),
         first,
       ];
+
       const target = Documents.RecordDocument.make({
         taxonId: { taxonomy: "ncbi", id: "123", curator: "caller" },
       });
@@ -387,6 +419,7 @@ it.effect.each([
 
     return Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(Api.api, ["membership"]);
+
       const result = yield* client.membership[quantifier]({
         payload: {
           records: [RecordLabel.make("A")],
@@ -410,6 +443,7 @@ it.effect(
     return Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(Api.api, ["membership"]);
       const target = TaxonName.make("Quercus");
+
       const result = yield* client.membership.any({
         payload: {
           records: [RecordLabel.make("A"), RecordLabel.make("B")],
@@ -418,18 +452,22 @@ it.effect(
       });
 
       const expectedTarget = TaxonSet.of(target);
+
       const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
         quantifier: "any",
         target: expectedTarget,
       });
+
       expect(result).toEqual(expected);
     }).pipe(Effect.provide([membershipHandlers, HttpServer.layerServices]));
   },
 );
+
 const handlers = Server.comparisons.pipe(
   Layer.provide(fixtureProvider(identityReply)),
   Layer.provideMerge(bounds),
 );
+
 const setHandlers = Server.sets.pipe(
   Layer.provide(fixtureProvider(identityReply)),
   Layer.provideMerge(bounds),
@@ -439,6 +477,7 @@ it.effect(
   "returns the complete native HTTP classification including answers, ranking and usage",
   () => {
     const probabilities = { sameTaxon: 0.1, withinTaxon: 0.7, noMatch: 0.1, undetermined: 0.1 };
+
     const reply = {
       model: "fixture-model",
       answers: {
@@ -451,6 +490,7 @@ it.effect(
       },
       usage: { input_tokens: 7, output_tokens: 3 },
     };
+
     const classificationHandlers = Server.classification().pipe(
       Layer.provide(fixtureProvider(reply)),
       Layer.provideMerge(bounds),
@@ -458,18 +498,23 @@ it.effect(
 
     return Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(Api.api, ["classification"]);
+
       const record = Documents.RecordDocument.make({
         taxonId: { taxonomy: "ncbi", id: "123" },
         metadata: [null, true],
       });
+
       const panel = Documents.RecordDocument.make({
         scientificName: TaxonName.make("Quercus"),
         caller: "panel",
       });
+
       const result = yield* client.classification.classify({
         payload: { records: [record], panel },
       });
+
       const taxon = Documents.SetDocument.cases.Taxon.make({ record: panel });
+
       const match = {
         record,
         taxon,
@@ -505,10 +550,12 @@ it.effect("compares exact labels through the generated HTTP client and request c
 it.effect("returns a native unresolved identity judgment as a successful HTTP response", () =>
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["comparisons"]);
+
     const left = Documents.RecordDocument.make({
       scientificName: TaxonName.make("Quercus"),
       metadata: { sample: "A17" },
     });
+
     const right = Documents.RecordDocument.make({
       label: RecordLabel.make("oak voucher"),
       metadata: { sample: "B42" },
@@ -523,6 +570,7 @@ it.effect("returns a native unresolved identity judgment as a successful HTTP re
 it.effect("returns a typed provider failure without exposing provider content", () => {
   const secret = "fixture-private-provider-content";
   const provider = fixtureProvider({ error: { message: secret } }, 401);
+
   const failingHandlers = Server.comparisons.pipe(
     Layer.provide(provider),
     Layer.provideMerge(bounds),
@@ -572,7 +620,9 @@ it.effect("answers directed inner-to-outer containment through the HTTP contract
       },
     },
   };
+
   const provider = fixtureProvider(reply);
+
   const containmentHandlers = Server.comparisons.pipe(
     Layer.provide(provider),
     Layer.provideMerge(bounds),
@@ -614,7 +664,9 @@ it.effect(
         },
       },
     };
+
     const provider = fixtureProvider(reply);
+
     const rankHandlers = Server.comparisons.pipe(
       Layer.provide(provider),
       Layer.provideMerge(bounds),
@@ -637,17 +689,20 @@ it.effect(
 
 it.effect("reports a rank lookup failure without exposing the provider response", () => {
   const source = TaxonSource.cases.Snapshot.make({ taxonomy: "fixture" });
+
   const invalidResponse = Schema.decodeUnknownEffect(Schema.String)({ detail: "private" }).pipe(
     Effect.matchEffect({
       onFailure: (cause) => new Errors.InvalidTaxonResponse({ source, cause }),
       onSuccess: () => Effect.die("Expected the fixture to fail schema decoding"),
     }),
   );
+
   const lookup = Layer.succeed(TaxonLookup, {
     source,
     byId: () => invalidResponse,
     byName: () => Effect.succeed([]),
   });
+
   const rankHandlers = Server.comparisons.pipe(
     Layer.provide(fixtureProvider({})),
     Layer.provideMerge(bounds),
@@ -656,6 +711,7 @@ it.effect("reports a rank lookup failure without exposing the provider response"
   return Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["comparisons"]);
     const record = Documents.RecordDocument.make({ taxonId: { taxonomy: "fixture", id: "oak" } });
+
     const failure = yield* client.comparisons
       .rank({
         payload: { left: record, right: record },
@@ -675,6 +731,7 @@ it.effect(
     Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(Api.api, ["sets"]);
       const name = TaxonName.make("Quercus");
+
       const record = Documents.RecordDocument.make({
         label: RecordLabel.make("beech voucher"),
         metadata: { curator: "caller", abundance: 0.37 },
@@ -685,15 +742,18 @@ it.effect(
       const expectedOak = Documents.SetDocument.cases.Taxon.make({
         record: Documents.RecordDocument.make({ scientificName: name }),
       });
+
       const expectedVoucher = Documents.SetDocument.cases.Taxon.make({
         record: Documents.RecordDocument.make({
           label: RecordLabel.make("beech voucher"),
           metadata: { curator: "caller", abundance: 0.37 },
         }),
       });
+
       const expected = Documents.SetDocument.cases.Union.make({
         operands: [expectedOak, expectedVoucher, expectedOak],
       });
+
       expect(result).toEqual(expected);
     }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
@@ -702,6 +762,7 @@ it.effect("unions two HTTP operands without requiring a generated artifact for l
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["sets"]);
     const left = TaxonName.make("Quercus");
+
     const right = Documents.RecordDocument.make({
       label: RecordLabel.make("beech voucher"),
       metadata: ["caller"],
@@ -712,15 +773,18 @@ it.effect("unions two HTTP operands without requiring a generated artifact for l
     const expectedLeft = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: left }),
     });
+
     const expectedRight = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({
         label: RecordLabel.make("beech voucher"),
         metadata: ["caller"],
       }),
     });
+
     const expected = Documents.SetDocument.cases.Union.make({
       operands: [expectedLeft, expectedRight],
     });
+
     expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
@@ -728,11 +792,13 @@ it.effect("unions two HTTP operands without requiring a generated artifact for l
 it.effect("does not mistake a record's caller-supplied tag metadata for a set expression", () =>
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["sets"]);
+
     const left = Documents.RecordDocument.make({
       label: RecordLabel.make("Voucher A17"),
       _tag: "Empty",
       metadata: ["caller"],
     });
+
     const right = TaxonName.make("Quercus");
 
     const result = yield* client.sets.union({ payload: { left, right } });
@@ -744,12 +810,15 @@ it.effect("does not mistake a record's caller-supplied tag metadata for a set ex
         metadata: ["caller"],
       }),
     });
+
     const expectedRight = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: right }),
     });
+
     const expected = Documents.SetDocument.cases.Union.make({
       operands: [expectedLeft, expectedRight],
     });
+
     expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
@@ -767,18 +836,23 @@ it.effect("intersects operands while preserving supplied artifact topology", () 
     const expectedOak = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: oak }),
     });
+
     const expectedBeech = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: beech }),
     });
+
     const expectedLeft = Documents.SetDocument.cases.Union.make({
       operands: [expectedOak, expectedBeech],
     });
+
     const expectedRight = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: right }),
     });
+
     const expected = Documents.SetDocument.cases.Intersection.make({
       operands: [expectedLeft, expectedRight],
     });
+
     expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
@@ -794,13 +868,16 @@ it.effect("preserves left and right in a directed set difference", () =>
     const expectedLeft = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: left }),
     });
+
     const expectedRight = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: right }),
     });
+
     const expected = Documents.SetDocument.cases.Difference.make({
       left: expectedLeft,
       right: expectedRight,
     });
+
     expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
 );
@@ -852,6 +929,7 @@ it.effect(
       properSubset: 0,
       multipleRight0: 1,
     };
+
     const reply = {
       model: "fixture-model",
       answers: {
@@ -863,12 +941,14 @@ it.effect(
         },
       },
     };
+
     const provider = fixtureProvider(reply);
     const relationHandlers = Server.sets.pipe(Layer.provide(provider), Layer.provideMerge(bounds));
 
     return Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(Api.api, ["sets"]);
       const left = TaxonName.make("Quercus");
+
       const right = Documents.RecordDocument.make({
         taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
         metadata: { sample: ["A17", null] },
@@ -884,11 +964,13 @@ it.effect(
           taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
         }),
       );
+
       const expected = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
         relation: "overlap",
         side: "right",
         taxon: expectedTaxon,
       });
+
       expect(result).toEqual(expected);
     }).pipe(Effect.provide([relationHandlers, HttpServer.layerServices]));
   },
@@ -898,6 +980,7 @@ it.effect(
   "rejects an oversized request body with a typed limit error before executing the endpoint",
   () => {
     const limits = Server.requestBounds({ maxBodyBytes: 32, timeoutMs: 60_000, maxJsonDepth: 64 });
+
     const boundedHandlers = Server.comparisons.pipe(
       Layer.provide(fixtureProvider(identityReply)),
       Layer.provideMerge(limits),
@@ -922,21 +1005,26 @@ it.effect("interrupts the provider request at the HTTP deadline and returns a ty
   Effect.gen(function* () {
     const interrupted = yield* Ref.make(false);
     const pending = Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)));
+
     const transport = Layer.succeed(
       HttpClient.HttpClient,
       HttpClient.make(() => pending),
     );
+
     const configuration = ConfigProvider.layer(
       ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" }),
     );
+
     const provider = Model.modelLayer("fixture-model").pipe(
       Layer.provide([configuration, transport]),
     );
+
     const limits = Server.requestBounds({
       maxBodyBytes: 1_048_576,
       timeoutMs: 10,
       maxJsonDepth: 64,
     });
+
     const timedHandlers = Server.comparisons.pipe(
       Layer.provide(provider),
       Layer.provideMerge(limits),

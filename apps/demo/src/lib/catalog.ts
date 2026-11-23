@@ -3,7 +3,9 @@ import type { TaxonomicRank } from "robo-taxonomist";
 
 /** Closed set of panel identifiers accepted by the demo request and response schemas. */
 export const PanelId = Schema.Literals(["broad", "focused", "nested"]);
+
 export type PanelId = typeof PanelId.Type;
+
 /** Panel requested when the browser first loads, before an explicit selection. */
 export const initialPanelId: PanelId = "broad";
 
@@ -48,12 +50,19 @@ const target = (name: string, rank: TaxonomicRank) => ({
   name,
   rank,
 });
+
 const fungi = target("Fungi", "kingdom");
+
 const lactobacillaceae = target("Lactobacillaceae", "family");
+
 const acetobacteraceae = target("Acetobacteraceae", "family");
+
 const archaea = target("Archaea", "domain");
+
 const saccharomyces = target("Saccharomyces", "genus");
+
 const plantarum = target("Lactiplantibacillus plantarum", "species");
+
 const maripaludis = target("Methanococcus maripaludis", "species");
 
 /** Target sets in display and response order; the nested panel deliberately includes overlapping lineages. */

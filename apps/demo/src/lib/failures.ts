@@ -7,6 +7,7 @@ const publicReason = Match.type<AiError.AiErrorReason>().pipe(
     RateLimitError: (reason) => {
       const millis =
         reason.retryAfter === undefined ? undefined : Duration.toMillis(reason.retryAfter);
+
       return PublicModelReason.cases.RateLimitError.make(
         millis !== undefined && Number.isFinite(millis) && millis >= 0
           ? { retryAfterMs: millis }
@@ -55,11 +56,15 @@ export const publicCauseFailure = (
 ): Option.Option<ClassificationFailure> => {
   if (Cause.hasDies(cause))
     return Option.some(ClassificationFailure.cases.InternalFailure.make({}));
+
   if (Cause.hasInterruptsOnly(cause)) return Option.none();
   const error = Cause.findErrorOption(cause);
+
   if (Option.isSome(error)) {
     if (AiError.isAiError(error.value)) return Option.some(publicModelFailure(error.value));
+
     if (Schema.is(ClassificationFailure)(error.value)) return Option.some(error.value);
   }
+
   return Option.some(ClassificationFailure.cases.InternalFailure.make({}));
 };

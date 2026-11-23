@@ -9,6 +9,7 @@ import * as Display from "../lib/display.ts";
 import styles from "./abundance-chart.module.css";
 
 const RowPhase = Schema.Literals(["hidden", "entering", "present", "exiting"]);
+
 type RowPhase = typeof RowPhase.Type;
 
 interface PresentedRow {
@@ -31,17 +32,20 @@ const targets = [
     panels.flatMap((panel) => panel.targets).map((target) => [target.id, target]),
   ).values(),
 ];
+
 // All panels agree on relative target order. Keep the pool in that shared order:
 // moving a mounted DOM node would interrupt its native CSS transitions.
 const orderTargets = (): typeof targets => {
   const orderedTargets: typeof targets = [];
   const pendingTargets = new Set(targets);
+
   while (pendingTargets.size > 0) {
     const next = targets.find(
       (target) =>
         pendingTargets.has(target) &&
         panels.every((panel) => {
           const index = panel.targets.findIndex((entry) => entry.id === target.id);
+
           return (
             index < 0 ||
             panel.targets
@@ -50,13 +54,17 @@ const orderTargets = (): typeof targets => {
           );
         }),
     );
+
     if (next === undefined) throw new Error("Panel target orders must be compatible");
     orderedTargets.push(next);
     pendingTargets.delete(next);
   }
+
   return orderedTargets;
 };
+
 const orderedTargets = orderTargets();
+
 const ticks = [0, 25, 50, 75, 100];
 
 const present = (
@@ -66,6 +74,7 @@ const present = (
   previous?: Presentation,
 ): Presentation => {
   const { compositions } = findings;
+
   const history: ReadonlyArray<PresentedRow> =
     previous?.rows ??
     orderedTargets.map((target) => ({
@@ -74,6 +83,7 @@ const present = (
       index: 0,
       phase: "hidden",
     }));
+
   return {
     revision,
     findings,
@@ -85,11 +95,13 @@ const present = (
     rows: history.map((row): PresentedRow => {
       const index = compositions.findIndex((composition) => composition.id === row.composition.id);
       const composition = compositions[index];
+
       if (composition === undefined)
         return {
           ...row,
           phase: animate && row.phase !== "hidden" ? "exiting" : "hidden",
         };
+
       return {
         composition,
         findings,
@@ -132,7 +144,9 @@ const reducePresentation = (
   if ("findings" in update)
     return present(update.findings, update.animate, update.revision, current);
   const settled = current.rows.find((row) => row.composition.id === update.settledTargetId);
+
   if (settled === undefined || settledPhase(settled.phase) === settled.phase) return current;
+
   return {
     ...current,
     rows: current.rows.map((row) =>
@@ -153,47 +167,58 @@ const selectionStory = (
     onNone: () => "Select a record to locate its segment in matching targets.",
     onSome: ({ record, matches, acceptedTargets }) => {
       const count = acceptedTargets.size;
+
       if (count > 0)
         return `This record is ${Display.formatSampleShare(record.abundance)} of the sample and matches ${count} target${count === 1 ? "" : "s"}. The same record is included in each matching total.`;
+
       if (matches.some((match) => TaxonMatchJudgment.guards.Undetermined(match.judgment)))
         return `This record is unresolved for at least one target. It is not included in any target total in ${findings.panel.name}.`;
+
       return `This record does not match any target in ${findings.panel.name}, so it is not included in any target total.`;
     },
   });
 
 const describeRow = (row: PresentedRow, selectedId: string | undefined, maximum: number) => {
   const target = row.composition;
+
   const selected =
     selectedId === undefined
       ? Option.none()
       : Array.findFirst(row.findings.records, (entry) => entry.record.id === selectedId);
+
   const selectedMatch = Option.flatMap(selected, (entry) =>
     Array.findFirst(entry.matches, (match) => match.target.id === target.id),
   );
+
   // Initially hidden pool rows need not belong to their retained panel. Every
   // painted row does, so missing findings there are an invariant failure.
   const match =
     selectedId !== undefined && row.phase !== "hidden"
       ? Option.getOrThrow(selectedMatch)
       : Option.getOrUndefined(selectedMatch);
+
   const contributes = target.contributors.some((entry) => entry.id === selectedId);
   const result = match === undefined ? undefined : Display.judgmentPresentation(match.judgment);
   const judgment = result?.label ?? "Unavailable";
   const summary = `${Display.formatPercent(target.abundance / 100)} of sample · ${target.contributors.length} matching record${target.contributors.length === 1 ? "" : "s"}`;
+
   const membership =
     selectedId === undefined
       ? ""
       : contributes
         ? " · selected record is included"
         : " · selected record is not included";
+
   const decision =
     selectedId === undefined
       ? ""
       : ` · ${judgment}${result?.support === undefined ? "" : ` · Accepted answer support: ${Display.formatPercent(result.support)}`}`;
+
   const composition =
     target.contributors.length === 0
       ? ""
       : ` · Records: ${target.contributors.map((entry) => `${entry.name} ${Display.formatPercent(entry.abundance / 100)}`).join("; ")}`;
+
   return {
     target,
     active: rowActive(row.phase),
@@ -204,6 +229,7 @@ const describeRow = (row: PresentedRow, selectedId: string | undefined, maximum:
     detail: summary + membership + decision + composition,
     segments: records.map((entry) => {
       const contributor = target.contributors.find((candidate) => candidate.id === entry.id);
+
       return {
         id: entry.id,
         contributing: contributor !== undefined,
@@ -222,9 +248,12 @@ const describeRow = (row: PresentedRow, selectedId: string | undefined, maximum:
 const subscribeReducedMotion = (onChange: () => void) => {
   const media = window.matchMedia("(prefers-reduced-motion: reduce)");
   media.addEventListener("change", onChange);
+
   return () => media.removeEventListener("change", onChange);
 };
+
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 const serverReducedMotion = () => true;
 
 /** Plot percentage-point compositions; revision identifies publications, animatePanels enables native transitions. */
@@ -240,16 +269,20 @@ export const AbundanceChart = ({
   const selection = useAtomValue(recordSelectionAtom);
   const reduce = useSyncExternalStore(subscribeReducedMotion, reducedMotion, serverReducedMotion);
   const animate = animatePanels && !reduce;
+
   const selected = Option.flatMap(selection, ({ recordId }) =>
     Array.findFirst(findings.records, (entry) => entry.record.id === recordId),
   );
+
   const selectedId = Option.getOrUndefined(selected)?.record.id;
   const hasSelection = Option.isSome(selected);
+
   const [presentation, dispatch] = useReducer(
     reducePresentation,
     { findings, animate, revision },
     initialPresentation,
   );
+
   // Keep history in React's render transaction: an abandoned render must not
   // mutate continuity, and prop changes must not paint an effect-delayed frame.
   if (presentation.revision !== revision || presentation.animate !== animate) {
@@ -286,6 +319,7 @@ export const AbundanceChart = ({
           </div>
           {presentation.rows.map((row) => {
             const { index, phase } = row;
+
             const {
               target,
               active,
@@ -296,6 +330,7 @@ export const AbundanceChart = ({
               detail,
               segments,
             } = describeRow(row, selectedId, presentation.maximum);
+
             return (
               <Tooltip.Root key={target.id}>
                 <Tooltip.Trigger

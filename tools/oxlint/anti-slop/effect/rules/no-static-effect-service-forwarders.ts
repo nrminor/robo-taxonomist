@@ -25,14 +25,19 @@ const serviceFactories: ReadonlyMap<"Context" | "Effect", ReadonlySet<string>> =
 function isServiceClass(node: ESTree.Class, names: EffectModuleNames): boolean {
   if (node.superClass === null) return false;
   let current: ESTree.Node = unwrapExpression(node.superClass);
+
   while (current.type === "CallExpression") {
     const callee = unwrapExpression(current.callee);
+
     for (const [module, factories] of serviceFactories) {
       const member = moduleMemberName(callee, names, module);
+
       if (member !== null && factories.has(member)) return true;
     }
+
     current = callee;
   }
+
   return false;
 }
 
@@ -44,7 +49,9 @@ function isServiceReference(
 ): boolean {
   if (node === null || node === undefined) return false;
   const expression = unwrapNode(node);
+
   if (expression.type === "ThisExpression") return thisIsClass;
+
   return expression.type === "Identifier" && className !== null && expression.name === className;
 }
 
@@ -52,6 +59,7 @@ function isServiceReference(
 function isServiceYield(node: ESTree.Node | null | undefined, className: string | null): boolean {
   if (node === null || node === undefined) return false;
   const expression = unwrapNode(node);
+
   return (
     expression.type === "YieldExpression" &&
     expression.delegate &&
@@ -62,14 +70,17 @@ function isServiceYield(node: ESTree.Node | null | undefined, className: string 
 /** The names a function's parameters bind directly: `id`, `id = 1`, and `...ids`. */
 function parameterNames(fn: FunctionNode | null): ReadonlySet<string> {
   const names = new Set<string>();
+
   for (const parameter of fn?.params ?? []) {
     const pattern = parameter.type === "TSParameterProperty" ? parameter.parameter : parameter;
+
     if (pattern.type === "Identifier") names.add(pattern.name);
     else if (pattern.type === "AssignmentPattern" && pattern.left.type === "Identifier")
       names.add(pattern.left.name);
     else if (pattern.type === "RestElement" && pattern.argument.type === "Identifier")
       names.add(pattern.argument.name);
   }
+
   return names;
 }
 
@@ -78,6 +89,7 @@ function forwardsParameters(call: ESTree.CallExpression, parameters: ReadonlySet
   return call.arguments.every((argument) => {
     const value = argument.type === "SpreadElement" ? argument.argument : argument;
     const expression = unwrapExpression(value);
+
     return expression.type === "Identifier" && parameters.has(expression.name);
   });
 }
@@ -90,6 +102,7 @@ function forwardedMethod(
 ): string | null {
   if (node === null || node === undefined) return null;
   let expression = unwrapNode(node);
+
   if (
     expression.type === "YieldExpression" &&
     expression.delegate &&
@@ -97,22 +110,27 @@ function forwardedMethod(
   ) {
     expression = unwrapExpression(expression.argument);
   }
+
   if (expression.type !== "CallExpression" || !forwardsParameters(expression, parameters))
     return null;
   const callee = unwrapExpression(expression.callee);
+
   if (
     callee.type !== "MemberExpression" ||
     callee.computed ||
     callee.property.type !== "Identifier"
   )
     return null;
+
   return isReceiver(callee.object) ? callee.property.name : null;
 }
 
 /** The single expression a statement returns or evaluates, or null. */
 function statementValue(statement: ESTree.Statement): ESTree.Expression | null {
   if (statement.type === "ReturnStatement") return statement.argument;
+
   if (statement.type === "ExpressionStatement") return statement.expression;
+
   return null;
 }
 
@@ -126,15 +144,20 @@ function generatorForward(
   parameters: ReadonlySet<string>,
 ): string | null {
   const statements = generator.body?.body ?? [];
+
   if (statements.length === 1) {
     const [only] = statements;
+
     if (only === undefined) return null;
+
     return forwardedMethod(statementValue(only), parameters, (receiver) =>
       isServiceYield(receiver, className),
     );
   }
+
   if (statements.length !== 2) return null;
   const [declaration, use] = statements;
+
   if (
     declaration?.type !== "VariableDeclaration" ||
     declaration.declarations.length !== 1 ||
@@ -142,9 +165,11 @@ function generatorForward(
   )
     return null;
   const [declarator] = declaration.declarations;
+
   if (declarator?.id.type !== "Identifier" || !isServiceYield(declarator.init, className))
     return null;
   const local = declarator.id.name;
+
   return forwardedMethod(
     statementValue(use),
     parameters,
@@ -159,8 +184,10 @@ function callbackForward(
 ): string | null {
   if (callback === undefined || !isFunction(callback) || callback.params.length !== 1) return null;
   const [returned, ...others] = returnedExpressions(callback);
+
   if (returned === undefined || others.length > 0) return null;
   const [parameter] = callback.params;
+
   if (parameter?.type === "Identifier") {
     return forwardedMethod(
       returned,
@@ -168,8 +195,10 @@ function callbackForward(
       (receiver) => receiver.type === "Identifier" && receiver.name === parameter.name,
     );
   }
+
   if (parameter?.type !== "ObjectPattern" || parameter.properties.length !== 1) return null;
   const [property] = parameter.properties;
+
   if (
     property?.type !== "Property" ||
     property.computed ||
@@ -178,10 +207,13 @@ function callbackForward(
   ) {
     return null;
   }
+
   const local = property.value.name;
   const call = unwrapExpression(returned);
+
   if (call.type !== "CallExpression" || !forwardsParameters(call, parameters)) return null;
   const callee = unwrapExpression(call.callee);
+
   return callee.type === "Identifier" && callee.name === local ? property.key.name : null;
 }
 
@@ -194,12 +226,16 @@ function effectGenerator(
 ): ESTree.Function | null {
   if (node.type !== "CallExpression") return null;
   const body = node.arguments.at(-1);
+
   if (body?.type !== "FunctionExpression" || !body.generator) return null;
+
   if (moduleCallName(node, names, "Effect") === "gen") return body;
+
   if (node.arguments.length !== 1) return null;
   const callee = unwrapExpression(node.callee);
   const fn = callee.type === "CallExpression" ? unwrapExpression(callee.callee) : callee;
   const member = moduleMemberName(fn, names, "Effect");
+
   return member === "fn" || member === "fnUntraced" ? body : null;
 }
 
@@ -212,28 +248,38 @@ function effectForward(
 ): string | null {
   const node = unwrapExpression(expression);
   const generator = effectGenerator(node, names);
+
   if (generator !== null) {
     const parameters = new Set([...outerParameters, ...parameterNames(generator)]);
+
     return generatorForward(generator, className, parameters);
   }
+
   if (node.type !== "CallExpression") return null;
   const operator = moduleCallName(node, names, "Effect");
+
   if (operator !== null && chainingOperators.has(operator) && node.arguments.length === 2) {
     const [service, callback] = node.arguments;
+
     return isServiceReference(service, className)
       ? callbackForward(callback, outerParameters)
       : null;
   }
+
   const callee = unwrapExpression(node.callee);
+
   if (
     callee.type !== "MemberExpression" ||
     callee.computed ||
     callee.property.type !== "Identifier"
   )
     return null;
+
   if (!isServiceReference(callee.object, className) || node.arguments.length !== 1) return null;
   const [argument] = node.arguments;
+
   if (callee.property.name === "use") return callbackForward(argument, outerParameters);
+
   if (
     callee.property.name !== "pipe" ||
     argument === undefined ||
@@ -242,6 +288,7 @@ function effectForward(
     return null;
   const step = unwrapExpression(argument);
   const stepOperator = moduleCallName(step, names, "Effect");
+
   if (
     step.type !== "CallExpression" ||
     stepOperator === null ||
@@ -250,6 +297,7 @@ function effectForward(
   ) {
     return null;
   }
+
   return callbackForward(step.arguments[0], outerParameters);
 }
 
@@ -260,11 +308,16 @@ function staticForward(
   className: string | null,
 ): string | null {
   const node = unwrapExpression(value);
+
   if (!isFunction(node)) return effectForward(node, names, className, new Set());
+
   if (node.generator || node.async) return null;
   const [returned, ...others] = returnedExpressions(node);
+
   if (returned === undefined || others.length > 0) return null;
+
   if (node.body?.type === "BlockStatement" && node.body.body.length !== 1) return null;
+
   return effectForward(returned, names, className, parameterNames(node));
 }
 
@@ -287,9 +340,11 @@ export const noStaticEffectServiceForwardersRule = defineRule({
     const check = (node: ESTree.Class) => {
       if (!isServiceClass(node, names)) return;
       const className = node.id?.name ?? null;
+
       for (const member of staticMembers(node)) {
         if (member.value === null) continue;
         const method = staticForward(member.value, names, className);
+
         if (method === null) continue;
         context.report({
           node: member.node,

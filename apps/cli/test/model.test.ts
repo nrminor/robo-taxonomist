@@ -10,6 +10,7 @@ it.effect("retains input and provider causes while exposing safe distinct guidan
     const schemaCause = yield* Schema.decodeUnknownEffect(Schema.Finite)("private input").pipe(
       Effect.flip,
     );
+
     const invalid = new Errors.InvalidInput({ cause: schemaCause });
     const input = Model.cliFailure(invalid);
     expect(input.cause).toBe(invalid);
@@ -24,6 +25,7 @@ it.effect("retains input and provider causes while exposing safe distinct guidan
         description: "private secret",
       }),
     });
+
     const authentication = Model.cliFailure(provider);
     expect(authentication.cause).toBe(provider);
     expect(authentication.userMessage).toContain("authentication");
@@ -34,6 +36,7 @@ it.effect("retains input and provider causes while exposing safe distinct guidan
       method: "decide",
       reason: new AiError.RateLimitError({}),
     });
+
     expect(Model.cliFailure(rateLimit).userMessage).toContain("rate-limiting");
     const existing = new CliError.UserError({ cause: "existing cause", userMessage: "existing" });
     expect(Model.cliFailure(existing)).toBe(existing);
@@ -42,12 +45,14 @@ it.effect("retains input and provider causes while exposing safe distinct guidan
 
 it("gives safe guidance for unusable answers and invalid user input", () => {
   const secret = "private provider details";
+
   const reasons = [
     new AiError.InvalidOutputError({ description: secret }),
     new AiError.InvalidResponseError({ description: secret }),
     new AiError.StructuredOutputError({ description: secret, responseText: secret }),
     new AiError.InvalidUserInputError({ description: secret }),
   ];
+
   for (const reason of reasons) {
     const provider = new AiError.AiError({ module: "fixture", method: "decide", reason });
     const failure = Model.cliFailure(provider);

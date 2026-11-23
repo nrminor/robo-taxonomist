@@ -3,6 +3,7 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { streamLargeFilesRule } from "./stream-large-files.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const streamLargeFile = [{ messageId: "streamLargeFile" }];
 
 tester.run("anti-slop-effect/stream-large-files", streamLargeFilesRule, {

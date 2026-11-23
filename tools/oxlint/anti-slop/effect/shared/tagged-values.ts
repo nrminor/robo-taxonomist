@@ -1,6 +1,7 @@
 import type { ESTree } from "@oxlint/plugins";
 
 const equalityOperators = new Set(["==", "===", "!=", "!=="]);
+
 const broadEffectCatchMethods = new Set(["catch", "catchAll", "catchIf"]);
 
 export const isStringLiteral = (
@@ -18,8 +19,11 @@ export const tagMemberFromComparison = (
   node: ESTree.BinaryExpression,
 ): ESTree.MemberExpression | undefined => {
   if (!equalityOperators.has(node.operator)) return undefined;
+
   if (isTagMember(node.left) && isStringLiteral(node.right)) return node.left;
+
   if (isTagMember(node.right) && isStringLiteral(node.left)) return node.right;
+
   return undefined;
 };
 
@@ -36,12 +40,15 @@ const isBroadEffectCatchCall = (
 
 export const isInsideBroadEffectHandler = (node: ESTree.Node): boolean => {
   let current: ESTree.Node | null | undefined = node.parent;
+
   while (current !== null && current !== undefined) {
     if (current.type === "ArrowFunctionExpression" || current.type === "FunctionExpression") {
       return isBroadEffectCatchCall(current.parent) && current.parent.arguments.includes(current);
     }
+
     current = current.parent;
   }
+
   return false;
 };
 
@@ -58,8 +65,10 @@ export const propertyName = (property: ESTree.ObjectProperty): string | undefine
   if (!property.computed && property.key.type === "Identifier") {
     return property.key.name;
   }
+
   if (property.key.type === "Literal" && typeof property.key.value === "string") {
     return property.key.value;
   }
+
   return undefined;
 };

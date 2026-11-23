@@ -6,11 +6,14 @@ export function resolveIdentifier(
   identifier: ESTree.Node & { readonly name: string },
 ): Variable | null {
   let scope: Scope | null = sourceCode.getScope(identifier);
+
   while (scope !== null) {
     const variable = scope.set.get(identifier.name);
+
     if (variable !== undefined) return variable;
     scope = scope.upper;
   }
+
   return null;
 }
 
@@ -40,6 +43,7 @@ const moduleBarrels: ReadonlySet<string> = new Set(["effect", "effect/http"]);
 /** The module a namespace import of `source` binds: `effect/Schedule` or `effect/http/HttpClient`. */
 function namespaceModule(source: string): string {
   if (source.startsWith("effect/http/")) return source.slice("effect/http/".length);
+
   return source.startsWith("effect/") ? source.slice("effect/".length) : "";
 }
 
@@ -57,6 +61,7 @@ const importedName = (specifier: ESTree.ImportSpecifier): string =>
  */
 export function collectEffectModuleNames(program: ESTree.Program): EffectModuleNames {
   const names = new Map<EffectModule, Set<string>>();
+
   const add = (module: EffectModule, local: string) => {
     const existing = names.get(module) ?? new Set<string>();
     existing.add(local);
@@ -66,16 +71,22 @@ export function collectEffectModuleNames(program: ESTree.Program): EffectModuleN
   for (const statement of program.body) {
     if (statement.type !== "ImportDeclaration") continue;
     const source = statement.source.value;
+
     if (moduleBarrels.has(source)) {
       for (const specifier of statement.specifiers) {
         if (specifier.type !== "ImportSpecifier") continue;
         const name = importedName(specifier);
+
         if (isEffectModule(name)) add(name, specifier.local.name);
       }
+
       continue;
     }
+
     const module = namespaceModule(source);
+
     if (!isEffectModule(module)) continue;
+
     for (const specifier of statement.specifiers) {
       if (
         specifier.type === "ImportNamespaceSpecifier" ||
@@ -92,6 +103,7 @@ export function collectEffectModuleNames(program: ESTree.Program): EffectModuleN
 /** Strip parentheses, type assertions and instantiation expressions from an expression. */
 export function unwrapExpression(expression: ESTree.Expression): ESTree.Expression {
   let current = expression;
+
   while (
     current.type === "ParenthesizedExpression" ||
     current.type === "TSAsExpression" ||
@@ -102,12 +114,14 @@ export function unwrapExpression(expression: ESTree.Expression): ESTree.Expressi
   ) {
     current = current.expression;
   }
+
   return current;
 }
 
 /** Like {@link unwrapExpression}, for any node. */
 export function unwrapNode(node: ESTree.Node): ESTree.Node {
   let current = node;
+
   while (
     current.type === "ParenthesizedExpression" ||
     current.type === "TSAsExpression" ||
@@ -118,6 +132,7 @@ export function unwrapNode(node: ESTree.Node): ESTree.Node {
   ) {
     current = current.expression;
   }
+
   return current;
 }
 
@@ -129,6 +144,7 @@ export function moduleMemberName(
 ): string | null {
   if (node === null || node === undefined) return null;
   const expression = node.type === "TSInstantiationExpression" ? node.expression : node;
+
   if (
     expression.type !== "MemberExpression" ||
     expression.computed ||
@@ -138,6 +154,7 @@ export function moduleMemberName(
   ) {
     return null;
   }
+
   return expression.property.name;
 }
 
@@ -163,19 +180,24 @@ export interface ServiceClass {
 export function serviceClass(node: ESTree.Class, names: EffectModuleNames): ServiceClass | null {
   if (node.superClass === null) return null;
   const superClass = unwrapExpression(node.superClass);
+
   if (superClass.type !== "CallExpression") return null;
   const factory = unwrapExpression(superClass.callee);
+
   if (
     factory.type !== "CallExpression" ||
     moduleMemberName(unwrapExpression(factory.callee), names, "Context") !== "Service"
   ) {
     return null;
   }
+
   const optionsArgument = superClass.arguments[1];
+
   const options =
     optionsArgument !== undefined && optionsArgument.type !== "SpreadElement"
       ? unwrapExpression(optionsArgument)
       : null;
+
   return {
     node,
     name: node.id?.name ?? null,
@@ -186,6 +208,7 @@ export function serviceClass(node: ESTree.Class, names: EffectModuleNames): Serv
 /** The innermost class whose body contains `node`, or null. */
 export function enclosingClass(node: ESTree.Node): ESTree.Class | null {
   let current: ESTree.Node | null = node.parent;
+
   while (current !== null) {
     if (current.type === "ClassBody")
       return current.parent.type === "ClassDeclaration" || current.parent.type === "ClassExpression"
@@ -193,6 +216,7 @@ export function enclosingClass(node: ESTree.Node): ESTree.Class | null {
         : null;
     current = current.parent;
   }
+
   return null;
 }
 
@@ -200,7 +224,9 @@ export function enclosingClass(node: ESTree.Node): ESTree.Class | null {
 function isClassReference(node: ESTree.Node | null | undefined, service: ServiceClass): boolean {
   if (node === null || node === undefined) return false;
   const expression = unwrapNode(node);
+
   if (expression.type === "ThisExpression") return true;
+
   return (
     expression.type === "Identifier" && service.name !== null && expression.name === service.name
   );
@@ -213,6 +239,7 @@ export function classMemberName(
 ): string | null {
   if (node === null || node === undefined) return null;
   const expression = unwrapNode(node);
+
   if (
     expression.type !== "MemberExpression" ||
     expression.computed ||
@@ -221,13 +248,16 @@ export function classMemberName(
   ) {
     return null;
   }
+
   return expression.property.name;
 }
 
 /** The name of a non-computed property key, or null. */
 export function keyName(key: ESTree.Node): string | null {
   if (key.type === "Identifier" || key.type === "PrivateIdentifier") return key.name;
+
   if (key.type === "Literal" && typeof key.value === "string") return key.value;
+
   return null;
 }
 
@@ -240,6 +270,7 @@ function objectProperty(
     if (property.type === "Property" && !property.computed && keyName(property.key) === name)
       return property;
   }
+
   return null;
 }
 
@@ -254,6 +285,7 @@ export interface StaticMember {
 /** Every non-computed static member of a class. */
 export function staticMembers(node: ESTree.Class): readonly StaticMember[] {
   const members: StaticMember[] = [];
+
   for (const element of node.body.body) {
     if (
       (element.type !== "PropertyDefinition" && element.type !== "MethodDefinition") ||
@@ -262,9 +294,11 @@ export function staticMembers(node: ESTree.Class): readonly StaticMember[] {
     )
       continue;
     const name = keyName(element.key);
+
     if (name === null) continue;
     members.push({ name, node: element, value: element.value });
   }
+
   return members;
 }
 
@@ -272,10 +306,13 @@ export function staticMembers(node: ESTree.Class): readonly StaticMember[] {
 export function serviceMakes(service: ServiceClass): readonly ESTree.Expression[] {
   const makes: ESTree.Expression[] = [];
   const optionsMake = service.options === null ? null : objectProperty(service.options, "make");
+
   if (optionsMake !== null) makes.push(optionsMake.value);
+
   for (const member of staticMembers(service.node)) {
     if (member.name === "make" && member.value !== null) makes.push(member.value);
   }
+
   return makes;
 }
 
@@ -293,8 +330,10 @@ const isNode = (value: unknown): value is ESTree.Node =>
 /** Visit every descendant of `node`. Return false from `visit` to skip a node's children. */
 export function walk(node: ESTree.Node, visit: (node: ESTree.Node) => boolean): void {
   if (!visit(node)) return;
+
   for (const [key, value] of Object.entries(node)) {
     if (skippedKeys.has(key)) continue;
+
     if (Array.isArray(value)) {
       for (const item of value) {
         if (isNode(item)) walk(item, visit);
@@ -310,9 +349,12 @@ export function contains(node: ESTree.Node, predicate: (node: ESTree.Node) => bo
   let found = false;
   walk(node, (current) => {
     if (found) return false;
+
     if (predicate(current)) found = true;
+
     return !found;
   });
+
   return found;
 }
 
@@ -330,16 +372,21 @@ export function ownReturns(body: ESTree.Node): readonly ESTree.ReturnStatement[]
   const returns: ESTree.ReturnStatement[] = [];
   walk(body, (node) => {
     if (node !== body && isFunction(node)) return false;
+
     if (node.type === "ReturnStatement") returns.push(node);
+
     return true;
   });
+
   return returns;
 }
 
 /** The expressions a function produces: its expression body or the arguments of its own returns. */
 export function returnedExpressions(fn: FunctionNode): readonly ESTree.Expression[] {
   if (fn.body === null) return [];
+
   if (fn.body.type !== "BlockStatement") return [fn.body];
+
   return ownReturns(fn.body).flatMap((statement) =>
     statement.argument === null ? [] : [statement.argument],
   );
@@ -355,6 +402,7 @@ const isPipeMember = (node: ESTree.Node): node is ESTree.MemberExpression =>
 export function pipeReceiver(node: ESTree.Node): ESTree.Expression | null {
   if (node.type !== "CallExpression") return null;
   const callee = unwrapExpression(node.callee);
+
   return isPipeMember(callee) ? unwrapExpression(callee.object) : null;
 }
 
@@ -364,17 +412,23 @@ export function pipeReceiver(node: ESTree.Node): ESTree.Expression | null {
  */
 export function precedingSteps(call: ESTree.Node): readonly ESTree.Node[] {
   const parent = call.parent;
+
   if (parent?.type !== "CallExpression") return [];
   const index = parent.arguments.findIndex((argument) => argument === call);
+
   if (index < 0) return [];
   const steps: ESTree.Node[] = [];
   let receiver = pipeReceiver(parent);
+
   while (receiver !== null) {
     steps.push(receiver);
+
     if (receiver.type === "CallExpression") steps.push(...receiver.arguments);
     receiver = pipeReceiver(receiver);
   }
+
   steps.push(...parent.arguments.slice(0, index));
+
   return steps;
 }
 
@@ -384,12 +438,17 @@ export function resolveInitializer(
   identifier: ESTree.Node & { readonly name: string },
 ): ESTree.Expression | ESTree.Function | null {
   const variable = resolveIdentifier(sourceCode, identifier);
+
   if (variable === null || variable.defs.length !== 1) return null;
   const [definition] = variable.defs;
+
   if (definition === undefined) return null;
+
   if (definition.type === "FunctionName" && definition.node.type === "FunctionDeclaration")
     return definition.node;
+
   if (definition.type !== "Variable" || definition.node.type !== "VariableDeclarator") return null;
+
   return definition.node.init ?? null;
 }
 
@@ -398,6 +457,7 @@ export function genFunction(node: ESTree.Node, names: EffectModuleNames): ESTree
   if (moduleCallName(node, names, "Effect") !== "gen" || node.type !== "CallExpression")
     return null;
   const body = node.arguments.at(-1);
+
   return body?.type === "FunctionExpression" ? body : null;
 }
 
@@ -410,15 +470,20 @@ export function makeGenerator(
   names: EffectModuleNames,
 ): ESTree.Function | null {
   let expression = unwrapExpression(make);
+
   if (expression.type === "ArrowFunctionExpression" || expression.type === "FunctionExpression") {
     const [returned] = returnedExpressions(expression);
+
     if (returned === undefined) return null;
     expression = unwrapExpression(returned);
   }
+
   let receiver = pipeReceiver(expression);
+
   while (receiver !== null) {
     expression = receiver;
     receiver = pipeReceiver(expression);
   }
+
   return genFunction(expression, names);
 }

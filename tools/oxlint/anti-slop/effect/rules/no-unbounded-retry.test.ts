@@ -3,10 +3,12 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { noUnboundedRetryRule } from "./no-unbounded-retry.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const imports = `
 	import { Effect, Schedule, Stream } from "effect";
 	import { HttpClient } from "effect/http";
 `;
+
 const unbounded = [{ messageId: "unboundedRetry" }];
 
 tester.run("anti-slop-effect/no-unbounded-retry", noUnboundedRetryRule, {

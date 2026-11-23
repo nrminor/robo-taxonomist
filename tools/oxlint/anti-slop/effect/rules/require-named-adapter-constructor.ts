@@ -25,12 +25,15 @@ export const requireNamedAdapterConstructorRule = defineRule({
     return {
       CallExpression(node) {
         const callee = unwrapExpression(node.callee);
+
         if (moduleMemberName(callee, names, "Layer") !== "effect") return;
 
         const constructor = node.arguments[1];
+
         if (constructor === undefined || constructor.type === "SpreadElement") return;
 
         const expression = unwrapExpression(constructor);
+
         const target =
           expression.type === "CallExpression" ? unwrapExpression(expression.callee) : expression;
 

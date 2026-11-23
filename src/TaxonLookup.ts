@@ -13,6 +13,7 @@ export const TaxonSummary = Schema.Struct({
   rank: Schema.optionalKey(TaxonomicRank),
   sourceRank: Schema.optionalKey(Schema.String),
 });
+
 /** A taxon with its identifier, recorded name, and available rank information. */
 export type TaxonSummary = typeof TaxonSummary.Type;
 
@@ -21,6 +22,7 @@ export const TaxonEntry = Schema.Struct({
   taxon: TaxonSummary,
   ancestors: Schema.Array(TaxonSummary),
 });
+
 /** A taxon and its recorded ancestry. */
 export type TaxonEntry = typeof TaxonEntry.Type;
 
@@ -31,6 +33,7 @@ export const IdLookup = Schema.TaggedUnion({
   Deleted: { requested: TaxonId },
   NotFound: { requested: TaxonId },
 });
+
 /** The outcome of ID resolution in the configured taxonomy view. */
 export type IdLookup = typeof IdLookup.Type;
 
@@ -40,6 +43,7 @@ export const NameHit = Schema.Struct({
   matchedName: TaxonName,
   nameClass: Schema.optionalKey(Schema.String),
 });
+
 /** A candidate taxon with its matching recorded name. */
 export type NameHit = typeof NameHit.Type;
 
@@ -84,11 +88,13 @@ export class TaxonLookup extends Context.Service<
   static checkName = Effect.fn("TaxonLookup.checkName")(function* (id: TaxonId, name: TaxonName) {
     const lookup = yield* TaxonLookup;
     const { source } = lookup;
+
     if (TaxonSource.guards.Live(source)) {
       return yield* new Errors.TaxonSnapshotRequired({ source });
     }
 
     const resolved = yield* lookup.byId(id);
+
     if (IdLookup.guards.Deleted(resolved) || IdLookup.guards.NotFound(resolved)) {
       return yield* Effect.fail(resolved);
     }

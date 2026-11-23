@@ -16,7 +16,9 @@ import { dirname, join, resolve } from "node:path";
 import { buildSync } from "esbuild";
 
 const root = dirname(import.meta.dirname);
+
 const require = createRequire(import.meta.url);
+
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
 function run(command, args, cwd) {
@@ -28,6 +30,7 @@ function check() {
   const tarball = resolve(process.argv[2]);
   assert(tarball.endsWith(".tgz") && lstatSync(tarball).isFile(), "Expected a .tgz package file");
   const consumer = mkdtempSync(join(tmpdir(), "robo-taxonomist-consumer-"));
+
   try {
     writeFileSync(
       join(consumer, "package.json"),
@@ -60,9 +63,11 @@ function check() {
       "dist",
       "package.json",
     ]);
+
     for (const file of ["LICENSE", "README.md", "dist/index.js", "dist/index.d.ts"]) {
       assert(lstatSync(join(installed, file)).size > 0, `Artifact missing or empty: ${file}`);
     }
+
     const packed = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
     assert.equal(packed.name, manifest.name);
     assert.equal(packed.version, manifest.version);
@@ -72,9 +77,11 @@ function check() {
     assert.deepEqual(packed.peerDependencies, manifest.peerDependencies);
 
     const fixtures = join(root, "test/fixtures/consumer");
+
     for (const file of ["contracts.ts", "smoke.mjs"]) {
       copyFileSync(join(fixtures, file), join(consumer, file));
     }
+
     const config = JSON.parse(readFileSync(join(fixtures, "tsconfig.json"), "utf8"));
     config.extends = join(root, "tsconfig.json");
     writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify(config));

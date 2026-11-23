@@ -24,12 +24,14 @@ const narrowingOperators: ReadonlySet<string> = new Set([
   "catchCause",
   "orElse",
 ]);
+
 const tapOperators: ReadonlySet<string> = new Set([
   "tapError",
   "tapErrorCause",
   "tapCause",
   "tapErrorTag",
 ]);
+
 const effectModuleNamesList: readonly ("Context" | "Effect" | "Layer" | "ManagedRuntime")[] = [
   "Context",
   "Effect",
@@ -40,11 +42,15 @@ const effectModuleNamesList: readonly ("Context" | "Effect" | "Layer" | "Managed
 /** Whether the handler never reads the error it receives. */
 function ignoresError(handler: FunctionNode, sourceCode: SourceCode): boolean {
   const [parameter] = handler.params;
+
   if (parameter === undefined) return true;
+
   if (parameter.type !== "Identifier") return false;
+
   const variable = sourceCode
     .getDeclaredVariables(handler)
     .find((candidate) => candidate.identifiers.some((identifier) => identifier === parameter));
+
   return variable !== undefined && variable.references.length === 0;
 }
 
@@ -58,8 +64,10 @@ function isErrorConstruction(
       unwrapNode(node.callee).type === "Identifier" ||
       unwrapNode(node.callee).type === "MemberExpression"
     );
+
   if (node.type !== "CallExpression") return false;
   const callee = unwrapNode(node.callee);
+
   if (
     callee.type !== "MemberExpression" ||
     callee.computed ||
@@ -68,14 +76,18 @@ function isErrorConstruction(
   ) {
     return false;
   }
+
   const owner = unwrapNode(callee.object);
+
   const ownerName =
     owner.type === "Identifier"
       ? owner.name
       : owner.type === "MemberExpression" && owner.property.type === "Identifier"
         ? owner.property.name
         : null;
+
   if (ownerName === null || !/^[A-Z]/u.test(ownerName)) return false;
+
   return !effectModuleNamesList.some((module) => moduleMemberName(callee, names, module) !== null);
 }
 
@@ -83,6 +95,7 @@ function isErrorConstruction(
 function passesCause(node: ESTree.NewExpression | ESTree.CallExpression): boolean {
   return node.arguments.some((argument) => {
     const expression = unwrapNode(argument);
+
     return (
       expression.type === "ObjectExpression" &&
       expression.properties.some(
@@ -100,36 +113,49 @@ function constructedErrors(
   names: EffectModuleNames,
 ): readonly (ESTree.NewExpression | ESTree.CallExpression)[] {
   const found: (ESTree.NewExpression | ESTree.CallExpression)[] = [];
+
   const consider = (node: ESTree.Node) => {
     const expression = unwrapNode(node);
+
     if (expression.type === "YieldExpression" && expression.argument !== null) {
       consider(expression.argument);
+
       return;
     }
+
     if (isErrorConstruction(expression, names)) found.push(expression);
   };
+
   for (const returned of returnedExpressions(handler)) consider(returned);
+
   if (handler.body === null) return found;
   walk(handler.body, (node) => {
     // An Effect.gen generator runs as the handler's own effect; other nested functions run later, if at all.
     if (isFunction(node))
       return node.type === "FunctionExpression" && genFunction(node.parent, names) === node;
+
     if (moduleCallName(node, names, "Effect") === "fail" && node.type === "CallExpression") {
       const [argument] = node.arguments;
+
       if (argument !== undefined) consider(argument);
     }
+
     if (node.type === "YieldExpression" && node.delegate && node.argument !== null)
       consider(node.argument);
+
     return true;
   });
+
   return [...new Set(found)];
 }
 
 /** Whether `node` is a call of a tap operator, or the operator itself. */
 function isTapStep(node: ESTree.Node, names: EffectModuleNames): boolean {
   const expression = unwrapNode(node);
+
   const member =
     moduleCallName(expression, names, "Effect") ?? moduleMemberName(expression, names, "Effect");
+
   return member !== null && tapOperators.has(member);
 }
 
@@ -152,22 +178,30 @@ export const requireCauseWhenNarrowingRule = defineRule({
     return {
       CallExpression(node) {
         const operator = moduleCallName(node, names, "Effect");
+
         if (operator === null || !narrowingOperators.has(operator)) return;
         const handler = node.arguments.at(-1);
+
         if (handler === undefined || !isFunction(handler)) return;
+
         if (!ignoresError(handler, context.sourceCode)) return;
+
         const constructed = constructedErrors(handler, names).find(
           (construction) => !passesCause(construction),
         );
+
         if (constructed === undefined) return;
         const dataFirstSource = node.arguments.length > 1 ? node.arguments[0] : undefined;
         const earlier = dataFirstSource === undefined ? precedingSteps(node) : [dataFirstSource];
+
         if (earlier.some((step) => isTapStep(step, names))) return;
         const callee = unwrapNode(constructed.callee);
+
         const errorName =
           callee.type === "MemberExpression"
             ? context.sourceCode.getText(callee.object)
             : context.sourceCode.getText(callee);
+
         context.report({
           node: constructed,
           messageId: "missingCause",

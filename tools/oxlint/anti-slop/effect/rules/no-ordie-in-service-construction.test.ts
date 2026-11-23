@@ -3,11 +3,13 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { noOrDieInServiceConstructionRule } from "./no-ordie-in-service-construction.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const imports = `
 	import * as Context from "effect/Context";
 	import * as Effect from "effect/Effect";
 	import * as Layer from "effect/Layer";
 `;
+
 const constructionOrDie = { messageId: "constructionOrDie", data: { member: "orDie" } };
 
 tester.run("anti-slop-effect/no-ordie-in-service-construction", noOrDieInServiceConstructionRule, {

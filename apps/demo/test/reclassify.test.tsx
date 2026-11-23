@@ -32,9 +32,11 @@ const renderDemo = async (
   initial: Schema.Json | Promise<Schema.Json> = replyFor("broad"),
 ) => {
   const fetch = initialBroadReplyThenFetch(initial, interactiveFetch);
+
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
@@ -42,6 +44,7 @@ const renderDemo = async (
       </RegistryProvider>
     </StrictMode>,
   );
+
   return { view, fetch };
 };
 
@@ -54,6 +57,7 @@ const expectPosts = async (
   }>,
 ) => {
   expect(fetch).toHaveBeenCalledTimes(bodies.length);
+
   for (const [index, [input, init]] of fetch.mock.calls.entries()) {
     const request = new Request(
       new URL(
@@ -62,6 +66,7 @@ const expectPosts = async (
       ),
       init,
     );
+
     expect(new URL(request.url).pathname).toBe("/api/classify");
     expect(request.method).toBe("POST");
     // Compare the raw wire body: decoding could silently discard an unwanted refresh field.
@@ -123,6 +128,7 @@ it("discards cancelled drafts and rejects whitespace without making a request", 
   const interactiveFetch = vi.fn<typeof globalThis.fetch>(() =>
     Promise.reject(new Error("Unexpected inference while editing")),
   );
+
   const { view, fetch } = await renderDemo(interactiveFetch);
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
   const edit = view.getByRole("button", { name: "Edit taxonomic hints" });
@@ -153,12 +159,14 @@ it("discards cancelled drafts and rejects whitespace without making a request", 
 it("carries submitted hints across panels and refreshes, retries their exact snapshot, and clears them", async () => {
   const broad = await replyFor("broad");
   const focused = await replyFor("focused");
+
   const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
     ClassificationFailure.cases.ModelFailure.make({
       reason: PublicModelReason.cases.RateLimitError.make({}),
       retryable: true,
     }),
   );
+
   const interactiveFetch = vi
     .fn<typeof globalThis.fetch>()
     .mockResolvedValueOnce(Response.json(broad))
@@ -167,6 +175,7 @@ it("carries submitted hints across panels and refreshes, retries their exact sna
     .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
     .mockResolvedValueOnce(Response.json(focused))
     .mockResolvedValueOnce(Response.json(focused));
+
   const { view, fetch } = await renderDemo(interactiveFetch, broad);
   const targets = view.getByRole("region", { name: "Panel targets" });
   await expect.element(targets).toBeVisible();
@@ -218,9 +227,11 @@ it("carries submitted hints across panels and refreshes, retries their exact sna
 
 it("keeps reclassification focusable but disabled until the initial results arrive", async () => {
   const initial = Promise.withResolvers<Schema.Json>();
+
   const interactiveFetch = vi.fn<typeof globalThis.fetch>(() =>
     Promise.reject(new Error("Unexpected reclassification during the initial request")),
   );
+
   const { view, fetch } = await renderDemo(interactiveFetch, initial.promise);
   const button = view.getByRole("button", { name: "Reclassify panel", exact: true });
   await expect.element(button).toBeVisible();
@@ -282,10 +293,12 @@ it("reclassifies the selected focused panel rather than Broad and leaves ordinar
   });
   const selection = Promise.withResolvers<Response>();
   const refreshed = Promise.withResolvers<Response>();
+
   const interactiveFetch = vi
     .fn<typeof globalThis.fetch>()
     .mockImplementationOnce(() => selection.promise)
     .mockImplementationOnce(() => refreshed.promise);
+
   const { view, fetch } = await renderDemo(interactiveFetch);
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
   await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
@@ -322,12 +335,15 @@ it("retains results after a fresh request fails and retries the same refresh ope
       retryable: true,
     }),
   );
+
   const first = Promise.withResolvers<Response>();
   const retried = Promise.withResolvers<Response>();
+
   const interactiveFetch = vi
     .fn<typeof globalThis.fetch>()
     .mockImplementationOnce(() => first.promise)
     .mockImplementationOnce(() => retried.promise);
+
   const { view, fetch } = await renderDemo(interactiveFetch);
   const targets = view.getByRole("region", { name: "Panel targets" });
   await expect.element(targets).toBeVisible();

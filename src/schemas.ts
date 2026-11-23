@@ -251,6 +251,7 @@ export type CollectionOptions = typeof CollectionOptions.Type;
 class Empty extends Schema.TaggedClass<Empty, { readonly brand: unique symbol }>(
   "robo-taxonomist/TaxonSet/Empty",
 )("Empty", {}) {}
+
 export class Taxon<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
   Taxon,
   { readonly brand: unique symbol }
@@ -267,6 +268,7 @@ export type Expression<R extends TaxonomicRecord = TaxonomicRecord> =
   | Union<R>
   | Intersection<R>
   | Difference<R>;
+
 type EncodedExpression =
   | typeof Empty.Encoded
   | typeof Taxon.Encoded

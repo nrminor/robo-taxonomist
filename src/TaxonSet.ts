@@ -128,8 +128,11 @@ type RecordOfSet<S> = S extends TaxonSet<never> ? never : S extends TaxonSet<inf
 export function unionAll<S extends TaxonSet>(sets: Iterable<S>): TaxonSet<RecordOfSet<S>>;
 export function unionAll(sets: Iterable<TaxonSet>): TaxonSet {
   const operands = [...sets];
+
   if (!Array.isArrayNonEmpty(operands)) return empty();
+
   if (operands.length === 1) return operands[0];
+
   return new Union({ operands });
 }
 
@@ -357,6 +360,7 @@ const makeClarificationCandidates = <R extends TaxonomicRecord>(
     });
 
     const answer = Struct.assign(judgment, { taxon });
+
     const support = Record.get(probabilities, `multiple${sideLabel}${index}`).pipe(
       Option.getOrThrow,
     );
@@ -399,6 +403,7 @@ const interpretRelation = <R extends TaxonomicRecord>(
     requestedRelation,
     answer,
   );
+
   const rightClarifications = makeClarificationCandidates(
     "right",
     taxa.right,
@@ -546,6 +551,7 @@ export const disjoint: SetRelationFn = Effect.fn("TaxonSet.disjoint")(function* 
   B extends TaxonomicRecord,
 >(left: TaxonSet<A>, right: TaxonSet<B>, options: JudgmentOptions = {}) {
   const result = yield* overlaps(left, right, options);
+
   return Match.value(result).pipe(
     Match.tagsExhaustive({
       Yes: () => TaxonSetRelationJudgment.cases.No.make({ relation: "disjoint" }),

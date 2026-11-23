@@ -3,9 +3,11 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { noStaticEffectServiceForwardersRule } from "./no-static-effect-service-forwarders.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const imports = `
 	import { Context, Effect, Layer } from "effect";
 `;
+
 const forwarder = (name: string, method: string) => ({
   messageId: "staticForwarder",
   data: { service: "Users", name, method },

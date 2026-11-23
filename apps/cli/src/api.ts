@@ -149,7 +149,9 @@ export class RequestBounds extends HttpApiMiddleware.Service<RequestBounds>()(
 ) {}
 
 const assignment = Schema.Union([TaxonName, Documents.RecordDocument]);
+
 const record = Schema.Union([RecordLabel, Documents.RecordDocument]);
+
 /** Accept a target name, identifying record or saved set as an operand. */
 export const SetOperand = Schema.Union([
   TaxonName,
@@ -159,7 +161,9 @@ export const SetOperand = Schema.Union([
   identifier: "SetOperand",
   description: "A target name, identifying record or saved set definition.",
 });
+
 const setPair = Schema.Struct({ left: SetOperand, right: SetOperand });
+
 /** Supply ordered records and one target set for a membership request. */
 export const CollectionInput = Schema.Struct({
   records: Schema.Array(Documents.RecordInput),

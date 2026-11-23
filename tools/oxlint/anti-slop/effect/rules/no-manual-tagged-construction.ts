@@ -26,6 +26,7 @@ export const noManualTaggedConstructionRule = defineRule({
         const tag = node.properties.find(
           (property) => property.type === "Property" && propertyName(property) === "_tag",
         );
+
         if (tag !== undefined) {
           context.report({ node: tag, messageId: "manualConstruction" });
         }

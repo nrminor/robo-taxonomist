@@ -14,12 +14,16 @@ import {
 } from "../shared/effect-modules.ts";
 
 const orDieMembers: ReadonlySet<string> = new Set(["orDie", "orDieWith"]);
+
 /** Effect constructors whose function argument runs as part of the surrounding construction. */
 const transparentThunks: ReadonlySet<string> = new Set(["suspend", "sync"]);
+
 /** Effect constructors that define an operation; their arguments run when it is called, not during construction. */
 const operationConstructors: ReadonlySet<string> = new Set(["fn", "fnUntraced"]);
+
 const isLayerMemberName = (name: string): boolean =>
   name === "layer" || /^layer[A-Z0-9_]/u.test(name);
+
 const isLayerConstructor = (name: string | null): boolean =>
   name === "effect" || name === "scoped" || (name?.startsWith("unwrap") ?? false);
 
@@ -42,6 +46,7 @@ function isConstructionRoot(
     !node.computed
   ) {
     const name = keyName(node.key);
+
     return (
       node.value === child &&
       name !== null &&
@@ -49,6 +54,7 @@ function isConstructionRoot(
       isServiceClassNode(node.parent.parent, names)
     );
   }
+
   if (
     node.type === "Property" &&
     !node.computed &&
@@ -57,23 +63,28 @@ function isConstructionRoot(
   ) {
     const options = node.parent;
     const superCall = options.parent;
+
     return (
       options.type === "ObjectExpression" &&
       superCall?.type === "CallExpression" &&
       isServiceClassNode(superCall.parent, names)
     );
   }
+
   if (node.type === "CallExpression" && node.arguments.some((argument) => argument === child)) {
     return isLayerConstructor(moduleCallName(node, names, "Layer"));
   }
+
   return false;
 }
 
 /** The Effect constructor a function is passed to, such as `gen` for `Effect.gen(function* () {})`. */
 function effectConstructorOf(fn: ESTree.Node, names: EffectModuleNames): string | null {
   const parent = fn.parent;
+
   if (parent?.type !== "CallExpression" || !parent.arguments.some((argument) => argument === fn))
     return null;
+
   return moduleCallName(parent, names, "Effect");
 }
 
@@ -81,8 +92,10 @@ function effectConstructorOf(fn: ESTree.Node, names: EffectModuleNames): string 
 function isOperationDefinition(node: ESTree.Node, names: EffectModuleNames): boolean {
   if (node.type !== "CallExpression") return false;
   const direct = moduleCallName(node, names, "Effect");
+
   if (direct !== null && operationConstructors.has(direct)) return true;
   const curried = moduleCallName(node.callee, names, "Effect");
+
   return curried !== null && operationConstructors.has(curried);
 }
 
@@ -95,11 +108,13 @@ function isInServiceConstruction(node: ESTree.Node, names: EffectModuleNames): b
   let child: ESTree.Node = node;
   let current: ESTree.Node | null = node.parent;
   let yielded = false;
+
   while (current !== null) {
     if (isFunction(current)) {
       if (current.parent !== null && isConstructionRoot(current.parent, current, names))
         return true;
       const constructor = effectConstructorOf(current, names);
+
       if (constructor === "gen") {
         if (!yielded) return false;
         yielded = false;
@@ -113,9 +128,11 @@ function isInServiceConstruction(node: ESTree.Node, names: EffectModuleNames): b
     } else if (current.type === "YieldExpression" && current.delegate) {
       yielded = true;
     }
+
     child = current;
     current = current.parent;
   }
+
   return false;
 }
 
@@ -142,9 +159,12 @@ export const noOrDieInServiceConstructionRule = defineRule({
       MemberExpression(node) {
         if (moduleMemberName(node, names, "Layer") === "orDie") {
           context.report({ node, messageId: "layerOrDie" });
+
           return;
         }
+
         const member = moduleMemberName(node, names, "Effect");
+
         if (member === null || !orDieMembers.has(member) || !isInServiceConstruction(node, names))
           return;
         context.report({ node, messageId: "constructionOrDie", data: { member } });

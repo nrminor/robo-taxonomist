@@ -7,6 +7,7 @@
  * @since 0.1.0
  */
 export { AcceptancePolicy } from "./AcceptancePolicy.ts";
+
 /**
  * Handle library input failures and the decision model's existing typed errors.
  *
@@ -14,6 +15,7 @@ export { AcceptancePolicy } from "./AcceptancePolicy.ts";
  * @since 0.4.0
  */
 export * as Errors from "./errors.ts";
+
 export {
   CollectionExecution,
   RecordLabel,
@@ -23,10 +25,14 @@ export {
   TaxonName,
   TaxonomyHint,
 } from "./schemas.ts";
+
 export { IdLookup, NameHit, TaxonEntry, TaxonLookup, TaxonSummary } from "./TaxonLookup.ts";
+
 export { NcbiDump, NcbiTaxonId } from "./TaxonLookupLayers/NcbiDump.ts";
+
 /** Provide taxonomy lookup backed by a loaded NCBI dump. */
 export * as NcbiTaxonomy from "./TaxonLookupLayers/NcbiTaxonomy.ts";
+
 /**
  * Compare record labels, ask about taxa and ranks, and test records against targets.
  * Model-backed questions return Effects that require a DecisionModel service
@@ -48,6 +54,7 @@ export * as NcbiTaxonomy from "./TaxonLookupLayers/NcbiTaxonomy.ts";
  * );
  */
 export * as Taxonomy from "./Taxonomy.ts";
+
 export {
   TaxonIdentityJudgment,
   TaxonMatchJudgment,
@@ -57,6 +64,7 @@ export {
   TaxonMembershipJudgment,
   CollectionMembershipJudgment,
 } from "./Taxonomy.ts";
+
 export type { TaxonMatch, RecordMembershipPartition, RecordsGroupedByTaxa } from "./Taxonomy.ts";
 
 /**
@@ -72,7 +80,9 @@ export type { TaxonMatch, RecordMembershipPartition, RecordsGroupedByTaxa } from
  * export const oaks = TaxonSet.of(TaxonName.make("Quercus"));
  */
 export * as TaxonSet from "./TaxonSet.ts";
+
 export { TaxonSetRelation, TaxonSetRelationJudgment } from "./TaxonSet.ts";
+
 /**
  * Supply shared hints, replace or supplement them for one workflow, and inspect its current scope.
  *

@@ -3,6 +3,7 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { noWidenThenAssertRule } from "./no-widen-then-assert.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const error = { messageId: "widenThenAssert" };
 
 tester.run("anti-slop/no-widen-then-assert", noWidenThenAssertRule, {

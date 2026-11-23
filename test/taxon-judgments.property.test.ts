@@ -26,6 +26,7 @@ import * as TestJson from "./Json.ts";
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 const options = { arbitrary: { runs: 100, size: 32, maxShrinks: 100, seed: "G2-G3" } };
+
 const text = Arbitrary.all({
   tail: Arbitrary.schema(Schema.String.check(Schema.isMaxLength(64))),
   special: Arbitrary.schema(
@@ -38,6 +39,7 @@ const text = Arbitrary.all({
     ]),
   ),
 }).pipe(Arbitrary.map(({ tail, special }) => `A${special}${tail}`));
+
 const record = Arbitrary.all({
   label: text,
   scientificName: text,
@@ -69,17 +71,20 @@ it.effect.prop(
       const secondName = TaxonName.make(`R${second}`);
       const selected = chooseSecond ? secondName : firstName;
       const label = chooseSecond ? "multipleTarget1" : "multipleTarget0";
+
       const expected = {
         fields: record.fields,
         names: [firstName, secondName],
         result: { _tag: "MultipleTaxaInTarget", target: TaxonSet.of(selected) },
       };
+
       const observed = yield* observeMembershipRecordEncoding(
         record.value,
         firstName,
         secondName,
         label,
       );
+
       expect(observed.fields).toEqual(expected.fields);
       expect(observed.targetNames).toEqual(expected.names);
       expect(observed.criterionNames).toEqual(expected.names);
@@ -115,12 +120,14 @@ it.effect.each([
   Effect.gen(function* () {
     const expected = { fields, rightFields: { "Record label": "right" } };
     const rank = yield* observeRankRecordEncoding(value, RecordLabel.make("right"));
+
     const membership = yield* observeMembershipRecordEncoding(
       value,
       TaxonName.make("first"),
       TaxonName.make("second"),
       "multipleTarget0",
     );
+
     expect(rank.leftFields).toEqual(expected.fields);
     expect(rank.rightFields).toEqual(expected.rightFields);
     expect(membership.fields).toEqual(expected.fields);
@@ -185,12 +192,15 @@ function decodeQuotedRecordFields(instructions: string) {
       const literal = Array.get(match, 2).pipe(Option.getOrThrow);
       const decoded = TestJson.decodeSync(literal);
       expect(typeof decoded, field).toBe("string");
+
       return [field, decoded];
     }),
     Array.fromIterable,
   );
+
   const fields = Record.fromEntries(entries);
   expect(Record.size(fields)).toBe(entries.length);
+
   return fields;
 }
 
@@ -202,27 +212,34 @@ const observeRankRecordEncoding = Effect.fnUntraced(function* (
     leftFields: { [field: string]: unknown };
     rightFields: { [field: string]: unknown };
   }> = Option.none();
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
+
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected comparison");
         const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+
         const criteria = Record.map(question.criteria, (criterion) =>
           Schema.decodeUnknownSync(Schema.String)(criterion),
         );
+
         const boundary = instructions.indexOf("\nRight record:\n");
         expect(boundary).toBeGreaterThan(0);
         observation = Option.some({
           leftFields: decodeQuotedRecordFields(instructions.slice(0, boundary)),
           rightFields: decodeQuotedRecordFields(instructions.slice(boundary)),
         });
+
         return Effect.succeed(oneHotResponse("comparison", criteria, "undetermined"));
       },
     }),
   );
+
   yield* Taxonomy.sameTaxonAtRank(left, right, "species").pipe(Effect.provide(layer));
+
   return Option.getOrThrow(observation);
 });
 
@@ -237,6 +254,7 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
     targetNames: string[];
     criterionNames: string[];
   }> = Option.none();
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -244,6 +262,7 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
         const TaxonNode = Schema.TaggedStruct("Taxon", {
           record: Schema.Struct({ scientificName: Schema.String }),
         });
+
         const input = Schema.decodeUnknownSync(
           Schema.Struct({
             nodes: Schema.Array(
@@ -257,22 +276,31 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
             target: Schema.Int,
           }),
         )(state);
+
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
+
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected membership");
         const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+
         const criteria = Record.map(question.criteria, (criterion) =>
           Schema.decodeUnknownSync(Schema.String)(criterion),
         );
+
         const criterionNames = Array.map(["multipleTarget0", "multipleTarget1"], (key) => {
           const criterion = Record.get(criteria, key).pipe(Option.getOrThrow);
+
           const index = Option.fromNullOr(criterion.match(/^Target taxon node (\d+) /u)).pipe(
             Option.flatMap((match) => Array.get(match, 1)),
             Option.getOrThrow,
           );
+
           const node = Array.get(input.nodes, Number(index)).pipe(Option.getOrThrow);
+
           if (!Schema.is(TaxonNode)(node)) throw new Error("Expected taxon node reference");
+
           return node.record.scientificName;
         });
+
         observation = Option.some({
           fields: decodeQuotedRecordFields(instructions),
           targetNames: pipe(
@@ -282,16 +310,21 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
           ),
           criterionNames,
         });
+
         return Effect.succeed(oneHotResponse("record0", criteria, label));
       },
     }),
   );
+
   const first = TaxonSet.of(firstName);
   const second = TaxonSet.of(secondName);
+
   const result = yield* Taxonomy.recordBelongsTo(recordValue, TaxonSet.union(first, second)).pipe(
     Effect.provide(layer),
   );
+
   if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
   expect(result.target).toBe(label === "multipleTarget0" ? first : second);
+
   return { ...Option.getOrThrow(observation), result };
 });

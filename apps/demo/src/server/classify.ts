@@ -7,7 +7,9 @@ import { classifyPanel, PanelResults } from "./panel-results.ts";
 import { ConfiguredPanelResults } from "./configured-model.ts";
 
 const encodeSuccess = Schema.encodeSync(Schema.toCodecJson(PanelResponse));
+
 const encodeFailure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure));
+
 const requestEnvelope = Schema.Struct({
   ...ClassifyRequest.fields,
   hints: Schema.optional(Schema.Unknown),
@@ -27,12 +29,15 @@ const classifyRequest = Effect.fn("classifyRequest")(function* (request: Request
     try: (): Promise<unknown> => request.json(),
     catch: () => ClassificationFailure.cases.InvalidPanel.make({}),
   });
+
   yield* Schema.decodeUnknownEffect(requestEnvelope, {
     onExcessProperty: "error",
   })(json).pipe(Effect.mapError(() => ClassificationFailure.cases.InvalidPanel.make({})));
+
   const input = yield* Schema.decodeUnknownEffect(ClassifyRequest)(json).pipe(
     Effect.mapError(() => ClassificationFailure.cases.InvalidHints.make({})),
   );
+
   return yield* classifyPanel(input.panelId, input.refresh, input.hints);
 });
 
@@ -76,5 +81,6 @@ export const makeHandlers = (
 const runtime = ManagedRuntime.make(
   ConfiguredPanelResults.pipe(Layer.provide(FetchHttpClient.layer)),
 );
+
 /** Configured classification handler; fixture/live selection and the cache belong to the module runtime. */
 export const { classifyHttp } = makeHandlers(runtime);

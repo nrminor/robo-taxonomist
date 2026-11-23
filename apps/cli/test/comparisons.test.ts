@@ -69,6 +69,7 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
   } = {},
 ) {
   const requests: Array<typeof wireRequest.Type> = [];
+
   const client = HttpClient.make((request) =>
     Effect.gen(function* () {
       const text = Match.value(request.body).pipe(
@@ -77,9 +78,11 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
           throw new Error("Expected a JSON provider request");
         }),
       );
+
       const body = yield* Schema.decodeEffect(wireRequest)(text);
       requests.push(body);
       const responseBody = yield* TestJson.encode(options.reply ?? identityReply);
+
       return HttpClientResponse.fromWeb(
         request,
         new Response(responseBody, {
@@ -89,8 +92,10 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
       );
     }).pipe(Effect.orDie),
   );
+
   let output = "";
   const decoder = new TextDecoder();
+
   const stdio = Stdio.layerTest({
     stdout: () =>
       Sink.forEach((chunk: string | Uint8Array) =>
@@ -99,9 +104,11 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
         }),
       ),
   });
+
   const { outcome, stderr } = yield* Effect.gen(function* () {
     const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(Effect.result);
     const stderr = yield* TestConsole.errorLines;
+
     return { outcome, stderr };
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, client),
@@ -114,7 +121,9 @@ const invoke = Effect.fn("ComparisonTest.invoke")(function* (
       Layer.fresh(TestConsole.layer),
     ]),
   );
+
   output += decoder.decode();
+
   return {
     outcome,
     output,
@@ -134,6 +143,7 @@ it.effect("compares identity through the configured TypeSafe protocol", () =>
       "--model",
       "custom/model",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["judgment\tside", "SameTaxon\t"]);
     expect(result.stderr).toEqual([]);
@@ -148,6 +158,7 @@ it.effect.each([401, 403, 429, 500])(
   (status) =>
     Effect.gen(function* () {
       const secret = "fixture-private-key-and-provider-content";
+
       const result = yield* invoke(
         ["compare", "identity", "Quercus", "Fagus", "--model", "custom/model"],
         {
@@ -156,6 +167,7 @@ it.effect.each([401, 403, 429, 500])(
           reply: { error: { message: secret } },
         },
       );
+
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.stderr).toHaveLength(1);
@@ -177,6 +189,7 @@ it.effect("emits the complete native identity judgment as JSON", () =>
       "--format",
       "json",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(['{"_tag":"SameTaxon"}']);
     expect(result.stderr).toEqual([]);
@@ -194,6 +207,7 @@ it.effect("omits the comparison TSV header when requested", () =>
       "custom/model",
       "--no-header",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["SameTaxon\t"]);
   }),
@@ -243,6 +257,7 @@ it.effect.each([
           },
         },
       };
+
       const args = ["compare", "identity", "Quercus", "Fagus", "--model", "custom/model"];
       const text = yield* invoke(args, { reply });
       expect(Result.isSuccess(text.outcome)).toBe(true);
@@ -265,6 +280,7 @@ it.effect.each([
       const result = yield* invoke(["compare", "identity", "Quercus", "Fagus", ...flags], {
         env: { TYPESAFE_API_KEY: "fixture-key", ROBO_TAXONOMIST_MODEL: configured },
       });
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.requests).toHaveLength(1);
       const request = Array.head(result.requests).pipe(Option.getOrThrow);
@@ -284,6 +300,7 @@ it.effect.each([
         configured === undefined
           ? { TYPESAFE_API_KEY: "fixture-key" }
           : { TYPESAFE_API_KEY: "fixture-key", ROBO_TAXONOMIST_MODEL: configured };
+
       const result = yield* invoke(["compare", "identity", "Quercus", "Fagus", ...flags], { env });
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.requests).toEqual([]);
@@ -314,6 +331,7 @@ it.effect("compares containment with directed inner and outer operands", () =>
         },
       },
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["judgment\tside", "Contained\t"]);
     expect(result.requests).toHaveLength(1);
@@ -360,6 +378,7 @@ it.effect("compares two record labels at the explicitly requested rank", () =>
         },
       },
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["judgment\trank\tside", "SameTaxonAtRank\tgenus\t"]);
     expect(result.requests).toHaveLength(1);
@@ -400,6 +419,7 @@ it.effect("compares a directed set relation using the native operation", () =>
         },
       },
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([
       "judgment\trelation\tside\tclarification_target",
@@ -431,6 +451,7 @@ it.effect("quotes delimiter-bearing clarification text and preserves it in struc
       "--model",
       "custom/model",
     ];
+
     const reply = {
       model: "fixture-model",
       answers: {
@@ -442,6 +463,7 @@ it.effect("quotes delimiter-bearing clarification text and preserves it in struc
         },
       },
     };
+
     const text = yield* invoke(args, { reply });
     expect(Result.isSuccess(text.outcome)).toBe(true);
     expect(text.output).toBe(
@@ -450,11 +472,13 @@ it.effect("quotes delimiter-bearing clarification text and preserves it in struc
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
     const expectedTaxon = TaxonSet.of(TaxonName.make("Quercus\tFagus"));
+
     const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: "subset",
       side: "left",
       taxon: expectedTaxon,
     });
+
     const expectedText = yield* TestJson.encode(expectedJudgment);
     expect(json.stdout).toEqual([expectedText]);
   }),
@@ -517,6 +541,7 @@ it.effect.each([
         },
       },
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     const nativeText = yield* TestJson.encode(native);
     expect(result.stdout).toEqual([nativeText]);
@@ -541,6 +566,7 @@ it.effect.each([
       "custom/model",
       "--no-header",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([`${tag}\t${relation}\t\t`]);
     expect(result.requests).toEqual([]);
@@ -552,12 +578,15 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
     const path = `${directory}/target.json`;
+
     const record = {
       taxonId: { taxonomy: "ncbi", id: "123", release: "2026", curator: "caller" },
       metadata: { sample: ["A17", null] },
     };
+
     const recordText = yield* TestJson.encode([record]);
     yield* fs.writeFileString(path, recordText);
+
     const args = [
       "set",
       "relation",
@@ -570,6 +599,7 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
       "--model",
       "custom/model",
     ];
+
     const reply = {
       model: "fixture-model",
       answers: {
@@ -581,6 +611,7 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
         },
       },
     };
+
     const text = yield* invoke(args, { reply });
     expect(Result.isFailure(text.outcome)).toBe(true);
     expect(text.stdout).toEqual([]);
@@ -588,16 +619,19 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
     expect(stderr).toContain("--format json");
     const json = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(json.outcome)).toBe(true);
+
     const expectedTaxon = TaxonSet.of(
       Documents.RecordDocument.make({
         taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
       }),
     );
+
     const expectedJudgment = Documents.SetRelationJudgment.cases.MultipleTaxaInSet.make({
       relation: "overlap",
       side: "right",
       taxon: expectedTaxon,
     });
+
     const expectedText = yield* TestJson.encode(expectedJudgment);
     expect(json.stdout).toEqual([expectedText]);
     const request = Array.head(json.requests).pipe(Option.getOrThrow);
@@ -669,6 +703,7 @@ it.effect.each([
           },
         },
       };
+
       const args = ["cmp", "within", "Quercus", "Fagaceae", "--model", "custom/model"];
       const result = yield* invoke([...args, "--format", "json"], { reply });
       expect(Result.isSuccess(result.outcome)).toBe(true);
@@ -759,6 +794,7 @@ it.effect.each([
         },
       },
     };
+
     const args = [
       "compare",
       "rank",
@@ -769,6 +805,7 @@ it.effect.each([
       "--model",
       "custom/model",
     ];
+
     const result = yield* invoke([...args, "--format", "json"], { reply });
     expect(Result.isSuccess(result.outcome)).toBe(true);
     const nativeText = yield* TestJson.encode(native);
@@ -793,6 +830,7 @@ it.effect("treats invalid provider responses as failures, not unresolved judgmen
         },
       },
     );
+
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
     const stderr = yield* TestJson.encode(result.stderr);
@@ -837,6 +875,7 @@ it.effect.each([
         },
       },
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["judgment\trelation\tside\tclarification_target", row]);
   }),

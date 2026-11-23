@@ -19,6 +19,7 @@ const renderHttpDemo = (fetch: typeof globalThis.fetch) => {
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   return renderBrowser(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
@@ -35,6 +36,7 @@ const renderDemo = async (
 ) => {
   const view = await renderHttpDemo(initialBroadReplyThenFetch(initial, interactiveFetch));
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+
   return view;
 };
 
@@ -63,6 +65,7 @@ it.each([320, 1440])("shows a results skeleton during the initial POST at %i px"
   const pending = Promise.withResolvers<Response>();
   const fetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);
   const view = await renderHttpDemo(fetch);
+
   try {
     const loading = view.getByRole("region", { name: "Loading panel results", exact: true });
     await expect.element(loading).toBeVisible();
@@ -96,10 +99,12 @@ it.each([320, 1440])("shows a results skeleton during the initial POST at %i px"
 it("accepts a panel selection while the initial result is pending and ignores its late reply", async () => {
   const initial = Promise.withResolvers<Response>();
   const pending = Promise.withResolvers<Response>();
+
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockReturnValueOnce(initial.promise)
     .mockReturnValueOnce(pending.promise);
+
   await renderHttpDemo(fetch);
   await expect.poll(() => fetch.mock.calls.length).toBe(1);
   await expect
@@ -130,6 +135,7 @@ it("shows initial POST matches without sending an interactive classification req
   const response = await Effect.runPromise(
     classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
   );
+
   const initial = Promise.resolve(Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response));
   const fetch = vi.fn(() => Promise.reject(new Error("Unexpected browser request")));
   await renderDemo(initial, fetch);
@@ -143,14 +149,17 @@ it("does not refetch or invent a comparison when an ancestor rerenders", async (
   const fetch = initialBroadReplyThenFetch(await replyFor("broad"), () =>
     Promise.reject(new Error("Unexpected classification request")),
   );
+
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   const tree = () => (
     <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
       <Demo />
     </RegistryProvider>
   );
+
   const view = await renderBrowser(tree());
   await expect.element(view.getByText("22 of 24 records match a target.")).toBeVisible();
   await view.rerender(tree());
@@ -182,9 +191,11 @@ it("preserves the record list and open answer disclosure through the first panel
   const fungi = view.getByRole("group", { name: "Fungi", exact: true });
   await fungi.getByText("Answer probabilities", { exact: true }).click();
   const originalRow = row.element();
+
   const disclosure = fungi
     .getByText("Answer probabilities", { exact: true })
     .element().parentElement;
+
   const scroller = view.getByLabelText("Sample records and selected-record matches").element();
   const scrollTop = scroller.scrollTop;
 
@@ -229,9 +240,11 @@ it("keeps the target workspace in place while a request is pending and after it 
 
 it("counts the full abundance for overlapping matches and lets a genus record rule out a species match", async () => {
   const nested = await replyFor("nested");
+
   const view = await renderDemo(Promise.resolve(await replyFor("broad")), async () =>
     Response.json(nested),
   );
+
   await view.getByRole("radio", { name: "Groups and subgroups" }).click();
   await expect
     .element(view.getByRole("region", { name: "Groups and subgroups", exact: true }))
@@ -274,6 +287,7 @@ it.each([
   "renders $label with every probability in its established order",
   async ({ label, text }) => {
     const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(await replyFor("broad"));
+
     const reply = {
       ...response,
       rows: response.rows.map((row) => ({
@@ -294,10 +308,12 @@ it.each([
         })),
       })),
     };
+
     const view = await renderDemo(
       Promise.resolve(Schema.encodeSync(Schema.toCodecJson(PanelResponse))(reply)),
       () => Promise.reject(new Error("Unexpected browser request")),
     );
+
     await view.getByRole("button", { name: /^Saccharomyces cerevisiae, / }).click();
     const fungi = view.getByRole("group", { name: "Fungi", exact: true });
     const summary = fungi.getByText("Answer probabilities", { exact: true });
@@ -321,6 +337,7 @@ it.each([
 
 it("shows optional provider confidence separately from match support", async () => {
   const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(await replyFor("broad"));
+
   const reply = {
     ...response,
     rows: response.rows.map((row) => ({
@@ -331,15 +348,19 @@ it("shows optional provider confidence separately from match support", async () 
       })),
     })),
   };
+
   const view = await renderDemo(
     Promise.resolve(Schema.encodeSync(Schema.toCodecJson(PanelResponse))(reply)),
     () => Promise.reject(new Error("Unexpected browser request")),
   );
+
   await view.getByRole("button", { name: /^Saccharomyces cerevisiae, / }).click();
+
   const comparisons = view.getByRole("region", {
     name: "Saccharomyces cerevisiae",
     exact: true,
   });
+
   const fungi = comparisons.getByRole("group", { name: "Fungi", exact: true });
   await fungi.getByText("Answer probabilities", { exact: true }).click();
   await expect.element(fungi.getByText("Answer confidence: 80%", { exact: true })).toBeVisible();
@@ -352,11 +373,13 @@ it("ignores superseded HTTP replies when Broad groups is selected again before t
   const initial = Promise.withResolvers<Response>();
   const first = Promise.withResolvers<Response>();
   const latest = Promise.withResolvers<Response>();
+
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockReturnValueOnce(initial.promise)
     .mockReturnValueOnce(first.promise)
     .mockReturnValueOnce(latest.promise);
+
   await renderHttpDemo(fetch);
   await expect.poll(() => fetch.mock.calls.length).toBe(1);
 
@@ -383,17 +406,20 @@ it("ignores superseded HTTP replies when Broad groups is selected again before t
 it("keeps the displayed matches and their comparison after failure, then compares the retry with that display", async () => {
   const nested = await replyFor("nested");
   const focused = await replyFor("focused");
+
   const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
     ClassificationFailure.cases.ModelFailure.make({
       reason: PublicModelReason.cases.RateLimitError.make({ retryAfterMs: 30_000 }),
       retryable: true,
     }),
   );
+
   const fetch = vi
     .fn(() => Promise.resolve(Response.json(nested)))
     .mockImplementationOnce(() => Promise.resolve(Response.json(nested)))
     .mockImplementationOnce(() => Promise.resolve(Response.json(failure, { status: 503 })))
     .mockImplementationOnce(() => Promise.resolve(Response.json(focused)));
+
   await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();
   await expect
@@ -419,6 +445,7 @@ it("keeps the displayed matches and their comparison after failure, then compare
 it("does not count a support-only change as a change in matches", async () => {
   const original = await replyFor("broad");
   const response = Schema.decodeSync(Schema.toCodecJson(PanelResponse))(original);
+
   const revised = {
     ...response,
     rows: response.rows.map((row) => ({
@@ -432,12 +459,15 @@ it("does not count a support-only change as a change in matches", async () => {
       })),
     })),
   };
+
   const wire = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(revised);
   const pending = Promise.withResolvers<Response>();
+
   const fetch = vi
     .fn(() => pending.promise)
     .mockReturnValueOnce(pending.promise)
     .mockResolvedValueOnce(Response.json(wire));
+
   await renderDemo(Promise.resolve(original), fetch);
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();
   await expect.poll(() => fetch.mock.calls.length).toBe(1);
@@ -451,10 +481,12 @@ it("does not count a support-only change as a change in matches", async () => {
 it("does not report a superseded failure", async () => {
   const earlier = Promise.withResolvers<Response>();
   const focused = await replyFor("focused");
+
   const fetch = vi
     .fn(() => earlier.promise)
     .mockReturnValueOnce(earlier.promise)
     .mockImplementationOnce(() => Promise.resolve(Response.json(focused)));
+
   await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();
   await expect.poll(() => fetch.mock.calls.length).toBe(1);
@@ -495,6 +527,7 @@ it.each([
   "rejects %s without replacing the displayed matches",
   async (_description, panelId, status, body) => {
     const broad = await replyFor("broad");
+
     const reply =
       body === "success"
         ? await replyFor(panelId)
@@ -504,6 +537,7 @@ it.each([
               retryable: true,
             }),
           );
+
     const fetch = () => Promise.resolve(Response.json(reply, { status }));
     await renderDemo(Promise.resolve(broad), fetch);
     await page.getByRole("radio", { name: "Groups and subgroups" }).click();

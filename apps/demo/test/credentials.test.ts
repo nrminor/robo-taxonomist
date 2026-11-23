@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 import * as TestJson from "./Json.ts";
 
 const cli = fileURLToPath(new URL("../node_modules/varlock/bin/cli.js", import.meta.url));
+
 const account = "0123456789abcdef0123456789abcdef";
+
 const token = "DUMMY_TOKEN_FOR_ISOLATED_CLI_TEST_ONLY_123456789";
 
 const cliDirectory = Effect.gen(function* () {
@@ -17,9 +19,11 @@ const cliDirectory = Effect.gen(function* () {
     Effect.sync(() => mkdtempSync(join(tmpdir(), "demo-credentials-"))),
     (directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true })),
   );
+
   yield* Effect.sync(() =>
     copyFileSync(new URL("../.env.schema", import.meta.url), join(directory, ".env.schema")),
   );
+
   return directory;
 });
 
@@ -44,6 +48,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const directory = yield* cliDirectory;
+
       const result = yield* runCli(directory, [
         "run",
         "--inject",
@@ -53,6 +58,7 @@ it.effect(
         "-e",
         "console.log('CHILD_STARTED')",
       ]);
+
       const output = result.stdout + result.stderr;
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(1);
@@ -71,6 +77,7 @@ it.effect(
       const directory = yield* cliDirectory;
       const accountText = yield* TestJson.encode(account);
       const tokenText = yield* TestJson.encode(token);
+
       const child = `
       const assert = require('node:assert/strict');
       assert.equal(process.env.DEMO_MODEL, 'clef');
@@ -82,6 +89,7 @@ it.effect(
       console.error(process.env.CLOUDFLARE_API_TOKEN);
       console.log('CHILD_FINISHED');
     `;
+
       const result = yield* runCli(
         directory,
         ["run", "--inject", "vars", "--", process.execPath, "-e", child],
@@ -90,6 +98,7 @@ it.effect(
           CLOUDFLARE_API_TOKEN: token,
         },
       );
+
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("CHILD_ASSERTIONS_PASSED");
@@ -109,6 +118,7 @@ it.effect.each([
   ({ account, token }) =>
     Effect.gen(function* () {
       const directory = yield* cliDirectory;
+
       const result = yield* runCli(
         directory,
         ["run", "--inject", "vars", "--", process.execPath, "-e", "console.log('CHILD_STARTED')"],
@@ -117,6 +127,7 @@ it.effect.each([
           CLOUDFLARE_API_TOKEN: token,
         },
       );
+
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(1);
       expect(result.stdout + result.stderr).not.toContain("CHILD_STARTED");
@@ -130,10 +141,12 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const directory = yield* cliDirectory;
+
       const result = yield* runCli(directory, ["load", "--agent"], {
         CLOUDFLARE_ACCOUNT_ID: account,
         CLOUDFLARE_API_TOKEN: token,
       });
+
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
       const output = result.stdout + result.stderr;

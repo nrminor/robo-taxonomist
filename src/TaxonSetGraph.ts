@@ -22,11 +22,14 @@ const sourceNodeFields = Schema.Union([
   Schema.Struct(taxonSetSchema.cases.Intersection.fields),
   Schema.Struct(taxonSetSchema.cases.Difference.fields),
 ]);
+
 // Check nominal acceptance before the node's fields and immediate children.
 const sourceNodeSchema = Schema.toType(taxonSetSchema).pipe(
   Schema.decodeTo(Schema.toType(sourceNodeFields)),
 );
+
 const nodeRef = Schema.Natural;
+
 const nodeSchema = Schema.TaggedUnion({
   Empty: {},
   Taxon: { record: TaxonomicRecord },
@@ -34,6 +37,7 @@ const nodeSchema = Schema.TaggedUnion({
   Intersection: { operands: Schema.NonEmptyArray(nodeRef) },
   Difference: { left: nodeRef, right: nodeRef },
 });
+
 type Node = typeof nodeSchema.Type;
 
 export const membershipTargetSchema = Schema.Struct({
@@ -42,6 +46,7 @@ export const membershipTargetSchema = Schema.Struct({
   hints: Schema.optionalKey(Schema.NonEmptyArray(TaxonomyHint)),
   instructions: Schema.optionalKey(Schema.String),
 });
+
 export const relationInputSchema = Schema.Struct({
   nodes: Schema.Array(nodeSchema),
   left: nodeRef,
@@ -49,6 +54,7 @@ export const relationInputSchema = Schema.Struct({
   hints: Schema.optionalKey(Schema.NonEmptyArray(TaxonomyHint)),
   instructions: Schema.optionalKey(Schema.String),
 });
+
 export const instructions =
   "References index nodes; roots select the complete sets. Empty contains no organisms; " +
   "Taxon contains organisms belonging to the single taxonomic entity identified by record; " +
@@ -66,6 +72,7 @@ const intern = Effect.fnUntraced(function* <R extends TaxonomicRecord>(
   source: Expression<R>,
 ): Effect.fn.Return<Graph.NodeIndex, Errors.InvalidInput> {
   const existingId = sourceGraph.nodeIds.get(source);
+
   if (existingId !== undefined) return existingId;
 
   // Validate the shape, then retain the caller's original object.
@@ -212,6 +219,7 @@ export const compile: CompileFn = Effect.fnUntraced(function* <
   const roots = Record.map(sources, (source) =>
     Option.fromUndefinedOr(nodeIds.get(source)).pipe(Option.getOrThrow),
   );
+
   const taxa = Record.map(roots, (root) => collectTaxa(graph, root));
 
   return { nodes, roots, taxa, nodeIds };

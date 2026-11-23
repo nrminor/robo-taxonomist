@@ -12,11 +12,13 @@ import {
 } from "robo-taxonomist";
 
 const source = TaxonSource.cases.Snapshot.make({ taxonomy: "fixture" });
+
 const species = {
   taxonId: TaxonId.make({ taxonomy: "fixture", id: "oak/robur" }),
   scientificName: TaxonName.make("Quercus robur"),
   rank: "species",
 } as const;
+
 const genus = {
   taxonId: TaxonId.make({ taxonomy: "fixture", id: "oak" }),
   scientificName: TaxonName.make("Quercus"),
@@ -51,10 +53,12 @@ it.effect(
   "propagates query failures for an eligible pair even when the first ID is unknown",
   () => {
     const missing = TaxonId.make({ taxonomy: "fixture", id: "missing" });
+
     const mismatch = new Errors.TaxonSourceMismatch({
       requested: species.taxonId,
       provided: source,
     });
+
     const failingLookup = Layer.succeed(TaxonLookup, {
       source,
       byId: (requested) =>
@@ -63,6 +67,7 @@ it.effect(
           : Effect.fail(mismatch),
       byName: () => Effect.succeed([]),
     });
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -82,6 +87,7 @@ it.effect("returns all matching name classes for the resolved identifier", () =>
   const name = TaxonName.make("Quercus pedunculata");
   const homonym = { taxon: genus, matchedName: name, nameClass: "synonym" };
   const hit = { taxon: species, matchedName: name, nameClass: "synonym" };
+
   const withNames = Layer.succeed(TaxonLookup, {
     source,
     byId: () =>
@@ -123,6 +129,7 @@ it.effect("includes the starting taxon in rank lookups", () =>
 it.effect("rank shorthands leave unrecorded ranks unresolved", () =>
   Effect.gen(function* () {
     const id = species.taxonId;
+
     const ranks = yield* Effect.all([
       TaxonLookup.domainOf(id),
       TaxonLookup.kingdomOf(id),
@@ -155,6 +162,7 @@ it.effect("keeps a completed mismatch distinct from an unresolved identifier", (
     const failure = yield* TaxonLookup.requireName(species.taxonId, name, onNoMatch).pipe(
       Effect.flip,
     );
+
     expect(failure).toBe(mismatch);
 
     const missing = TaxonId.make({ taxonomy: "fixture", id: "missing" });

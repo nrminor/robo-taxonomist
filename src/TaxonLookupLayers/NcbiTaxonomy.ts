@@ -7,7 +7,9 @@ import { TaxonomicRank, TaxonName, type TaxonId } from "../schemas.ts";
 import * as Dump from "./NcbiDump.ts";
 
 const isRank = Schema.is(TaxonomicRank);
+
 const decodeId = Schema.decodeUnknownEffect(Dump.NcbiTaxonId);
+
 const decodeName = Schema.decodeEffect(TaxonName);
 
 /** Provide TaxonLookup from the configured NCBI dump. */
@@ -19,9 +21,11 @@ export const layer = Layer.effect(
 
     const summarize = (id: string) => {
       const node = dump.node(id);
+
       if (node?.scientificName === undefined) return undefined;
 
       const { rank, scientificName } = node;
+
       const taxonId =
         source.release === undefined
           ? { taxonomy: source.taxonomy, id }
@@ -41,6 +45,7 @@ export const layer = Layer.effect(
       }
 
       const id = yield* decodeId(requested).pipe(Effect.mapError(Errors.InvalidInput.from));
+
       if (dump.isDeleted(id.id)) {
         return Lookup.IdLookup.cases.Deleted.make({ requested });
       }
@@ -48,15 +53,19 @@ export const layer = Layer.effect(
       const replacement = dump.replacement(id.id);
       const canonicalId = replacement ?? id.id;
       const taxon = summarize(canonicalId);
+
       if (taxon === undefined) return Lookup.IdLookup.cases.NotFound.make({ requested });
 
       const ancestors: Lookup.TaxonSummary[] = [];
       let current = canonicalId;
+
       while (true) {
         const node = dump.node(current);
+
         if (node === undefined || node.parent === current) break;
 
         const ancestor = summarize(node.parent);
+
         if (ancestor === undefined) break;
 
         ancestors.push(ancestor);
@@ -64,6 +73,7 @@ export const layer = Layer.effect(
       }
 
       const entry = { taxon, ancestors };
+
       if (replacement !== undefined) {
         return Lookup.IdLookup.cases.Merged.make({ requested, entry });
       }
@@ -77,6 +87,7 @@ export const layer = Layer.effect(
 
       for (const { id, nameClass } of dump.names(matchedName)) {
         const taxon = summarize(id);
+
         if (taxon !== undefined) hits.push({ taxon, matchedName, nameClass });
       }
 

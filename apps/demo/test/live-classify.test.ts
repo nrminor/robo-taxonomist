@@ -51,7 +51,9 @@ const clefRequest = Schema.Struct({
 });
 
 const accountId = "0123456789abcdef0123456789abcdef";
+
 const token = "offline-clef-token-never-use-for-authentication";
+
 const liveConfig = {
   DEMO_MODEL: "clef",
   CLOUDFLARE_ACCOUNT_ID: accountId,
@@ -117,14 +119,18 @@ it.effect.each([false, true])(
         const error = new HttpClientError.HttpClientError({
           reason: new HttpClientError.TransportError({ request, cause: "offline" }),
         });
+
         const reasons: Cause.Reason<HttpClientError.HttpClientError>[] = [
           Cause.makeFailReason(error),
         ];
+
         if (interrupted) reasons.push(Cause.makeInterruptReason(73));
+
         return Effect.failCause(
           Cause.annotate(Cause.fromReasons(reasons), Context.make(RequestId, "request-17")),
         );
       });
+
       const result = yield* Taxonomy.sameTaxon(
         TaxonName.make("Quercus"),
         TaxonName.make("Fagus"),
@@ -136,7 +142,9 @@ it.effect.each([false, true])(
         ),
         Effect.exit,
       );
+
       expect(Exit.isFailure(result)).toBe(true);
+
       if (Exit.isFailure(result)) {
         expect(result.cause.reasons.map((reason) => reason._tag)).toEqual(
           interrupted ? ["Fail", "Interrupt"] : ["Fail"],
@@ -145,11 +153,13 @@ it.effect.each([false, true])(
           _tag: "AiError",
           reason: { _tag: "NetworkError" },
         });
+
         for (const reason of result.cause.reasons) {
           expect(Context.getOrUndefined(Cause.reasonAnnotations(reason), RequestId)).toBe(
             "request-17",
           );
         }
+
         if (interrupted) expect(Cause.interruptors(result.cause)).toEqual(new Set([73]));
       }
     }),
@@ -189,6 +199,7 @@ it.each(invalidConfigurations)(
   async ({ config }) => {
     const fetch = vi.fn(() => Promise.reject(new Error("Provider access forbidden")));
     const runtime = configuredRuntime(fetch, config);
+
     try {
       const handlers = makeHandlers(runtime);
       const response = await handlers.classifyHttp(requestPanel());
@@ -219,9 +230,11 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
   let active = 0;
   let maximumActive = 0;
   const questionCounts: Array<number> = [];
+
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     active++;
     maximumActive = Math.max(maximumActive, active);
+
     try {
       const request = new Request(input, init);
       expect(request.url).toBe(
@@ -234,10 +247,12 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
       expect(TestJson.encodeSync(body.state)).not.toContain(token);
       const questions = body.questions;
       questionCounts.push(Record.size(questions));
+
       for (const question of Record.values(questions)) {
         const criterionNames = Record.keys(question.criteria);
         expect(criterionNames).toEqual(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]);
       }
+
       const answers = Record.map(questions, () => ({
         type: "choice",
         choice: "noMatch",
@@ -249,6 +264,7 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
         },
         confidence: 0.8,
       }));
+
       return Response.json({
         success: true,
         errors: [],
@@ -263,21 +279,28 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
       active--;
     }
   });
+
   const runtime = configuredRuntime(fetch);
+
   try {
     const handlers = makeHandlers(runtime);
     const response = await handlers.classifyHttp(requestPanel());
     expect(response.status).toBe(200);
+
     const reply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(
       await response.json(),
     );
+
     expect(reply.rows).toHaveLength(24);
+
     const row = Array.findFirst(reply.rows, (row) => row.recordId === "r01").pipe(
       Option.getOrThrow,
     );
+
     const match = Array.findFirst(row.matches, (match) => match.targetId === "fungi").pipe(
       Option.getOrThrow,
     );
+
     expect(match).toMatchObject({
       targetId: "fungi",
       judgment: TaxonMatchJudgment.cases.NotMatched.make({ support: 0.95 }),
@@ -287,9 +310,11 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
     const cached = await handlers.classifyHttp(requestPanel());
     expect(cached.status).toBe(200);
     expect(cached.headers.get("Cache-Control")).toBe("no-store");
+
     const cachedReply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(
       await cached.json(),
     );
+
     expect(cachedReply).toEqual(reply);
     expect(fetch).toHaveBeenCalledTimes(4);
     const focused = await handlers.classifyHttp(requestPanel("focused"));
@@ -308,14 +333,17 @@ it.each(["default", "explicit"] as const)(
   "keeps %s fixture mode independent of live credentials and transport",
   async (mode) => {
     const fetch = vi.fn(() => Promise.reject(new Error("Provider forbidden")));
+
     const config = {
       CLOUDFLARE_ACCOUNT_ID: "invalid",
       CLOUDFLARE_API_TOKEN: "",
     };
+
     const runtime = configuredRuntime(
       fetch,
       mode === "explicit" ? { ...config, DEMO_MODEL: "fixture" } : config,
     );
+
     try {
       const response = await makeHandlers(runtime).classifyHttp(requestPanel());
       expect(response.status).toBe(200);
@@ -349,16 +377,20 @@ it.each([
         { status },
       ),
     );
+
     const runtime = configuredRuntime(fetch);
+
     try {
       const response = await makeHandlers(runtime).classifyHttp(requestPanel());
       expect(response.status).toBe(503);
       const wire = await response.text();
       expect(wire).not.toContain("SECRET");
       expect(wire).not.toContain(token);
+
       const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
         TestJson.decodeSync(wire),
       );
+
       const expected = ClassificationFailure.cases.ModelFailure.make({ reason, retryable });
       expect(failure).toEqual(expected);
       expect(fetch).toHaveBeenCalledTimes(1);
@@ -376,7 +408,9 @@ it("preserves a Clef Retry-After delay in the safe response without retrying", a
         headers: { "Retry-After": "17", "X-Secret": "SECRET header" },
       }),
   );
+
   const runtime = configuredRuntime(fetch);
+
   try {
     const response = await makeHandlers(runtime).classifyHttp(requestPanel());
     expect(response.status).toBe(503);
@@ -411,6 +445,7 @@ it.each([
   const now = DateTime.toEpochMillis(DateTime.makeUnsafe("1994-11-06T08:49:20Z"));
   const nanos = BigInt(now) * 1_000_000n;
   const liveClock = Effect.runSync(Clock.Clock);
+
   const clock: Clock.Clock = {
     currentTimeMillisUnsafe: () => now,
     currentTimeMillis: Effect.succeed(now),
@@ -420,6 +455,7 @@ it.each([
     monotonicTimeNanos: Effect.succeed(nanos),
     sleep: (duration) => liveClock.sleep(duration),
   };
+
   const fetch = vi.fn(
     async () =>
       new Response("SECRET", {
@@ -427,15 +463,19 @@ it.each([
         headers: { "Retry-After": header },
       }),
   );
+
   const runtime = configuredRuntime(fetch, liveConfig, clock);
+
   try {
     const response = await makeHandlers(runtime).classifyHttp(requestPanel());
     expect(response.status).toBe(503);
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
+
     const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
       TestJson.decodeSync(wire),
     );
+
     expect(failure).toEqual(
       ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.RateLimitError.make(
@@ -453,19 +493,23 @@ it.each([
 it("sanitizes transport failures without retrying", async () => {
   const fetch = vi.fn(() => Promise.reject(new Error(`SECRET transport ${token}`)));
   const runtime = configuredRuntime(fetch);
+
   try {
     const response = await makeHandlers(runtime).classifyHttp(requestPanel());
     expect(response.status).toBe(503);
     const wire = await response.text();
     expect(wire).not.toContain(token);
     expect(wire).not.toContain("SECRET");
+
     const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
       TestJson.decodeSync(wire),
     );
+
     const expected = ClassificationFailure.cases.ModelFailure.make({
       reason: PublicModelReason.cases.NetworkError.make({}),
       retryable: true,
     });
+
     expect(failure).toEqual(expected);
     expect(fetch).toHaveBeenCalledTimes(1);
   } finally {
@@ -476,6 +520,7 @@ it("sanitizes transport failures without retrying", async () => {
 it("aborts the actual transport when the final HTTP waiter cancels", async () => {
   const started = Promise.withResolvers<void>();
   let aborts = 0;
+
   const fetch = vi.fn<typeof globalThis.fetch>(
     (input, init) =>
       new Promise((_, reject) => {
@@ -491,9 +536,12 @@ it("aborts the actual transport when the final HTTP waiter cancels", async () =>
         started.resolve();
       }),
   );
+
   const runtime = configuredRuntime(fetch);
+
   try {
     const controller = new AbortController();
+
     const pending = makeHandlers(runtime).classifyHttp(
       new Request("http://localhost/api/classify", {
         method: "POST",
@@ -501,6 +549,7 @@ it("aborts the actual transport when the final HTTP waiter cancels", async () =>
         signal: controller.signal,
       }),
     );
+
     await started.promise;
     controller.abort(new Error("SECRET cancellation"));
     const response = await pending;
@@ -520,6 +569,7 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       if (kind === "invalid JSON") return new Response("SECRET not JSON", { status: 200 });
       const request = Schema.decodeUnknownSync(clefRequest)(await new Request(input, init).json());
+
       const answers =
         kind === "missing answers"
           ? {}
@@ -534,6 +584,7 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
                 undetermined: 0.5,
               },
             }));
+
       return Response.json({
         success: true,
         result: {
@@ -543,17 +594,22 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
         },
       });
     });
+
     const runtime = configuredRuntime(fetch);
+
     try {
       const response = await makeHandlers(runtime).classifyHttp(requestPanel());
       expect(response.status).toBe(503);
+
       const failure = Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
         await response.json(),
       );
+
       const expected = ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.InvalidOutputError.make({}),
         retryable: true,
       });
+
       expect(failure).toEqual(expected);
       expect(fetch).toHaveBeenCalledTimes(1);
     } finally {

@@ -10,6 +10,7 @@ import * as Errors from "../errors.ts";
 import { TaxonId, TaxonName, TaxonSource } from "../schemas.ts";
 
 const decimalId = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
+
 const rootId = "1";
 
 /**
@@ -28,6 +29,7 @@ export const NcbiTaxonId = Schema.Struct({
   id: decimalId,
   release: TaxonId.fields.release,
 }).pipe(Schema.brand("NcbiTaxonId"));
+
 /** An NCBI identifier usable wherever the library accepts a TaxonId. */
 export type NcbiTaxonId = typeof NcbiTaxonId.Type;
 
@@ -35,6 +37,7 @@ const dumpOptions = Schema.Struct({
   directory: TaxonId.fields.taxonomy,
   release: TaxonId.fields.release,
 });
+
 type DumpOptions = typeof dumpOptions.Type;
 
 type Node = {
@@ -50,14 +53,19 @@ type RecordedName = {
 };
 
 const rowFraming = Schema.String.check(Schema.isPattern(/\t\|$/u));
+
 const checkFraming = Schema.decodeUnknownResult(rowFraming);
+
 const decodeNode = Schema.decodeUnknownResult(
   Schema.Tuple([decimalId, decimalId, TaxonId.fields.taxonomy]),
 );
+
 const decodeName = Schema.decodeUnknownResult(
   Schema.Tuple([decimalId, TaxonName, Schema.String, TaxonId.fields.taxonomy]),
 );
+
 const decodeMerge = Schema.decodeUnknownResult(Schema.Tuple([decimalId, decimalId]));
+
 const decodeDeletion = Schema.decodeUnknownResult(Schema.Tuple([decimalId]));
 
 const readRows = <A, E>(
@@ -68,6 +76,7 @@ const readRows = <A, E>(
   columnLimit?: number,
 ) => {
   let line = 0;
+
   const rows = fs.stream(path).pipe(
     Stream.mapError((cause) => new Errors.TaxonSnapshotReadError({ path, cause })),
     Stream.decodeText,
@@ -80,17 +89,20 @@ const readRows = <A, E>(
       for (const text of batch) {
         line++;
         const framing = checkFraming(text);
+
         if (Result.isFailure(framing)) {
           return yield* new Errors.InvalidTaxonSnapshot({ path, line, cause: framing.failure });
         }
 
         const fields = text.slice(0, -2).split("\t|\t", columnLimit);
         const row = decode(fields);
+
         if (Result.isFailure(row)) {
           return yield* new Errors.InvalidTaxonSnapshot({ path, line, cause: row.failure });
         }
 
         const issue = add(row.success, line);
+
         if (issue !== undefined) return yield* Effect.fail(issue);
       }
     }),
@@ -100,7 +112,9 @@ const readRows = <A, E>(
 const checkParents = (nodes: ReadonlyMap<string, Node>) => {
   const root = nodes.get(rootId);
   const issues = Errors.NcbiDumpIssue.cases;
+
   if (root === undefined) return issues.InvalidRoot.make({});
+
   if (root.parent !== rootId) return issues.InvalidRoot.make({ parentId: root.parent });
 
   root.parentCheck = "verified";
@@ -115,6 +129,7 @@ const checkParents = (nodes: ReadonlyMap<string, Node>) => {
 
       const parentId = current.parent;
       const parent = nodes.get(parentId);
+
       if (parent === undefined) return issues.MissingTaxonParent.make({ id: currentId, parentId });
 
       current.parentCheck = "visiting";
@@ -123,6 +138,7 @@ const checkParents = (nodes: ReadonlyMap<string, Node>) => {
     }
 
     let ancestor: Node | undefined = node;
+
     while (ancestor?.parentCheck === "visiting") {
       ancestor.parentCheck = "verified";
       ancestor = nodes.get(ancestor.parent);
@@ -136,6 +152,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
   const configured = yield* Schema.decodeEffect(dumpOptions)(options).pipe(
     Effect.mapError(Errors.InvalidInput.from),
   );
+
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { directory, ...release } = configured;
@@ -157,6 +174,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
           path: nodesPath,
           line,
         });
+
         return new Errors.InconsistentNcbiDump({ ...configured, reason });
       }
 
@@ -168,12 +186,14 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
   const namesPath = path.join(directory, "names.dmp");
   yield* readRows(fs, namesPath, decodeName, ([id, name, , nameClass], line) => {
     const node = nodes.get(id);
+
     if (node === undefined) {
       const reason = Errors.NcbiDumpIssue.cases.NameWithoutTaxon.make({
         id,
         path: namesPath,
         line,
       });
+
       return new Errors.InconsistentNcbiDump({ ...configured, reason });
     }
 
@@ -185,10 +205,13 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
           path: namesPath,
           line,
         });
+
         return new Errors.InconsistentNcbiDump({ ...configured, reason });
       }
+
       node.scientificName = name;
     }
+
     if (
       nameClass !== "scientific name" &&
       nameClass !== "synonym" &&
@@ -199,6 +222,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
 
     const match = { id, nameClass };
     const existing = names.get(name);
+
     if (existing === undefined) names.set(name, [match]);
     else existing.push(match);
   });
@@ -206,6 +230,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
   const mergesPath = path.join(directory, "merged.dmp");
   yield* readRows(fs, mergesPath, decodeMerge, ([id, target], line) => {
     const first = merges.get(id);
+
     if (first !== undefined && first !== target) {
       const reason = Errors.NcbiDumpIssue.cases.ConflictingMergeTargets.make({
         id,
@@ -214,6 +239,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
         path: mergesPath,
         line,
       });
+
       return new Errors.InconsistentNcbiDump({ ...configured, reason });
     }
 
@@ -224,6 +250,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
   });
 
   const parentIssue = checkParents(nodes);
+
   if (parentIssue !== undefined) {
     return yield* new Errors.InconsistentNcbiDump({ ...configured, reason: parentIssue });
   }
@@ -235,22 +262,27 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
         existing: "current",
         incoming: "merged",
       });
+
       return yield* new Errors.InconsistentNcbiDump({ ...configured, reason });
     }
+
     if (!nodes.has(targetId)) {
       const reason = Errors.NcbiDumpIssue.cases.MissingMergeTarget.make({ id, targetId });
+
       return yield* new Errors.InconsistentNcbiDump({ ...configured, reason });
     }
   }
 
   for (const id of deletions) {
     const existing = nodes.has(id) ? "current" : merges.has(id) ? "merged" : undefined;
+
     if (existing !== undefined) {
       const reason = Errors.NcbiDumpIssue.cases.ConflictingTaxonStatus.make({
         id,
         existing,
         incoming: "deleted",
       });
+
       return yield* new Errors.InconsistentNcbiDump({ ...configured, reason });
     }
   }
@@ -262,6 +294,7 @@ const openDump = Effect.fnUntraced(function* (options: DumpOptions) {
         count: 0,
         path: namesPath,
       });
+
       return yield* new Errors.InconsistentNcbiDump({ ...configured, reason });
     }
   }

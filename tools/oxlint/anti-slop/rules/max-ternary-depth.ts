@@ -3,6 +3,7 @@ import type { ESTree } from "@oxlint/plugins";
 
 function unwrapExpression(node: ESTree.Expression): ESTree.Expression {
   let current = node;
+
   while (
     current.type === "ParenthesizedExpression" ||
     current.type === "TSAsExpression" ||
@@ -12,12 +13,15 @@ function unwrapExpression(node: ESTree.Expression): ESTree.Expression {
   ) {
     current = current.expression;
   }
+
   return current;
 }
 
 function ternaryDepth(node: ESTree.Expression): number {
   const expression = unwrapExpression(node);
+
   if (expression.type !== "ConditionalExpression") return 0;
+
   return (
     1 +
     Math.max(
@@ -30,6 +34,7 @@ function ternaryDepth(node: ESTree.Expression): number {
 
 function isNestedTernary(node: ESTree.ConditionalExpression): boolean {
   let parent = node.parent;
+
   while (
     parent.type === "ParenthesizedExpression" ||
     parent.type === "TSAsExpression" ||
@@ -39,6 +44,7 @@ function isNestedTernary(node: ESTree.ConditionalExpression): boolean {
   ) {
     parent = parent.parent;
   }
+
   return parent.type === "ConditionalExpression";
 }
 
@@ -67,6 +73,7 @@ export const maxTernaryDepthRule = defineRule({
       ConditionalExpression(node) {
         if (isNestedTernary(node)) return;
         const option = context.options?.[0];
+
         const maxDepth =
           typeof option === "object" &&
           option !== null &&
@@ -74,7 +81,9 @@ export const maxTernaryDepthRule = defineRule({
           typeof option.maxDepth === "number"
             ? option.maxDepth
             : 2;
+
         const depth = ternaryDepth(node);
+
         if (depth > maxDepth) {
           context.report({ node, messageId: "exceeded", data: { depth, maxDepth } });
         }

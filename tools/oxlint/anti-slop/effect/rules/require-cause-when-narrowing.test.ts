@@ -3,9 +3,11 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { requireCauseWhenNarrowingRule } from "./require-cause-when-narrowing.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const imports = `
 	import * as Effect from "effect/Effect";
 `;
+
 const missingCause = (operator: string, error: string) => ({
   messageId: "missingCause",
   data: { operator, error },

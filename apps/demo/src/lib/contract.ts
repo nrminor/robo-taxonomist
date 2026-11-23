@@ -4,6 +4,7 @@ import { TaxonMatchJudgment, TaxonomyHint } from "robo-taxonomist";
 import { PanelId, panels, records } from "./catalog.ts";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
 const browserAnswer = Schema.Struct({
   label: Schema.Literals(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]),
   probabilities: Schema.Struct({
@@ -84,7 +85,9 @@ export const PublicModelReason = Schema.TaggedUnion({
   ToolkitRequiredError: {},
   InvalidUserInputError: {},
 });
+
 export type PublicModelReason = typeof PublicModelReason.Type;
+
 /** Shared failure variants used by the server contract and the client's extended error schema. */
 export const classificationFailureFields = {
   ModelFailure: {
@@ -97,9 +100,12 @@ export const classificationFailureFields = {
   ConfigurationFailure: { requestId: Schema.optional(Schema.String) },
   InternalFailure: { requestId: Schema.optional(Schema.String) },
 };
+
 /** Browser-facing failures with optional correlation IDs, rather than raw server or provider errors. */
 export const ClassificationFailure = Schema.TaggedUnion(classificationFailureFields);
+
 export type ClassificationFailure = typeof ClassificationFailure.Type;
+
 /** Classify one known panel with optional hints; refresh explicitly requests new model decisions. */
 export const ClassifyRequest = Schema.Struct({
   panelId: PanelId,

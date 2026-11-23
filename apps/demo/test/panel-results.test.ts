@@ -33,12 +33,15 @@ it.effect(
       expect(decoded).toEqual(result);
       expect(result.rows).toHaveLength(24);
       expect(result.rows.map((row) => row.matches.length)).toEqual(Array.replicate(10, 24));
+
       const species = Array.findFirst(result.rows, (row) => row.recordId === "r01").pipe(
         Option.getOrThrow,
       );
+
       const genus = Array.findFirst(result.rows, (row) => row.recordId === "r19").pipe(
         Option.getOrThrow,
       );
+
       expect(
         species.matches
           .filter(
@@ -57,9 +60,11 @@ it.effect(
           )
           .map((match) => match.targetId),
       ).toEqual(["fungi", "saccharomycetaceae", "saccharomyces"]);
+
       const vagueIds = records
         .filter((record) => record.kind === "vague")
         .map((record) => record.id);
+
       expect(vagueIds).toEqual(["r23", "r24"]);
       const vagueRows = result.rows.filter((row) => vagueIds.some((id) => id === row.recordId));
       expect(vagueRows.map((row) => row.recordId)).toEqual(vagueIds);
@@ -68,6 +73,7 @@ it.effect(
           .flatMap((row) => row.matches)
           .every((match) => TaxonMatchJudgment.guards.Undetermined(match.judgment)),
       ).toBe(true);
+
       const abundanceFor = (targetId: string) =>
         result.rows.reduce((total, row) => {
           const accepted = row.matches.some(
@@ -76,11 +82,14 @@ it.effect(
               (TaxonMatchJudgment.guards.SameTaxon(match.judgment) ||
                 TaxonMatchJudgment.guards.WithinTaxon(match.judgment)),
           );
+
           const record = Array.findFirst(records, (record) => record.id === row.recordId).pipe(
             Option.getOrThrowWith(() => new Error(`Missing record ${row.recordId}`)),
           );
+
           return total + (accepted ? record.abundance : 0);
         }, 0);
+
       expect(abundanceFor("saccharomyces")).toBe(18);
       expect(abundanceFor("saccharomyces-cerevisiae")).toBe(14);
     }).pipe(Effect.provide(PanelResults.layer)),
@@ -89,13 +98,16 @@ it.effect(
 it.effect("preserves the locked record weights and ordered broad and focused comparisons", () =>
   Effect.gen(function* () {
     expect(records.reduce((sum, record) => sum + record.abundance, 0)).toBe(100);
+
     for (const panelId of ["broad", "focused"] as const) {
       const result = yield* classifyPanel(panelId);
       expect(result.rows.map((row) => row.recordId)).toEqual(records.map((record) => record.id));
       const firstRow = Array.head(result.rows).pipe(Option.getOrThrow);
+
       const panel = Array.findFirst(panels, (panel) => panel.id === panelId).pipe(
         Option.getOrThrow,
       );
+
       expect(firstRow.matches.map((match) => match.targetId)).toEqual(
         panel.targets.map((target) => target.id),
       );
@@ -103,6 +115,7 @@ it.effect("preserves the locked record weights and ordered broad and focused com
         panelId === "broad" ? 144 : 240,
       );
     }
+
     const broad = yield* classifyPanel("broad");
     const namedIds = records.filter((record) => record.kind !== "vague").map((record) => record.id);
     expect(namedIds).toHaveLength(22);
@@ -119,12 +132,15 @@ it.effect("preserves the locked record weights and ordered broad and focused com
       ),
     ).toBe(true);
     const focused = yield* classifyPanel("focused");
+
     const outsideSpecies = Array.findFirst(focused.rows, (row) => row.recordId === "r03").pipe(
       Option.getOrThrow,
     );
+
     const outsideGenus = Array.findFirst(focused.rows, (row) => row.recordId === "r20").pipe(
       Option.getOrThrow,
     );
+
     expect(outsideSpecies.matches).toHaveLength(10);
     expect(outsideGenus.matches).toHaveLength(10);
     expect(
@@ -139,6 +155,7 @@ it.effect("preserves the locked record weights and ordered broad and focused com
 it.effect("rejects replies that omit, repeat, or change a record or target", () =>
   Effect.gen(function* () {
     const response = yield* classifyPanel("broad");
+
     const invalid = [
       { ...response, rows: response.rows.slice(1) },
       { ...response, rows: [...response.rows.slice(0, 1), ...response.rows.slice(0, -1)] },
@@ -155,6 +172,7 @@ it.effect("rejects replies that omit, repeat, or change a record or target", () 
         })),
       },
     ];
+
     for (const reply of invalid)
       expect(Result.isFailure(Schema.decodeResult(PanelResponse)(reply))).toBe(true);
   }).pipe(Effect.provide(PanelResults.layer)),
@@ -164,6 +182,7 @@ it.effect(
   "preserves the provider's optional confidence through projection and JSON encoding",
   () => {
     const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -185,14 +204,18 @@ it.effect(
           }),
       }),
     );
+
     return Effect.gen(function* () {
       const response = yield* classifyPanel("broad");
+
       const row = Array.findFirst(response.rows, (row) => row.recordId === "r01").pipe(
         Option.getOrThrow,
       );
+
       const match = Array.findFirst(row.matches, (match) => match.targetId === "fungi").pipe(
         Option.getOrThrow,
       );
+
       expect(match.answer).toMatchObject({ confidence: 0.8 });
       const wire = yield* Schema.encodeEffect(Schema.toCodecJson(PanelResponse))(response);
       const text = yield* TestJson.encode(wire);
@@ -210,11 +233,13 @@ it.effect("excludes split support from abundance while retaining an accepted rel
   const split = { sameTaxon: 0.49, withinTaxon: 0.49, noMatch: 0.01, undetermined: 0.01 };
   const strong = { sameTaxon: 0.01, withinTaxon: 0.96, noMatch: 0.02, undetermined: 0.01 };
   const negative = { sameTaxon: 0.01, withinTaxon: 0.01, noMatch: 0.95, undetermined: 0.03 };
+
   const model = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
         const first = batch++ === 0;
+
         return Effect.succeed({
           answers: Record.map(decisions, (_, key) =>
             Classify(
@@ -230,18 +255,22 @@ it.effect("excludes split support from abundance while retaining an accepted rel
       },
     }),
   );
+
   return Effect.gen(function* () {
     const response = yield* classifyPanel("broad");
     expect(response.rows.map((row) => row.recordId)).toEqual(records.map((record) => record.id));
     const row = Array.head(response.rows).pipe(Option.getOrThrow);
     const panel = Array.findFirst(panels, (panel) => panel.id === "broad").pipe(Option.getOrThrow);
+
     const splitMatch = Array.findFirst(row.matches, (match) => match.targetId === "fungi").pipe(
       Option.getOrThrow,
     );
+
     const strongMatch = Array.findFirst(
       row.matches,
       (match) => match.targetId === "lactobacillaceae",
     ).pipe(Option.getOrThrow);
+
     expect(row.matches.map((match) => match.targetId)).toEqual(
       panel.targets.map((target) => target.id),
     );
@@ -255,13 +284,16 @@ it.effect("excludes split support from abundance while retaining an accepted rel
     });
     const findings = Display.replaceDisplayed(undefined, response).findings;
     const finding = Array.head(findings.records).pipe(Option.getOrThrow);
+
     const fungi = Array.findFirst(findings.compositions, (target) => target.id === "fungi").pipe(
       Option.getOrThrow,
     );
+
     const lactobacillaceae = Array.findFirst(
       findings.compositions,
       (target) => target.id === "lactobacillaceae",
     ).pipe(Option.getOrThrow);
+
     expect(finding.acceptedTargets).toEqual(new Set([strongMatch.targetId]));
     expect(fungi.abundance).toBe(0);
     expect(lactobacillaceae.abundance).toBeCloseTo(14);
@@ -273,10 +305,12 @@ it.effect("loads only requested panels, coalesces pending requests and reuses su
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let calls = 0;
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       Effect.gen(function* () {
         const fixture = yield* DecisionModel.DecisionModel;
+
         return DecisionModel.DecisionModel.of({
           ...fixture,
           decide: (definition, options) =>
@@ -284,11 +318,13 @@ it.effect("loads only requested panels, coalesces pending requests and reuses su
               calls++;
               yield* Deferred.succeed(started, undefined);
               yield* Deferred.await(release);
+
               return yield* fixture.decide(definition, options);
             }),
         });
       }),
     ).pipe(Layer.provide(FixtureModel));
+
     yield* Effect.gen(function* () {
       expect(calls).toBe(0);
       const first = yield* classifyPanel("broad").pipe(Effect.forkChild);
@@ -315,21 +351,25 @@ it.effect("keys cached and concurrent results by ordered hints and panel", () =>
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let calls = 0;
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       Effect.gen(function* () {
         const fixture = yield* DecisionModel.DecisionModel;
+
         return DecisionModel.DecisionModel.of({
           ...fixture,
           decide: Effect.fnUntraced(function* (definition, options) {
             calls++;
             yield* Deferred.succeed(started, undefined);
             yield* Deferred.await(release);
+
             return yield* fixture.decide(definition, options);
           }),
         });
       }),
     ).pipe(Layer.provide(FixtureModel));
+
     yield* Effect.gen(function* () {
       const a = TaxonomyHint.make("first");
       const b = TaxonomyHint.make("second");
@@ -366,24 +406,29 @@ it.effect("refreshes only the selected panel while retaining its success until r
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let calls = 0;
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       Effect.gen(function* () {
         const fixture = yield* DecisionModel.DecisionModel;
+
         return DecisionModel.DecisionModel.of({
           ...fixture,
           decide: (definition, options) =>
             Effect.gen(function* () {
               calls++;
+
               if (calls === 9) {
                 yield* Deferred.succeed(started, undefined);
                 yield* Deferred.await(release);
               }
+
               return yield* fixture.decide(definition, options);
             }),
         });
       }),
     ).pipe(Layer.provide(FixtureModel));
+
     yield* Effect.gen(function* () {
       const broad = yield* classifyPanel("broad");
       expect(calls).toBe(4);
@@ -418,25 +463,30 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let calls = 0;
+
       const original = new AiError.AiError({
         module: "fixture",
         method: "decide",
         reason: new AiError.RateLimitError({}),
       });
+
       const model = Layer.effect(
         DecisionModel.DecisionModel,
         Effect.gen(function* () {
           const fixture = yield* DecisionModel.DecisionModel;
+
           return DecisionModel.DecisionModel.of({
             ...fixture,
             decide: (definition, options) =>
               Effect.suspend(() => {
                 calls++;
+
                 return calls === 9 ? Effect.fail(original) : fixture.decide(definition, options);
               }),
           });
         }),
       ).pipe(Layer.provide(FixtureModel));
+
       yield* Effect.gen(function* () {
         const broad = yield* classifyPanel("broad");
         const focused = yield* classifyPanel("focused");
@@ -461,15 +511,18 @@ it.effect(
 it.effect("does not retain failures and permits an explicit same-panel retry", () =>
   Effect.gen(function* () {
     let calls = 0;
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       Effect.gen(function* () {
         const fixture = yield* DecisionModel.DecisionModel;
+
         return DecisionModel.DecisionModel.of({
           ...fixture,
           decide: (definition, options) =>
             Effect.suspend(() => {
               calls++;
+
               return calls === 1
                 ? Effect.fail(
                     new AiError.AiError({
@@ -483,6 +536,7 @@ it.effect("does not retain failures and permits an explicit same-panel retry", (
         });
       }),
     ).pipe(Layer.provide(FixtureModel));
+
     yield* Effect.gen(function* () {
       const failed = yield* classifyPanel("broad").pipe(Effect.result);
       expect(Result.isFailure(failed)).toBe(true);
@@ -506,10 +560,12 @@ it.effect(
       const release = yield* Deferred.make<void>();
       let calls = 0;
       let interruptions = 0;
+
       const model = Layer.effect(
         DecisionModel.DecisionModel,
         Effect.gen(function* () {
           const fixture = yield* DecisionModel.DecisionModel;
+
           return DecisionModel.DecisionModel.of({
             ...fixture,
             decide: (definition, options) =>
@@ -517,6 +573,7 @@ it.effect(
                 calls++;
                 yield* Deferred.succeed(started, undefined);
                 yield* Deferred.await(release);
+
                 return yield* fixture.decide(definition, options);
               }).pipe(
                 Effect.onInterrupt(() =>
@@ -529,14 +586,18 @@ it.effect(
           });
         }),
       ).pipe(Layer.provide(FixtureModel));
+
       yield* Effect.gen(function* () {
         const first = yield* classifyPanel("broad").pipe(
           Effect.forkChild({ startImmediately: true }),
         );
+
         yield* Deferred.await(started);
+
         const second = yield* classifyPanel("broad").pipe(
           Effect.forkChild({ startImmediately: true }),
         );
+
         yield* Fiber.interrupt(first);
         expect(interruptions).toBe(0);
         yield* Fiber.interrupt(second);

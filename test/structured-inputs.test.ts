@@ -26,11 +26,13 @@ const modelLayer = (
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         const instructions: string[] = [];
+
         const answers = Record.map(decisions, (question): DecisionModel.ProviderClassifyAnswer => {
           if (!Predicate.isTagged(question, "Classify")) throw new Error("Expected classification");
           const instruction = Schema.decodeUnknownSync(Schema.String)(question.instructions);
           instructions.push(instruction);
           expect(Record.keys(question.criteria)).toContain(label);
+
           return Classify({
             label,
             probabilities: Record.map(question.criteria, (_criterion, key) =>
@@ -38,7 +40,9 @@ const modelLayer = (
             ),
           });
         });
+
         inspect(state, instructions);
+
         return Effect.succeed({
           answers,
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -58,11 +62,13 @@ it("constructs structured targets locally and retains each original record and m
   const full = assignment();
   const idOnly = { taxonId: TaxonId.make({ taxonomy: "ncbi", id: "9606" }), sampleId: "id-only" };
   const labelOnly = { label: RecordLabel.make("Unresolved voucher"), abundance: 7 };
+
   for (const record of [full, idOnly, labelOnly]) {
     const target = TaxonSet.of(record);
     expect(target._tag).toBe("Taxon");
     expect(target.record).toBe(record);
   }
+
   expect(TaxonSet.of(full).record.sampleId).toBe("private-target-metadata");
   expect(TaxonSet.of(labelOnly).record.abundance).toBe(7);
   expect(TaxonSet.of(TaxonName.make("Quercus")).record).toEqual({ scientificName: "Quercus" });
@@ -81,18 +87,22 @@ it.effect.each(["identity", "containment"] as const)(
   "preserves both structured operands as identifying evidence for %s, excluding metadata",
   (operation) => {
     const left = assignment();
+
     const right = {
       label: RecordLabel.make("Outer voucher"),
       scientificName: TaxonName.make("Fagus sylvatica"),
       taxonId: TaxonId.make({ taxonomy: "other-taxonomy", id: "beech-42", release: "2025-12" }),
       sampleId: "private-right-metadata",
     };
+
     let calls = 0;
+
     const layer = modelLayer(operation === "identity" ? "same" : "equal", (state, instructions) => {
       calls++;
       expect(state).toBeNull();
       expect(instructions).toHaveLength(1);
       const text = instructions.join("\n");
+
       for (const evidence of [
         'Voucher \\"A17\\"',
         "Quercus robur",
@@ -110,11 +120,13 @@ it.effect.each(["identity", "containment"] as const)(
       expect(text).not.toContain("private-right-metadata");
       expect(text.indexOf("oak-17")).toBeLessThan(text.indexOf("beech-42"));
     });
+
     return Effect.gen(function* () {
       const comparison =
         operation === "identity"
           ? Taxonomy.sameTaxon(left, right)
           : Taxonomy.taxonWithin(left, right);
+
       const result = yield* comparison;
       expect(result).toEqual({ _tag: operation === "identity" ? "SameTaxon" : "Contained" });
       expect(calls).toBe(1);
@@ -127,14 +139,18 @@ it.effect(
   "rejects invalid optional identifiers in comparisons and direct targets before transport",
   () => {
     let calls = 0;
+
     const invalid = {
       scientificName: TaxonName.make("Quercus"),
       taxonId: { taxonomy: "ncbi", id: " " },
     };
+
     const valid = assignment();
+
     const layer = modelLayer("undetermined", () => {
       calls++;
     });
+
     return Effect.gen(function* () {
       const failures = [
         Effect.flip(Taxonomy.sameTaxon(invalid, valid)),
@@ -143,14 +159,17 @@ it.effect(
         Effect.flip(Taxonomy.taxonWithin(valid, invalid)),
         Effect.flip(Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), invalid)),
       ];
+
       for (const failure of failures) {
         const error = yield* failure;
         expect(error._tag).toBe("InvalidInput");
         expect(Schema.isSchemaError(error.cause)).toBe(true);
+
         if (!Schema.isSchemaError(error.cause)) throw new Error("Expected a retained schema error");
         expect(error.cause.issue).toBeDefined();
         expect(error.cause.message).toContain("taxonId");
       }
+
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));
   },
@@ -159,6 +178,7 @@ it.effect(
 it.effect("accepts a structured direct membership target without leaking metadata", () => {
   const target = assignment();
   let calls = 0;
+
   const layer = modelLayer("member", (state) => {
     calls++;
     expect(state).toEqual({
@@ -175,6 +195,7 @@ it.effect("accepts a structured direct membership target without leaking metadat
       target: 0,
     });
   });
+
   return Effect.gen(function* () {
     const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("Oak specimen"), target);
     expect(result).toEqual({
@@ -189,16 +210,20 @@ it.effect("identifies the original ID-only target node without fabricating a nam
     taxonId: TaxonId.make({ taxonomy: "local", id: "pooled-17" }),
     sampleId: "private-id",
   };
+
   const target = TaxonSet.of(record);
+
   const layer = modelLayer("multipleTarget0", (state) => {
     expect(state).toEqual({
       nodes: [{ _tag: "Taxon", record: { taxonId: { taxonomy: "local", id: "pooled-17" } } }],
       target: 0,
     });
   });
+
   return Effect.gen(function* () {
     const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), target);
     expect(result).toEqual({ _tag: "MultipleTaxaInTarget", target });
+
     if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected target clarification");
     expect(result.target).toBe(target);
     expect(result.target.record).toBe(record);
@@ -209,17 +234,21 @@ it.effect(
   "target clarification follows DFS source-node order, not deduplicated identifying values",
   () => {
     const first = TaxonSet.of({ taxonId: TaxonId.make({ taxonomy: "local", id: "same-id" }) });
+
     const second = TaxonSet.of({
       taxonId: TaxonId.make({ taxonomy: "local", id: "same-id" }),
       sampleId: "second",
     });
+
     const target = TaxonSet.difference(
       TaxonSet.union(first, TaxonSet.intersection(second, first)),
       second,
     );
+
     return Effect.gen(function* () {
       const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), target);
       expect(result).toEqual({ _tag: "MultipleTaxaInTarget", target: second });
+
       if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected target clarification");
       expect(result.target).toBe(second);
       expect(result.target.record).toBe(second.record);
@@ -233,11 +262,14 @@ it.effect.each(["left", "right"] as const)(
     const taxon = TaxonSet.of(assignment());
     const left = TaxonSet.union(TaxonSet.empty(), taxon);
     const right = TaxonSet.of({ taxonId: TaxonId.make({ taxonomy: "ncbi", id: "9606" }) });
+
     return Effect.gen(function* () {
       const comparison =
         side === "left" ? TaxonSet.equivalent(left, right) : TaxonSet.equivalent(right, left);
+
       const result = yield* comparison;
       expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation: "equivalent", side, taxon });
+
       if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected set clarification");
       expect(result.taxon).toBe(taxon);
     }).pipe(Effect.provide(modelLayer(side === "left" ? "multipleLeft0" : "multipleRight0")));
@@ -249,11 +281,14 @@ it.effect(
   () => {
     const source = { ...assignment(), label: RecordLabel.make("Quercus and Fagus assignments") };
     const first = TaxonSet.of(source);
+
     const second = TaxonSet.of({
       taxonId: TaxonId.make({ taxonomy: "ncbi", id: "9606" }),
       sampleId: "private-id",
     });
+
     const specimen = { label: RecordLabel.make("Specimen 17"), abundance: 9 };
+
     const stateSchema = Schema.Struct({
       records: Schema.Array(Schema.String),
       taxa: Schema.Array(
@@ -270,7 +305,9 @@ it.effect(
         }),
       ),
     });
+
     let calls = 0;
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -285,14 +322,17 @@ it.effect(
             scientificName: "Quercus robur",
             taxonId: { taxonomy: "local-taxonomy", id: "oak-17", release: "2026-01" },
           });
+
           if (calls === 2) {
             const secondTaxon = Array.get(input.taxa, 1).pipe(Option.getOrThrow);
             expect(secondTaxon).toEqual({ taxonId: { taxonomy: "ncbi", id: "9606" } });
           }
+
           const wire = TestJson.encodeSync(state);
           expect(wire).not.toContain("private-target-metadata");
           expect(wire).not.toContain("private-id");
           expect(wire).not.toContain("abundance");
+
           return Effect.succeed({
             answers: Record.map(decisions, (question): DecisionModel.ProviderClassifyAnswer => {
               if (!Predicate.isTagged(question, "Classify"))
@@ -303,6 +343,7 @@ it.effect(
                 "noMatch",
                 "undetermined",
               ]);
+
               return Classify({
                 label: "undetermined",
                 probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
@@ -313,6 +354,7 @@ it.effect(
         },
       }),
     );
+
     return Effect.gen(function* () {
       for (const panel of [first, TaxonSet.union(first, second)]) {
         const result = yield* Taxonomy.classifyRecords([specimen], panel);
@@ -325,11 +367,13 @@ it.effect(
         expect(firstMatch.taxon).toBe(first);
         expect(firstMatch.taxon.record).toBe(source);
         expect(firstMatch.record).toBe(specimen);
+
         if (calls === 2) {
           const secondMatch = Array.get(matches, 1).pipe(Option.getOrThrow);
           expect(secondMatch.taxon).toBe(second);
           expect(secondMatch.taxon.record).toBe(second.record);
         }
+
         for (const match of matches) {
           expect(match.judgment).toEqual({ _tag: "Undetermined" });
           expect(match.answer.probabilities).toEqual({
@@ -340,6 +384,7 @@ it.effect(
           });
         }
       }
+
       expect(calls).toBe(2);
     }).pipe(Effect.provide(layer));
   },

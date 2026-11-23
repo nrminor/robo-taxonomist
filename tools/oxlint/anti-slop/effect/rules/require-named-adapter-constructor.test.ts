@@ -2,6 +2,7 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { requireNamedAdapterConstructorRule } from "./require-named-adapter-constructor.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const imports = `import * as Layer from "effect/Layer"; import * as Effect from "effect/Effect";`;
 
 tester.run("anti-slop/require-named-adapter-constructor", requireNamedAdapterConstructorRule, {

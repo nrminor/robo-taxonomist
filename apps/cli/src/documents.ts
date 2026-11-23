@@ -15,7 +15,9 @@ import {
 } from "robo-taxonomist";
 
 const jsonFields = Schema.Record(Schema.String, Schema.Json);
+
 const identifier = Schema.StructWithRest(TaxonId, [jsonFields]);
+
 const identifyingFields = {
   label: Schema.optionalKey(RecordLabel),
   scientificName: Schema.optionalKey(TaxonName),
@@ -33,6 +35,7 @@ export const RecordDocument = Schema.Union([
   identifier: "RecordDocument",
   description: "A taxonomic record with identifying fields and JSON metadata.",
 });
+
 /** Describe a decoded identifying record with its caller metadata. */
 export type RecordDocument = typeof RecordDocument.Type;
 
@@ -129,6 +132,7 @@ export const MembershipPartition = Schema.Struct({
 });
 
 const taxonMatch = Taxonomy.TaxonMatch(RecordInput, RecordDocument);
+
 /** Preserve the panel, record outcomes, accepted rankings, model answers and usage. */
 export const Classification = Schema.Struct({
   panel: SetDocument,

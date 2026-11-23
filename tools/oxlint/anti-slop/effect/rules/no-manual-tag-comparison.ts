@@ -25,12 +25,14 @@ export const noManualTagComparisonRule = defineRule({
         if (tagMemberFromComparison(node) === undefined || isInsideBroadEffectHandler(node)) {
           return;
         }
+
         context.report({ node, messageId: "manualComparison" });
       },
       SwitchStatement(node) {
         if (!isTagMember(node.discriminant) || isInsideBroadEffectHandler(node)) {
           return;
         }
+
         context.report({ node, messageId: "manualSwitch" });
       },
     };

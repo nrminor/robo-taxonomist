@@ -25,8 +25,10 @@ const curriedConstructors: ReadonlySet<string> = new Set(["fn", "fnUntraced"]);
 /** The node that holds `node` in place of its wrappers: parentheses, type assertions and the like. */
 function outermostWrapper(node: ESTree.Node): ESTree.Node {
   let current = node;
+
   while (current.parent !== null && unwrapNode(current.parent) !== current.parent)
     current = current.parent;
+
   return current;
 }
 
@@ -35,6 +37,7 @@ function isImmediatelyInvoked(fn: FunctionNode): boolean {
   if (fn.async || fn.generator || fn.type === "FunctionDeclaration") return false;
   const expression = outermostWrapper(fn);
   const call = expression.parent;
+
   return call?.type === "CallExpression" && unwrapNode(call.callee) === fn;
 }
 
@@ -43,14 +46,17 @@ function isEffectGenerator(fn: FunctionNode, names: EffectModuleNames): boolean 
   if (fn.type !== "FunctionExpression" || !fn.generator) return false;
   const argument = outermostWrapper(fn);
   const call = argument.parent;
+
   if (
     call?.type !== "CallExpression" ||
     !call.arguments.some((candidate) => candidate === argument)
   )
     return false;
   const direct = moduleCallName(call, names, "Effect");
+
   if (direct !== null) return generatorConstructors.has(direct);
   const curried = moduleCallName(unwrapNode(call.callee), names, "Effect");
+
   return curried !== null && curriedConstructors.has(curried);
 }
 
@@ -63,17 +69,21 @@ function isEffectGenerator(fn: FunctionNode, names: EffectModuleNames): boolean 
 function throwsIntoEffectGenerator(node: ESTree.ThrowStatement, names: EffectModuleNames): boolean {
   let child: ESTree.Node = node;
   let current: ESTree.Node | null = node.parent;
+
   while (current !== null) {
     if (current.type === "TryStatement" && current.block === child && current.handler !== null)
       return false;
+
     if (isFunction(current)) {
       if (!isImmediatelyInvoked(current)) return isEffectGenerator(current, names);
     } else if (current.type === "StaticBlock" || current.type === "PropertyDefinition") {
       return false;
     }
+
     child = current;
     current = current.parent;
   }
+
   return false;
 }
 
@@ -92,6 +102,7 @@ export const throwInEffectGenRule = defineRule({
   },
   create(context) {
     const names = collectEffectModuleNames(context.sourceCode.ast);
+
     if (!names.has("Effect")) return {};
 
     return {

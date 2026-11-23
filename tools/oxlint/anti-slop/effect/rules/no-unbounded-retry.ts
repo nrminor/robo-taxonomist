@@ -52,32 +52,41 @@ function constInitializer(
   identifier: ESTree.IdentifierReference,
 ): ESTree.Expression | null {
   const variable = resolveIdentifier(sourceCode, identifier);
+
   if (variable === null || variable.defs.length !== 1) return null;
   const [definition] = variable.defs;
+
   if (definition?.type !== "Variable" || definition.node.type !== "VariableDeclarator") return null;
+
   if (definition.parent?.type !== "VariableDeclaration" || definition.parent.kind !== "const")
     return null;
+
   return definition.node.init ?? null;
 }
 
 /** Follow `const` bindings and strip wrappers until the expression is not an identifier. */
 function resolveConst(sourceCode: SourceCode, expression: ESTree.Expression): ESTree.Expression {
   let current = unwrapExpression(expression);
+
   for (let depth = 0; depth < MAX_RESOLUTION_DEPTH && current.type === "Identifier"; depth++) {
     const initializer = constInitializer(sourceCode, current);
+
     if (initializer === null) return current;
     current = unwrapExpression(initializer);
   }
+
   return current;
 }
 
 /** The expression arguments of a call, or null when one is a spread. */
 function expressionArguments(call: ESTree.CallExpression): readonly ESTree.Expression[] | null {
   const expressions: ESTree.Expression[] = [];
+
   for (const argument of call.arguments) {
     if (argument.type === "SpreadElement") return null;
     expressions.push(argument);
   }
+
   return expressions;
 }
 
@@ -87,16 +96,19 @@ function propertyValue(object: ESTree.ObjectExpression, name: string): ESTree.Ex
     if (property.type === "Property" && !property.computed && keyName(property.key) === name)
       return property.value;
   }
+
   return null;
 }
 
 const both = (bounds: readonly Bound[]): Bound => {
   if (bounds.includes("bounded")) return "bounded";
+
   return bounds.includes("unknown") ? "unknown" : "unbounded";
 };
 
 const every = (bounds: readonly Bound[]): Bound => {
   if (bounds.includes("unbounded")) return "unbounded";
+
   return bounds.includes("unknown") ? "unknown" : "bounded";
 };
 
@@ -109,7 +121,9 @@ interface ScheduleReader {
 function limitsSchedule(reader: ScheduleReader, options: ESTree.Expression | undefined): boolean {
   if (options === undefined) return false;
   const value = resolveConst(reader.sourceCode, options);
+
   if (value.type !== "ObjectExpression") return true;
+
   return propertyValue(value, "times") !== null || propertyValue(value, "duration") !== null;
 }
 
@@ -122,19 +136,25 @@ function applyCombinator(
 ): Bound {
   if (limits.has(member)) return limitsSchedule(reader, args[0]) ? "bounded" : current;
   const others = args.map((argument) => scheduleBound(reader, argument));
+
   if (intersections.has(member)) return both([current, ...others]);
+
   if (unions.has(member)) return every([current, ...others]);
+
   return current;
 }
 
 /** Apply one `.pipe` step to the bound of the schedule before it. A step that is not a Schedule combinator is unknown. */
 function applyStep(reader: ScheduleReader, current: Bound, step: ESTree.Expression): Bound {
   const resolved = resolveConst(reader.sourceCode, step);
+
   // A point-free combinator such as `Schedule.jittered` keeps the bound.
   if (moduleMemberName(resolved, reader.names, "Schedule") !== null) return current;
   const member = moduleCallName(resolved, reader.names, "Schedule");
+
   if (member === null || resolved.type !== "CallExpression") return "unknown";
   const args = expressionArguments(resolved);
+
   return args === null ? "unknown" : applyCombinator(reader, current, member, args);
 }
 
@@ -142,11 +162,15 @@ function applyStep(reader: ScheduleReader, current: Bound, step: ESTree.Expressi
 function scheduleBound(reader: ScheduleReader, expression: ESTree.Expression): Bound {
   const node = resolveConst(reader.sourceCode, expression);
   const constant = moduleMemberName(node, reader.names, "Schedule");
+
   if (constant === "forever") return "unbounded";
+
   if (constant === "once") return "bounded";
+
   if (node.type !== "CallExpression") return "unknown";
 
   const callee = unwrapExpression(node.callee);
+
   if (
     callee.type === "MemberExpression" &&
     !callee.computed &&
@@ -154,7 +178,9 @@ function scheduleBound(reader: ScheduleReader, expression: ESTree.Expression): B
     callee.property.name === "pipe"
   ) {
     const args = expressionArguments(node);
+
     if (args === null || callee.object.type === "Super") return "unknown";
+
     return args.reduce<Bound>(
       (bound, step) => applyStep(reader, bound, step),
       scheduleBound(reader, callee.object),
@@ -162,13 +188,18 @@ function scheduleBound(reader: ScheduleReader, expression: ESTree.Expression): B
   }
 
   const member = moduleCallName(node, reader.names, "Schedule");
+
   if (member === null) return "unknown";
+
   if (unboundedConstructors.has(member)) return "unbounded";
+
   if (boundedConstructors.has(member)) return "bounded";
   const args = expressionArguments(node);
   const [self, ...rest] = args ?? [];
+
   // Data-first combinators take the schedule first: `Schedule.upTo(schedule, { times: 3 })`.
   if (self === undefined || rest.length === 0) return "unknown";
+
   return applyCombinator(reader, scheduleBound(reader, self), member, rest);
 }
 
@@ -181,6 +212,7 @@ interface RetryCall {
 function retryCall(call: ESTree.CallExpression, names: EffectModuleNames): RetryCall | null {
   const effectMember = moduleCallName(call, names, "Effect");
   let arity: number | null = null;
+
   if (effectMember === "retry") arity = 1;
   else if (effectMember === "retryOrElse") arity = 2;
   else if (
@@ -188,12 +220,16 @@ function retryCall(call: ESTree.CallExpression, names: EffectModuleNames): Retry
     moduleCallName(call, names, "HttpClient") === "retryTransient"
   )
     arity = 1;
+
   if (arity === null) return null;
   const args = expressionArguments(call);
+
   if (args === null || args.length < arity) return null;
   // The data-first form takes the effect, stream, or client first.
   const policy = args.length === arity ? args[0] : args[1];
+
   if (policy === undefined) return null;
+
   return { policy, timeoutApplies: effectMember !== null };
 }
 
@@ -203,9 +239,13 @@ function policySchedule(
   policy: ESTree.Expression,
 ): ESTree.Expression | null {
   const value = resolveConst(sourceCode, policy);
+
   if (value.type !== "ObjectExpression") return value;
+
   if (value.properties.some((property) => property.type === "SpreadElement")) return null;
+
   if (propertyValue(value, "times") !== null) return null;
+
   return propertyValue(value, "schedule");
 }
 
@@ -221,6 +261,7 @@ function isEffectFnPipeline(call: ESTree.CallExpression, names: EffectModuleName
   const callee = unwrapExpression(call.callee);
   const fn = callee.type === "CallExpression" ? unwrapExpression(callee.callee) : callee;
   const member = moduleMemberName(fn, names, "Effect");
+
   return member === "fn" || member === "fnUntraced";
 }
 
@@ -231,6 +272,7 @@ function isTimeoutOf(
   names: EffectModuleNames,
 ): boolean {
   const member = moduleCallName(node, names, "Effect");
+
   return (
     member !== null &&
     timeouts.has(member) &&
@@ -243,29 +285,42 @@ function isTimeoutOf(
 function hasLaterTimeout(call: ESTree.CallExpression, names: EffectModuleNames): boolean {
   const isTimeoutStep = (step: ESTree.Node): boolean => {
     const member = moduleCallName(unwrapNode(step), names, "Effect");
+
     return member !== null && timeouts.has(member);
   };
+
   let current: ESTree.Node = call;
+
   for (;;) {
     let parent: ESTree.Node | null = current.parent;
+
     while (parent !== null && unwrapNode(parent) !== parent) {
       current = parent;
       parent = parent.parent;
     }
+
     if (parent === null) return false;
+
     if (parent.type === "MemberExpression" && parent.object === current && isPipeCallee(parent)) {
       const pipeCall: ESTree.Node | null = parent.parent;
+
       if (pipeCall?.type !== "CallExpression" || pipeCall.callee !== parent) return false;
+
       if (pipeCall.arguments.some(isTimeoutStep)) return true;
       current = pipeCall;
       continue;
     }
+
     if (parent.type !== "CallExpression") return false;
+
     if (isTimeoutOf(parent, current, names)) return true;
     const index = parent.arguments.findIndex((argument) => argument === current);
+
     if (index < 0) return false;
     const callee = unwrapExpression(parent.callee);
+
     if (!isPipeCallee(callee) && !isEffectFnPipeline(parent, names)) return false;
+
     if (parent.arguments.slice(index + 1).some(isTimeoutStep)) return true;
     current = parent;
   }
@@ -290,9 +345,12 @@ export const noUnboundedRetryRule = defineRule({
     return {
       CallExpression(node) {
         const retry = retryCall(node, names);
+
         if (retry === null) return;
         const schedule = policySchedule(context.sourceCode, retry.policy);
+
         if (schedule === null || scheduleBound(reader, schedule) !== "unbounded") return;
+
         if (retry.timeoutApplies && hasLaterTimeout(node, names)) return;
         context.report({ node, messageId: "unboundedRetry" });
       },

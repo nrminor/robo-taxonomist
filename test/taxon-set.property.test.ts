@@ -25,6 +25,7 @@ const operators = Schema.Literals([
   "Complement",
   "SymmetricDifference",
 ]);
+
 const constructions = Arbitrary.flatMap(Arbitrary.schema(bounded(6)), (extra) =>
   Arbitrary.flatMap(constructionSteps(extra + 1), (steps) =>
     Arbitrary.map(Arbitrary.schema(bounded(steps.length + 3)), (right) => ({ steps, right })),
@@ -47,6 +48,7 @@ it.effect.prop(
 it("rejects split sharing, merged equal objects and extra rows in a literal wire fixture", () => {
   const a = TaxonSet.of(TaxonName.make("A"));
   const roots = { left: TaxonSet.union(a, a), right: TaxonSet.of(TaxonName.make("A")) };
+
   // Valid references need not follow the compiler's particular row order.
   const wire: Wire = {
     nodes: [
@@ -57,6 +59,7 @@ it("rejects split sharing, merged equal objects and extra rows in a literal wire
     left: 2,
     right: 1,
   };
+
   expectSameGraph(wire, roots);
   expectSameGraph(
     {
@@ -87,6 +90,7 @@ interface Step {
   readonly left: number;
   readonly right: number;
 }
+
 interface Construction {
   readonly steps: ReadonlyArray<Step>;
   readonly right: number;
@@ -131,6 +135,7 @@ function publicRoots(construction: Construction) {
     TaxonSet.of(TaxonName.make("A")),
     TaxonSet.of(TaxonName.make("B")),
   ];
+
   for (const step of construction.steps) {
     const left = at(handles, step.left);
     const right = at(handles, step.right);
@@ -145,6 +150,7 @@ function publicRoots(construction: Construction) {
       ),
     );
   }
+
   return { left: at(handles, handles.length - 1), right: at(handles, construction.right) };
 }
 
@@ -156,11 +162,13 @@ const rowSchema = Schema.TaggedUnion({
   Intersection: { operands: Schema.Array(Schema.Natural) },
   Difference: { left: Schema.Natural, right: Schema.Natural },
 });
+
 const wireSchema = Schema.Struct({
   nodes: Schema.Array(rowSchema),
   left: Schema.Natural,
   right: Schema.Natural,
 });
+
 type Wire = typeof wireSchema.Type;
 
 // Source edges come from the public objects, never from the received node table.
@@ -192,25 +200,31 @@ function expectSameGraph(
 ) {
   const forward = new Map<TaxonSet.TaxonSet, number>();
   const usedRefs = new Set<number>();
+
   const pending: Array<readonly [TaxonSet.TaxonSet, number]> = [
     [roots.left, wire.left],
     [roots.right, wire.right],
   ];
+
   while (pending.length > 0) {
     const pair = Option.getOrThrowWith(
       Option.fromUndefinedOr(pending.pop()),
       () => new Error("Missing source/wire pair"),
     );
+
     const [source, ref] = pair;
+
     if (forward.has(source)) {
       expect(forward.get(source)).toBe(ref);
       continue;
     }
+
     expect(usedRefs.has(ref)).toBe(false);
     forward.set(source, ref);
     usedRefs.add(ref);
     const row = at(wire.nodes, ref);
     expect(row._tag).toBe(source._tag);
+
     if (Predicate.isTagged(source, "Taxon") && rowSchema.guards.Taxon(row))
       expect(row.record).toEqual(source.record);
     const expectedChildren = sourceChildren(source);
@@ -224,6 +238,7 @@ function expectSameGraph(
       pending.push([child, childRef]);
     });
   }
+
   // Every visited ref exists, is unique, and is reachable; equal sizes exclude extra rows.
   expect(usedRefs.size).toBe(wire.nodes.length);
 }
@@ -236,6 +251,7 @@ const observeRequest = Effect.fnUntraced(function* (roots: {
 }) {
   let calls = 0;
   const requests: Wire[] = [];
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -244,8 +260,10 @@ const observeRequest = Effect.fnUntraced(function* (roots: {
         const wire = yield* Schema.decodeUnknownEffect(wireSchema)(state).pipe(Effect.orDie);
         requests.push(wire);
         const question = Option.getOrThrow(Record.get(decisions, "relation"));
+
         if (!Predicate.isTagged(question, "Classify"))
           return yield* Effect.die("Expected classification");
+
         return {
           answers: {
             relation: Classify({
@@ -260,6 +278,8 @@ const observeRequest = Effect.fnUntraced(function* (roots: {
       }),
     }),
   );
+
   yield* TaxonSet.equivalent(roots.left, roots.right).pipe(Effect.provide(layer));
+
   return { wire: at(requests, 0), calls };
 });

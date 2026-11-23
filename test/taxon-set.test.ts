@@ -24,7 +24,9 @@ const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
   const question = Option.getOrThrow(Record.get(decisions, "relation"));
+
   if (!Predicate.isTagged(question, "Classify")) throw new Error("Expected classification");
+
   return question;
 }
 
@@ -46,12 +48,14 @@ it("constructs one union retaining operand order, repetitions and supplied subtr
     abundance: 7,
     metadata: { sample: "A17", notes: [null, "caller"] },
   };
+
   const oak = TaxonSet.of(record);
   const beech = TaxonSet.of(TaxonName.make("Fagus"));
   const nested = TaxonSet.union(oak, beech);
   const none = TaxonSet.empty();
   const result = TaxonSet.unionAll([nested, oak, none, oak]);
   expect(result).toEqual({ _tag: "Union", operands: [nested, oak, none, oak] });
+
   if (!Predicate.isTagged(result, "Union")) throw new Error("Expected union");
   expect(result.operands[0]).toBe(nested);
   expect(result.operands[1]).toBe(oak);
@@ -69,6 +73,7 @@ it("captures a collection without retaining its mutable operand array", () => {
   inputs[0] = beech;
   inputs.push(oak);
   expect(first).not.toBe(second);
+
   if (!Predicate.isTagged(first, "Union") || !Predicate.isTagged(second, "Union"))
     throw new Error("Expected unions");
   expect(first.operands).not.toBe(second.operands);
@@ -81,6 +86,7 @@ it("consumes an iterable once while retaining repeated occurrences", () => {
   const oak = TaxonSet.of(TaxonName.make("Quercus"));
   const beech = TaxonSet.of(TaxonName.make("Fagus"));
   let iterations = 0;
+
   const inputs = {
     *[Symbol.iterator]() {
       iterations++;
@@ -89,6 +95,7 @@ it("consumes an iterable once while retaining repeated occurrences", () => {
       yield oak;
     },
   };
+
   const result = TaxonSet.unionAll(inputs);
   expect(iterations).toBe(1);
   expect(result).toEqual({ _tag: "Union", operands: [oak, beech, oak] });
@@ -99,6 +106,7 @@ it("serializes ten thousand flat targets without creating a deeply nested expres
   const result = TaxonSet.unionAll(inputs);
   const wire = TestJson.encodeSync(result);
   const document = TestJson.decodeSync(wire);
+
   if (!Predicate.hasProperty(document, "operands") || !Array.isArray(document.operands))
     throw new Error("Expected serialized union operands");
   expect(document.operands).toHaveLength(10_000);
@@ -116,12 +124,14 @@ it("preserves syntax with fresh parents and shared readonly children", () => {
   const second = TaxonSet.union(oak, beech);
   expect(first).toEqual({ _tag: "Union", operands: [oak, beech] });
   expect(first).not.toBe(second);
+
   if (!Predicate.isTagged(first, "Union") || !Predicate.isTagged(second, "Union"))
     throw new Error("Expected unions");
   expect(first.operands).not.toBe(second.operands);
   expect(first.operands[0]).toBe(oak);
   expect(first.operands[1]).toBe(beech);
   const remaining = TaxonSet.difference(first, oak);
+
   if (!Predicate.isTagged(remaining, "Difference")) throw new Error("Expected difference");
   expect(remaining.left).toBe(first);
   expect(remaining.right).toBe(oak);
@@ -136,6 +146,7 @@ it("preserves literal Empty and derived syntax without normalization", () => {
   const b = TaxonSet.of(TaxonName.make("B"));
   const intersection = TaxonSet.intersection(a, none);
   const another = TaxonSet.intersection(a, none);
+
   if (
     !Predicate.isTagged(intersection, "Intersection") ||
     !Predicate.isTagged(another, "Intersection")
@@ -148,6 +159,7 @@ it("preserves literal Empty and derived syntax without normalization", () => {
   expect(intersection).not.toBe(another);
   const complement = TaxonSet.complement(a, b);
   expect(complement).toEqual({ _tag: "Difference", left: b, right: a });
+
   if (!Predicate.isTagged(complement, "Difference")) throw new Error("Expected difference");
   expect(complement.left).toBe(b);
   expect(complement.right).toBe(a);
@@ -211,6 +223,7 @@ it.effect.each(operations)(
     const left = TaxonSet.of(TaxonName.make("A"));
     const right = TaxonSet.of(TaxonName.make("C"));
     let calls = 0;
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -225,6 +238,7 @@ it.effect.each(operations)(
             right: 1,
           });
           const question = relationQuestion(decisions);
+
           return Effect.succeed({
             answers: {
               relation: Classify({
@@ -239,6 +253,7 @@ it.effect.each(operations)(
         },
       }),
     );
+
     return Effect.gen(function* () {
       const result = yield* operation(left, right);
       expect(result).toEqual({
@@ -259,6 +274,7 @@ it.effect(
     const beech = TaxonSet.of({ scientificName: TaxonName.make("Fagus"), panelEntry: "B" });
     const birch = TaxonSet.of(TaxonName.make("Betula"));
     const left = TaxonSet.unionAll([oak, beech, oak]);
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -274,6 +290,7 @@ it.effect(
             right: 3,
           });
           const question = relationQuestion(decisions);
+
           return Effect.succeed({
             answers: {
               relation: Classify({
@@ -288,6 +305,7 @@ it.effect(
         },
       }),
     );
+
     return Effect.gen(function* () {
       const result = yield* TaxonSet.overlaps(left, birch);
       expect(result).toEqual({
@@ -296,6 +314,7 @@ it.effect(
         side: "left",
         taxon: beech,
       });
+
       if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
         throw new Error("Expected clarification");
       expect(result.taxon).toBe(beech);
@@ -328,6 +347,7 @@ it.effect.each([
   Effect.gen(function* () {
     const left = TaxonSet.union(TaxonSet.of(TaxonName.make("A")), TaxonSet.empty());
     const right = TaxonSet.union(TaxonSet.of(TaxonName.make("B")), TaxonSet.empty());
+
     for (const [index, [relation, operation]] of operations.entries()) {
       const comparison = yield* operation(left, right);
       const expectedTag = Array.get(expected, index).pipe(Option.getOrThrow);
@@ -359,6 +379,7 @@ it.effect.each([
         TaxonSet.of(TaxonName.make("A")),
         TaxonSet.of(TaxonName.make("B")),
       );
+
       expect(subset).toEqual({ _tag, relation: "subset" });
     }).pipe(
       Effect.provide(
@@ -378,6 +399,7 @@ it.effect("keeps a grouped probability tie unresolved", () =>
       TaxonSet.of(TaxonName.make("A")),
       TaxonSet.of(TaxonName.make("B")),
     );
+
     expect(subset).toEqual({ _tag: "Undetermined", relation: "subset" });
   }).pipe(
     Effect.provide(
@@ -403,10 +425,12 @@ it.effect(
     const a = TaxonSet.of(TaxonName.make("A"));
     const left = TaxonSet.union(a, a);
     const duplicate = TaxonSet.of(TaxonName.make("A"));
+
     const right = TaxonSet.intersection(
       TaxonSet.of(TaxonName.make("B")),
       TaxonSet.difference(left, duplicate),
     );
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -434,6 +458,7 @@ it.effect(
           expect(question.criteria.multipleRight0).toContain("Right taxon node 3 ");
           expect(question.criteria.multipleRight1).toContain("Right taxon node 1 ");
           expect(question.criteria.multipleRight2).toContain("Right taxon node 5 ");
+
           return Effect.succeed({
             answers: {
               relation: Classify({
@@ -448,6 +473,7 @@ it.effect(
         },
       }),
     );
+
     return Effect.gen(function* () {
       const result = yield* TaxonSet.overlaps(left, right);
       expect(result).toEqual({
@@ -456,6 +482,7 @@ it.effect(
         side: "right",
         taxon: duplicate,
       });
+
       if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected clarification");
       expect(result.taxon).toBe(duplicate);
       expect(result.taxon).not.toBe(a);
@@ -466,19 +493,24 @@ it.effect(
 it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
   const name = TaxonName.make("A");
   const leafReads = MutableRef.make(0);
+
   const leaf = TaxonSet.of({
     get scientificName() {
       MutableRef.increment(leafReads);
+
       return name;
     },
   });
+
   const expression = Iterable.reduce<number, TaxonSet.TaxonSet>(
     Iterable.range(1, 12),
     leaf,
     (previous) => TaxonSet.union(previous, previous),
   );
+
   // Observe preparation, not construction; every read returns the original valid name.
   MutableRef.set(leafReads, 0);
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -493,6 +525,7 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
           record: { scientificName: "A" },
         });
         const question = relationQuestion(decisions);
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -507,6 +540,7 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
       },
     }),
   );
+
   return Effect.gen(function* () {
     const equivalence = yield* TaxonSet.equivalent(expression, expression);
     expect(equivalence).toEqual({
@@ -524,6 +558,7 @@ it.effect.each([
     () => {
       const branch = TaxonSet.union(TaxonSet.empty(), TaxonSet.empty());
       Object.assign(branch, { operands: [branch] });
+
       return branch;
     },
   ],
@@ -535,6 +570,7 @@ it.effect.each([
       const branch = TaxonSet.union(leaf, leaf);
       // @ts-expect-error Untyped consumers can corrupt a previously valid identifying field.
       record.scientificName = " ";
+
       return branch;
     },
   ],
@@ -543,6 +579,7 @@ it.effect.each([
     () => {
       const branch = TaxonSet.union(TaxonSet.empty(), TaxonSet.empty());
       Object.assign(branch, { operands: [] });
+
       return branch;
     },
   ],
@@ -551,21 +588,25 @@ it.effect.each([
     () => {
       const branch = TaxonSet.difference(TaxonSet.empty(), TaxonSet.empty());
       Object.assign(branch, { right: 17 });
+
       return branch;
     },
   ],
 ] as const)("rejects a nominal expression with %s before transport", ([scenario, make]) => {
   const expression = make();
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: () => Effect.die("No request expected"),
     }),
   );
+
   return Effect.gen(function* () {
     const error = yield* Effect.flip(
       TaxonSet.overlaps(expression, TaxonSet.of(TaxonName.make("B"))),
     );
+
     if (scenario === "cycle") {
       expect(error).toMatchObject({
         _tag: "AiError",
@@ -597,11 +638,14 @@ it.effect("accepts an Effect-rescaled set answer despite zero confidence", () =>
         }),
     }),
   );
+
   return Effect.gen(function* () {
     const a = TaxonSet.of(TaxonName.make("A"));
+
     const subset = yield* TaxonSet.isSubsetOf(a, a, {
       policy: AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
     });
+
     expect(subset).toEqual({ _tag: "Yes", relation: "subset" });
   }).pipe(Effect.provide(layer));
 });
@@ -633,6 +677,7 @@ for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations
     Effect.gen(function* () {
       const left = TaxonSet.of(TaxonName.make("A"));
       const right = TaxonSet.of(TaxonName.make("B"));
+
       const result = yield* operation(left, right).pipe(
         Effect.provide(
           relationLayer(
@@ -643,7 +688,9 @@ for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations
           ),
         ),
       );
+
       expect(result).toEqual(expected);
+
       if (result._tag === "MultipleTaxaInSet")
         expect(result.taxon).toBe(result.side === "left" ? left : right);
     }),
@@ -656,12 +703,15 @@ it.effect(
     const a = TaxonSet.of(TaxonName.make("A"));
     const b = TaxonSet.of(TaxonName.make("B"));
     const c = TaxonSet.of(TaxonName.make("C"));
+
     const left = TaxonSet.difference(
       TaxonSet.union(a, TaxonSet.intersection(b, a)),
       TaxonSet.of(TaxonName.make("A")),
     );
+
     const right = TaxonSet.union(c, TaxonSet.difference(a, c));
     let calls = 0;
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -683,6 +733,7 @@ it.effect(
             multipleRight0: expect.stringContaining("Right taxon node 7 "),
             multipleRight1: expect.stringContaining("Right taxon node 3 "),
           });
+
           return Effect.succeed({
             answers: {
               relation: Classify({
@@ -704,6 +755,7 @@ it.effect(
         },
       }),
     );
+
     return Effect.gen(function* () {
       const result = yield* TaxonSet.isSubsetOf(left, right);
       expect(result).toEqual({
@@ -712,6 +764,7 @@ it.effect(
         side: "right",
         taxon: a,
       });
+
       if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected clarification");
       expect(result.taxon).toBe(a);
       expect(calls).toBe(1);
@@ -722,10 +775,12 @@ it.effect(
 it.effect("uses only the listed literal Empty shortcuts, without certifying other inputs", () => {
   const empty = TaxonSet.empty();
   const problematic = TaxonSet.of(TaxonName.make("A and B"));
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({ decide: () => Effect.die("No requests expected") }),
   );
+
   return Effect.gen(function* () {
     const emptySubset = yield* TaxonSet.isSubsetOf(empty, problematic);
     expect(emptySubset).toEqual({
@@ -775,6 +830,7 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
   const nonliteralEmpty = TaxonSet.difference(a, a);
   const zeroNames = TaxonSet.union(empty, empty);
   const seen: unknown[] = [];
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -782,7 +838,9 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
         seen.push(state);
         const question = relationQuestion(decisions);
         expect(Record.keys(decisions)).toEqual(["relation"]);
+
         if (seen.length === 5) expect(Record.keys(question.criteria)).toEqual(baseRelationLabels);
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -797,6 +855,7 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
       },
     }),
   );
+
   return Effect.gen(function* () {
     const subset = yield* TaxonSet.isSubsetOf(nonliteralEmpty, empty);
     expect(subset).toEqual({
@@ -881,6 +940,7 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
       Effect.gen(function* () {
         const a = TaxonSet.of(TaxonName.make("A"));
         const b = TaxonSet.of(TaxonName.make("B"));
+
         const comparison = yield* operation(a, b, {
           policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
         }).pipe(
@@ -893,6 +953,7 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
             ),
           ),
         );
+
         expect(comparison).toEqual({ _tag: expectedTag, relation });
       }),
   );
@@ -900,6 +961,7 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
     Effect.gen(function* () {
       const a = TaxonSet.of(TaxonName.make("A"));
       const b = TaxonSet.of(TaxonName.make("B"));
+
       const result = yield* operation(a, b, {
         policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
       }).pipe(
@@ -912,6 +974,7 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
           ),
         ),
       );
+
       expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation, side: "right", taxon: b });
     }),
   );
@@ -921,12 +984,14 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
   const a = TaxonSet.of(TaxonName.make("A"));
   const b = TaxonSet.of(TaxonName.make("B"));
   const seen: string[][] = [];
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
         const question = relationQuestion(decisions);
         seen.push(Record.keys(question.criteria));
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -941,8 +1006,10 @@ it.effect("builds per-execution name inventories for repeated and interleaved se
       },
     }),
   );
+
   const first = TaxonSet.overlaps(a, a);
   const second = TaxonSet.equivalent(TaxonSet.union(a, b), TaxonSet.empty());
+
   return Effect.gen(function* () {
     yield* Effect.all([first, second], { concurrency: 2 });
     yield* first;
@@ -971,21 +1038,26 @@ it.effect.each(operations)(
   "rejects invalid attempted %s input before traversal or transport",
   ([_relation, operation]) => {
     let calls = 0;
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: () => {
           calls++;
+
           return Effect.die("No requests expected");
         },
       }),
     );
+
     return Effect.gen(function* () {
       const malformed: unknown = { _tag: "Difference", left: TaxonSet.empty() };
+
       const error = yield* Effect.flip(
         // @ts-expect-error Malformed untyped expression lacks the right operand.
         operation(malformed, TaxonSet.of(TaxonName.make("A"))),
       );
+
       expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -1000,16 +1072,20 @@ it.effect.each(operations)(
       method: "decide",
       reason: new AiError.UnknownError({ description: "fixture unavailable" }),
     });
+
     let calls = 0;
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: () => {
           calls++;
+
           return Effect.fail(failure);
         },
       }),
     );
+
     return Effect.gen(function* () {
       const a = TaxonSet.of(TaxonName.make("A"));
       const error = yield* Effect.flip(operation(a, a));
@@ -1022,6 +1098,7 @@ it.effect.each(operations)(
 it.effect.each(operations)("rejects a missing answer for %s", ([_relation, operation]) =>
   Effect.gen(function* () {
     const a = TaxonSet.of(TaxonName.make("A"));
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -1032,6 +1109,7 @@ it.effect.each(operations)("rejects a missing answer for %s", ([_relation, opera
           }),
       }),
     );
+
     const error = yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)));
     expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
   }),
@@ -1043,15 +1121,18 @@ it.effect.each(operations)(
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       let calls = 0;
+
       const layer = Layer.effect(
         DecisionModel.DecisionModel,
         DecisionModel.make({
           decide: () => {
             calls++;
+
             return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
           },
         }),
       );
+
       const a = TaxonSet.of(TaxonName.make("A"));
       const fiber = yield* operation(a, a).pipe(Effect.provide(layer), Effect.forkChild);
       yield* Deferred.await(started);
@@ -1065,15 +1146,18 @@ it.effect.each(operations)(
 it.effect.each(operations)("preserves a provider defect for %s", ([_relation, operation]) => {
   const defect = new Error("Provider transport defect fixture");
   let calls = 0;
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: () => {
         calls++;
+
         return Effect.die(defect);
       },
     }),
   );
+
   return Effect.gen(function* () {
     const a = TaxonSet.of(TaxonName.make("A"));
     const exit = yield* Effect.exit(operation(a, a));
@@ -1089,12 +1173,14 @@ it.effect.each(operations)("preserves a provider defect for %s", ([_relation, op
 it.effect("maps a single overlap observation to disjoint without another classification", () => {
   let calls = 0;
   const set = TaxonSet.of(TaxonName.make("A"));
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ decisions }) => {
         calls++;
         expect(Record.keys(decisions)).toEqual(["relation"]);
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -1107,6 +1193,7 @@ it.effect("maps a single overlap observation to disjoint without another classif
       },
     }),
   );
+
   return Effect.gen(function* () {
     const disjoint = yield* TaxonSet.disjoint(set, set);
     expect(disjoint).toEqual({ _tag: "No", relation: "disjoint" });
@@ -1117,6 +1204,7 @@ it.effect("maps a single overlap observation to disjoint without another classif
 it.effect("asks overlap directly with one complete-expression classification", () => {
   let calls = 0;
   const set = TaxonSet.of(TaxonName.make("A"));
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -1129,6 +1217,7 @@ it.effect("asks overlap directly with one complete-expression classification", (
             disjoint: expect.any(globalThis.String),
           },
         });
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -1141,6 +1230,7 @@ it.effect("asks overlap directly with one complete-expression classification", (
       },
     }),
   );
+
   return Effect.gen(function* () {
     const overlap = yield* TaxonSet.overlaps(set, set);
     expect(overlap).toEqual({ _tag: "No", relation: "overlap" });
@@ -1151,6 +1241,7 @@ it.effect("asks overlap directly with one complete-expression classification", (
 it.effect("asks organism-set equivalence directly even for the same expression", () => {
   let calls = 0;
   const set = TaxonSet.of(TaxonName.make("A"));
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -1160,6 +1251,7 @@ it.effect("asks organism-set equivalence directly even for the same expression",
         expect(decisions.relation).toMatchObject({
           criteria: { equal: expect.any(globalThis.String) },
         });
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -1172,6 +1264,7 @@ it.effect("asks organism-set equivalence directly even for the same expression",
       },
     }),
   );
+
   return Effect.gen(function* () {
     const equivalence = yield* TaxonSet.equivalent(set, set);
     expect(equivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
@@ -1181,6 +1274,7 @@ it.effect("asks organism-set equivalence directly even for the same expression",
 
 it.effect("asks proper subset directly, including unequal organism sets", () => {
   let calls = 0;
+
   const layer = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
@@ -1193,6 +1287,7 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
             leftEmpty: expect.any(globalThis.String),
           },
         });
+
         return Effect.succeed({
           answers: {
             relation: Classify({
@@ -1205,11 +1300,13 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
       },
     }),
   );
+
   return Effect.gen(function* () {
     const properSubset = yield* TaxonSet.isProperSubsetOf(
       TaxonSet.empty(),
       TaxonSet.of(TaxonName.make("A")),
     );
+
     expect(properSubset).toEqual({ _tag: "No", relation: "proper-subset" });
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
@@ -1221,6 +1318,7 @@ it.effect(
     let calls = 0;
     const left = TaxonSet.union(TaxonSet.of(TaxonName.make("A")), TaxonSet.of(TaxonName.make("B")));
     const right = TaxonSet.of(TaxonName.make("C"));
+
     const layer = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
@@ -1250,6 +1348,7 @@ it.effect(
             },
           });
           const question = relationQuestion(decisions);
+
           return Effect.succeed({
             answers: {
               relation: Classify({
@@ -1264,6 +1363,7 @@ it.effect(
         },
       }),
     );
+
     return Effect.gen(function* () {
       const subset = yield* TaxonSet.isSubsetOf(left, right);
       expect(subset).toEqual({ _tag: "Yes", relation: "subset" });

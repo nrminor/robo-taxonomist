@@ -27,6 +27,7 @@ const writeStream = Effect.fnUntraced(function* <E, R>(stream: Stream.Stream<str
 /** Write a text result followed by a newline to checked stdout. */
 export const writeText = (text: string | boolean) => {
   const lines = Stream.succeed(`${text}\n`);
+
   return writeStream(lines);
 };
 
@@ -38,12 +39,14 @@ export const writeJson = Effect.fnUntraced(function* <S extends Schema.Constrain
   const text = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(schema))(value).pipe(
     Effect.mapError(serializationFailure),
   );
+
   yield* writeText(text);
 });
 
 /** Write each streamed value as a JSON line, preserving source and output failures. */
 export const writeJsonLines = <A, E, R>(values: Stream.Stream<A, E, R>) => {
   const encoder = Ndjson.encodeString<E>();
+
   const lines = values.pipe(
     Stream.pipeThroughChannel(encoder),
     Stream.mapError((error) => (Ndjson.isNdjsonError(error) ? serializationFailure(error) : error)),
@@ -60,17 +63,21 @@ const writeTable = <S extends Schema.Constraint, E, R>(
 ) => {
   const { delimiter = "\t", newline = "\n" } = options;
   const encoder = Csv.encodeSchemaString(schema)<E>({ ...options, delimiter, newline });
+
   const lines = rows.pipe(
     Stream.pipeThroughChannel(encoder),
     Stream.mapError((error) => (Schema.isSchemaError(error) ? serializationFailure(error) : error)),
   );
+
   if (!options.headers) return writeStream(lines);
 
   const header = Stream.succeed(headings).pipe(
     Stream.pipeThroughChannel(Csv.encodeString({ delimiter, newline })),
   );
+
   // Replace the native header without changing the encoder's error record numbers.
   const body = lines.pipe(Stream.drop(1));
+
   return writeStream(Stream.concat(header, body));
 };
 
@@ -81,6 +88,7 @@ export const writeComparison = (
 ) => {
   const schema = Schema.Union([Documents.IdentityJudgment, Documents.ContainmentJudgment]);
   const columns = [Documents.IdentityJudgment.tag, "side"] as const;
+
   const headings = columns.map((column) =>
     column === Documents.IdentityJudgment.tag ? "judgment" : column,
   );
@@ -116,12 +124,14 @@ export const writeRelation = Effect.fnUntraced(function* (
   noHeader = false,
 ) {
   const presented = yield* Presentation.relationRow(judgment);
+
   const row = {
     judgment: presented.judgment._tag,
     relation: presented.judgment.relation,
     side: "side" in presented.judgment ? presented.judgment.side : "",
     clarification_target: presented.clarification,
   };
+
   const columns = ["judgment", "relation", "side", "clarification_target"] as const;
   yield* writeTable(Stream.succeed(row), RelationRow, columns, {
     columns,
@@ -141,11 +151,13 @@ export const writeQuantifier = Effect.fnUntraced(function* (
   noHeader = false,
 ) {
   const presented = yield* Presentation.quantifierRow(judgment);
+
   const row = {
     judgment: presented.judgment._tag,
     quantifier: presented.judgment.quantifier,
     clarification_target: presented.clarification,
   };
+
   const columns = ["judgment", "quantifier", "clarification_target"] as const;
   yield* writeTable(Stream.succeed(row), QuantifierRow, columns, {
     columns,
@@ -172,7 +184,9 @@ export const writeMembership = <E, R>(
       clarification_target: clarification,
     })),
   );
+
   const columns = ["judgment", "record", "clarification_target"] as const;
+
   return writeTable(rows, MembershipRow, columns, {
     columns,
     headers: !noHeader,
@@ -185,6 +199,7 @@ export const writePartition = <E, R>(
   noHeader = false,
 ) => {
   const entries = partitions.pipe(Stream.flatMap(Presentation.partitionEntries));
+
   return writeMembership(entries, noHeader);
 };
 
@@ -193,6 +208,7 @@ export const writePartitionJsonLines = <E, R>(
   partitions: Stream.Stream<Presentation.Partition, E, R>,
 ) => {
   const entries = partitions.pipe(Stream.flatMap(Presentation.partitionEntries));
+
   return writeJsonLines(entries);
 };
 
@@ -224,7 +240,9 @@ export const writeClassification = <E, R>(
       ranking_position: rankingPosition,
     })),
   );
+
   const columns = ["record", "target", "judgment", "support", "ranking_position"] as const;
+
   return writeTable(rows, ClassificationRow, columns, {
     columns,
     headers: !noHeader,

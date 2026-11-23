@@ -22,6 +22,7 @@ const Intent = Schema.TaggedUnion({
     error: RequestFailure,
   },
 });
+
 const Phase = Schema.TaggedUnion({
   AwaitingInitial: {},
   Settled: {},
@@ -33,6 +34,7 @@ const Phase = Schema.TaggedUnion({
   ReadyToPublish: { reply: ReplyReference },
   Failed: { error: RequestFailure },
 });
+
 const Event = Schema.TaggedUnion({
   Start: { intent: Schema.Union([Intent.cases.Panel, Intent.cases.Retry]), now: Schema.Finite },
   Completed: {
@@ -56,6 +58,7 @@ export interface PublicationCandidate {
   readonly request: typeof ClassifyRequest.Type;
   readonly animate: boolean;
 }
+
 interface Publication {
   readonly intent: typeof Intent.Type;
   readonly phase: typeof Phase.Type;
@@ -124,6 +127,7 @@ const reducePublication = (state: Publication, event: typeof Event.Type): Public
         : state,
     Wake: ({ token, now }) => {
       if (token !== state.intent.token) return state;
+
       return {
         ...state,
         phase: Phase.match(state.phase, {
@@ -143,13 +147,16 @@ const reducePublication = (state: Publication, event: typeof Event.Type): Public
     },
     FeedbackCommitted: ({ token, now }) => {
       if (token !== state.intent.token) return state;
+
       if (Phase.guards.AwaitingFeedbackCommit(state.phase))
         return { ...state, phase: Phase.cases.WaitingVisibly.make({ notBefore: now + 250 }) };
+
       if (Phase.guards.ReadyAwaitingFeedbackCommit(state.phase))
         return {
           ...state,
           phase: Phase.cases.HoldingReply.make({ reply: state.phase.reply, notBefore: now + 250 }),
         };
+
       return state;
     },
     DisplayCommitted: ({ token, reply, request, animate }) => {
@@ -157,6 +164,7 @@ const reducePublication = (state: Publication, event: typeof Event.Type): Public
       // must not erase the comparison baseline React really displayed.
       if (Option.isSome(state.committed) && state.committed.value.token === token) return state;
       const display = replaceDisplayed(Option.getOrUndefined(state.committed)?.display, reply);
+
       return {
         ...state,
         committed: Option.some({ token, display, request, animate }),
@@ -179,6 +187,7 @@ const wakeDeadline = Phase.match({
   WaitingVisibly: () => undefined,
   HoldingReply: ({ notBefore }) => notBefore,
 });
+
 const isPending = Phase.match({
   AwaitingInitial: () => false,
   Settled: () => false,
@@ -190,17 +199,21 @@ const isPending = Phase.match({
   WaitingVisibly: () => true,
   HoldingReply: () => true,
 });
+
 const requestedRequest = Intent.match({
   Initial: (): typeof ClassifyRequest.Type => ({ panelId: initialPanelId }),
   Panel: ({ request }) => request,
   Retry: ({ request }) => request,
 });
+
 const intentMotion = Intent.match({
   Initial: () => false,
   Panel: ({ animate }) => animate,
   Retry: ({ animate }) => animate,
 });
+
 const genericInternalFailure = ClassificationFailure.cases.InternalFailure.make({});
+
 const safeRequestFailure = (cause: Cause.Cause<RequestFailure>): RequestFailure =>
   Cause.hasDies(cause)
     ? genericInternalFailure
@@ -208,6 +221,7 @@ const safeRequestFailure = (cause: Cause.Cause<RequestFailure>): RequestFailure 
 
 const presentPublication = (state: Publication) => {
   const token = state.intent.token;
+
   const candidate = Phase.guards.ReadyToPublish(state.phase)
     ? Option.some({
         token,
@@ -219,13 +233,16 @@ const presentPublication = (state: Publication) => {
         animate: intentMotion(state.intent),
       })
     : state.committed;
+
   const pending = isPending(state.phase);
   const visible = pending && !Phase.guards.WaitingSilently(state.phase);
+
   const failure = Phase.guards.Failed(state.phase)
     ? state.phase.error
     : pending && Intent.guards.Retry(state.intent)
       ? state.intent.error
       : undefined;
+
   return {
     initialActive: Intent.guards.Initial(state.intent),
     awaitingInitial: Phase.guards.AwaitingInitial(state.phase),
@@ -250,13 +267,16 @@ export const usePanelPresentation = () => {
   const [state, dispatch] = useReducer(reducePublication, undefined, initialPublication);
   const run = useAtomSet(selectPanelAtom, { mode: "promiseExit" });
   const interrupt = useAtomSet(selectPanelAtom);
+
   const start = useCallback(
     (request: typeof ClassifyRequest.Type, animate: boolean, retryError?: RequestFailure): void => {
       const token = Symbol();
+
       const intent =
         retryError === undefined
           ? Intent.cases.Panel.make({ token, request, animate })
           : Intent.cases.Retry.make({ token, request, animate, error: retryError });
+
       dispatch(Event.cases.Start.make({ intent, now: performance.now() }));
       void run(request).then(
         (exit) => dispatch(Event.cases.Completed.make({ token, exit })),
@@ -266,6 +286,7 @@ export const usePanelPresentation = () => {
     },
     [run],
   );
+
   const reportInitial = useCallback(
     (token: symbol, result: AsyncResult.AsyncResult<PanelResponse, RequestFailure>): void => {
       if (AsyncResult.isWaiting(result)) return;
@@ -279,9 +300,11 @@ export const usePanelPresentation = () => {
     },
     [],
   );
+
   const feedbackCommitted = useCallback((token: symbol): void => {
     dispatch(Event.cases.FeedbackCommitted.make({ token, now: performance.now() }));
   }, []);
+
   const displayCommitted = useCallback((candidate: PublicationCandidate): void => {
     dispatch(
       Event.cases.DisplayCommitted.make({
@@ -292,20 +315,25 @@ export const usePanelPresentation = () => {
       }),
     );
   }, []);
+
   const deadline = wakeDeadline(state.phase);
   const token = state.intent.token;
   useEffect(() => {
     if (deadline === undefined) return;
     let timer: number;
+
     const wake = (): void => {
       const now = performance.now();
+
       if (now < deadline) {
         timer = window.setTimeout(wake, Math.ceil(deadline - now));
       } else {
         dispatch(Event.cases.Wake.make({ token, now }));
       }
     };
+
     timer = window.setTimeout(wake, Math.max(0, Math.ceil(deadline - performance.now())));
+
     return () => window.clearTimeout(timer);
   }, [deadline, token]);
   useEffect(() => () => interrupt(Atom.Interrupt), [interrupt]);

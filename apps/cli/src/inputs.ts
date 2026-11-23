@@ -4,7 +4,9 @@ import { CollectionExecution, RecordLabel, TaxonName, TaxonSet } from "robo-taxo
 import * as Documents from "./documents.ts";
 
 const inputEncodings = ["text", "json", "jsonl"] as const;
+
 type InputEncoding = (typeof inputEncodings)[number];
+
 /** Accept either an original record label or an identifying record with JSON metadata. */
 export type InputRecord = RecordLabel | Documents.RecordDocument;
 
@@ -84,12 +86,15 @@ const readSources = (
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const stdio = yield* Stdio.Stdio;
+
       return Stream.fromIterable(paths).pipe(
         Stream.flatMap((path): Stream.Stream<SourceUnit, CliError.UserError> => {
           const location = role === "target" && path === "-" ? "stdin" : path;
+
           const encoding =
             format ??
             (path.endsWith(".json") ? "json" : path.endsWith(".jsonl") ? "jsonl" : "text");
+
           const text = (path === "-" ? stdio.stdin : fs.stream(path)).pipe(
             Stream.mapError(
               (cause) =>
@@ -100,6 +105,7 @@ const readSources = (
             ),
             Stream.decodeText(),
           );
+
           const lines = () =>
             text.pipe(
               Stream.splitLines,
@@ -110,6 +116,7 @@ const readSources = (
                 line: index + 1,
               })),
             );
+
           return Match.value(encoding).pipe(
             Match.literalsExhaustive({
               text: lines,
@@ -129,7 +136,9 @@ const readSources = (
   );
 
 const recordJson = Schema.fromJsonString(Schema.Array(Documents.RecordDocument));
+
 const recordLine = Schema.fromJsonString(Documents.RecordDocument);
+
 const targetJson = Schema.fromJsonString(
   Schema.Union([Schema.Array(Documents.RecordDocument), Documents.SetDocument]),
 );
@@ -168,6 +177,7 @@ const decodeTargets = Effect.fnUntraced(function* (unit: SourceUnit) {
           jsonl: () => [TaxonSet.of(Schema.decodeSync(recordLine)(unit.text))],
           json: () => {
             const document = Schema.decodeSync(targetJson)(unit.text);
+
             return Array.isArray<typeof document>(document)
               ? document.map((record) => TaxonSet.of(record))
               : [Documents.restoreSet(document)];
@@ -200,6 +210,7 @@ export const loadRecords = (
     Stream.mapEffect(decodeRecords),
     Stream.flatMap((records) => Stream.fromIterable<InputRecord>(records)),
   );
+
   return Stream.fromIterable<InputRecord>(labels).pipe(Stream.concat(files));
 };
 
@@ -213,10 +224,12 @@ export const loadTargets = Effect.fnUntraced(function* (
     Stream.mapEffect(decodeTargets),
     Stream.flatMap((sets) => Stream.fromIterable<TaxonSet.TaxonSet>(sets)),
   );
+
   const sets = yield* Stream.fromIterable(names).pipe(
     Stream.map((name) => TaxonSet.of(name)),
     Stream.concat(files),
     Stream.runCollect,
   );
+
   return TaxonSet.unionAll(sets);
 });

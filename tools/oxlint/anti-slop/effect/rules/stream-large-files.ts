@@ -44,6 +44,7 @@ function propertyName(node: ESTree.MemberExpression): string | null {
 const isComputedPart = (node: ESTree.Node | undefined): boolean => {
   if (node === undefined) return false;
   const part = unwrapNode(node);
+
   return !(
     part.type === "Literal" ||
     (part.type === "TemplateLiteral" && part.expressions.length === 0)
@@ -58,13 +59,18 @@ const isComputedPart = (node: ESTree.Node | undefined): boolean => {
 function looksUnbounded(path: ESTree.Node, text: string): boolean {
   if (words(text).some((word) => largeDataWords.has(word))) return true;
   const node = unwrapNode(path);
+
   if (node.type === "BinaryExpression") return node.operator === "+" && isComputedPart(node.right);
+
   if (node.type === "MemberExpression") return node.computed || propertyName(node) === "path";
+
   if (node.type !== "CallExpression") return false;
   const callee = unwrapNode(node.callee);
+
   if (callee.type !== "MemberExpression") return false;
   const receiver = unwrapNode(callee.object);
   const method = propertyName(callee);
+
   if (
     receiver.type !== "Identifier" ||
     receiver.name !== "path" ||
@@ -72,6 +78,7 @@ function looksUnbounded(path: ESTree.Node, text: string): boolean {
     !pathBuilders.has(method)
   )
     return false;
+
   return isComputedPart(node.arguments.at(-1));
 }
 
@@ -92,9 +99,11 @@ export const streamLargeFilesRule = defineRule({
     return {
       CallExpression(node) {
         const callee = unwrapNode(node.callee);
+
         if (callee.type !== "MemberExpression") return;
         const receiver = unwrapNode(callee.object);
         const method = propertyName(callee);
+
         if (
           receiver.type !== "Identifier" ||
           receiver.name !== "fs" ||
@@ -103,13 +112,16 @@ export const streamLargeFilesRule = defineRule({
         )
           return;
         const [path, encoding, ...rest] = node.arguments;
+
         if (path === undefined || path.type === "SpreadElement" || rest.length > 0) return;
+
         if (
           encoding !== undefined &&
           !(encoding.type === "Literal" && typeof encoding.value === "string")
         )
           return;
         const text = context.sourceCode.getText(path);
+
         if (!looksUnbounded(path, text)) return;
         context.report({
           node,

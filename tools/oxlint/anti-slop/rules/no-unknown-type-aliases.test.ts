@@ -3,6 +3,7 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { noUnknownTypeAliasesRule } from "./no-unknown-type-aliases.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const error = { messageId: "unknownAlias" };
 
 tester.run("anti-slop/no-unknown-type-aliases", noUnknownTypeAliasesRule, {

@@ -27,15 +27,20 @@ const lookup = Effect.fn("PanelResults.lookup")(function* ({
   readonly hints: ReadonlyArray<TaxonomyHint>;
 }) {
   const panel = panels.find((entry) => entry.id === panelId);
+
   if (panel === undefined)
     return yield* Effect.fail(Contract.ClassificationFailure.cases.InvalidPanel.make({}));
+
   const taxonSet = panel.targets.reduce<
     TaxonSet.TaxonSet<{ readonly id: string; readonly scientificName: TaxonName }>
   >((set, target) => {
     const taxon = TaxonSet.of({ id: target.id, scientificName: TaxonName.make(target.name) });
+
     return TaxonSet.union(set, taxon);
   }, TaxonSet.empty());
+
   const result = yield* Taxonomy.classifyRecords(inputs, taxonSet, { execution, hints });
+
   return yield* Schema.decodeEffect(Contract.PanelResponse)({
     panelId,
     rows: result.records.map((row) => ({
@@ -74,9 +79,11 @@ export class PanelResults extends Context.Service<
         capacity: 3,
         timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
       });
+
       return PanelResults.of({
         classify: (panelId, refresh = false, hints = []) => {
           const key = { panelId, hints: Array.copy(hints) };
+
           return refresh ? Cache.refresh(cache, key) : Cache.get(cache, key);
         },
       });
@@ -93,5 +100,6 @@ export const classifyPanel = Effect.fn("classifyPanel")(function* (
   hints?: ReadonlyArray<TaxonomyHint>,
 ) {
   const results = yield* PanelResults;
+
   return yield* results.classify(panelId, refresh, hints);
 });

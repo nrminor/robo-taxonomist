@@ -3,6 +3,7 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { noConditionalSpreadRule } from "./no-conditional-spread.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "tsx" } } });
+
 const error = { messageId: "avoid" };
 
 if (noConditionalSpreadRule.meta?.fixable !== undefined) {

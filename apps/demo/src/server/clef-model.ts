@@ -10,11 +10,14 @@ import {
 } from "effect/http";
 
 const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
 const tokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
 const classifyQuestionSchema = Schema.Struct({
   instructions: Schema.String,
   criteria: Schema.Record(Schema.String, Schema.String),
 });
+
 const responseSchema = Schema.Struct({
   success: Schema.Literal(true),
   result: Schema.Struct({
@@ -34,7 +37,9 @@ const responseSchema = Schema.Struct({
     }),
   }),
 });
+
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
 const Decisions = Data.taggedEnum<Decision.Any>();
 
 const invalidOutput = () =>
@@ -57,8 +62,10 @@ const httpReason = (
     Match.tags({
       RateLimitError: (rateLimit) => {
         const header = Headers.get(response.headers, "retry-after");
+
         const parsedHeader = Option.flatMap(header, (value) => {
           const parsed = Headers.parseRetryAfter(value);
+
           return Result.getSuccess(parsed);
         });
 
@@ -84,6 +91,7 @@ const httpError = (error: HttpClientError.HttpClientError, now: number): AiError
   Match.value(error.reason).pipe(
     Match.tag("TransportError", "EncodeError", "InvalidUrlError", (requestError) => {
       const network = AiError.NetworkError.fromRequestError(requestError);
+
       const reason = new AiError.NetworkError({
         reason: network.reason,
         method: network.method,
@@ -126,6 +134,7 @@ export const clefModelLayer = (options: {
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
       const url = `https://api.cloudflare.com/client/v4/accounts/${options.accountId}/ai/run/@cf/cloudflare/clef`;
+
       const decide = Effect.fn("ClefModel.decide")(function* ({
         state,
         decisions,
@@ -134,6 +143,7 @@ export const clefModelLayer = (options: {
         AiError.AiError
       > {
         const entries = Object.entries(decisions);
+
         if (entries.length === 0 || entries.length > 64) {
           return yield* AiError.make({
             module: "ClefModel",
@@ -143,6 +153,7 @@ export const clefModelLayer = (options: {
             }),
           });
         }
+
         const questions: Record<
           string,
           {
@@ -151,6 +162,7 @@ export const clefModelLayer = (options: {
             readonly criteria: Readonly<Record<string, string>>;
           }
         > = Object.create(null);
+
         for (const [key, decision] of entries) {
           if (!Decisions.$is("Classify")(decision)) {
             return yield* AiError.make({
@@ -161,6 +173,7 @@ export const clefModelLayer = (options: {
               }),
             });
           }
+
           const question = yield* Schema.decodeUnknownEffect(classifyQuestionSchema)(decision).pipe(
             Effect.mapError(() =>
               AiError.make({
@@ -172,12 +185,14 @@ export const clefModelLayer = (options: {
               }),
             ),
           );
+
           questions[key] = {
             type: "choice",
             instructions: question.instructions,
             criteria: question.criteria,
           };
         }
+
         const request = yield* HttpClientRequest.post(url).pipe(
           HttpClientRequest.bearerToken(options.apiToken),
           HttpClientRequest.bodyJson({ model: "clef", state, questions }),
@@ -191,23 +206,31 @@ export const clefModelLayer = (options: {
             }),
           ),
         );
+
         const clock = yield* Clock.Clock;
+
         const response = yield* client
           .execute(request)
           .pipe(Effect.mapError((error) => httpError(error, clock.currentTimeMillisUnsafe())));
+
         if (response.status < 200 || response.status >= 300) {
           const now = yield* Clock.currentTimeMillis;
+
           return yield* AiError.make({
             module: "ClefModel",
             method: "decide",
             reason: httpReason(response, now),
           });
         }
+
         const body = yield* response.json.pipe(Effect.mapError(invalidOutput));
+
         const decoded = yield* Schema.decodeUnknownEffect(responseSchema)(body).pipe(
           Effect.mapError(invalidOutput),
         );
+
         const answers: Record<string, DecisionModel.ProviderClassifyAnswer> = Object.create(null);
+
         for (const [key, answer] of Object.entries(decoded.result.answers)) {
           answers[key] = Classify({
             label: answer.choice,
@@ -215,6 +238,7 @@ export const clefModelLayer = (options: {
             confidence: answer.confidence,
           });
         }
+
         return {
           answers,
           usage: {
@@ -223,6 +247,7 @@ export const clefModelLayer = (options: {
           },
         };
       });
+
       return yield* DecisionModel.make({ decide });
     }),
   );

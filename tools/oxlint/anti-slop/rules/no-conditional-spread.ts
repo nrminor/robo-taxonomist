@@ -3,14 +3,17 @@ import type { ESTree } from "@oxlint/plugins";
 
 function unwrapParentheses(node: ESTree.Expression): ESTree.Expression {
   let current = node;
+
   while (current.type === "ParenthesizedExpression") {
     current = current.expression;
   }
+
   return current;
 }
 
 function isConditionalSpread(node: ESTree.Expression): boolean {
   const expression = unwrapParentheses(node);
+
   return expression.type === "ConditionalExpression" || expression.type === "LogicalExpression";
 }
 

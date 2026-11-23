@@ -29,18 +29,22 @@ it("exposes fixed rank, containment and relation schemas", () => {
 it("preserves original nodes and records when constructing judgments", () => {
   const record = { scientificName: TaxonName.make("Quercus"), sample: 42 };
   const node = TaxonSet.of(record);
+
   const membership = TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({
     target: node,
   });
+
   const collection = CollectionMembershipJudgment.cases.MultipleTaxaInTarget.make({
     quantifier: "all",
     target: node,
   });
+
   const relation = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
     relation: "subset",
     side: "left",
     taxon: node,
   });
+
   expect(membership.target).toBe(node);
   expect(collection.target).toBe(node);
   expect(relation.taxon).toBe(node);
@@ -68,6 +72,7 @@ it("encodes native taxon payloads without extra metadata", () => {
     sample: 42,
     hidden: () => "not JSON",
   };
+
   const node = TaxonSet.of(record);
   const encodedNode = { _tag: "Taxon", record: { scientificName: "Quercus" } };
   expect(

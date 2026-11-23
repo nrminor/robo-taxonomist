@@ -3,7 +3,9 @@ import { RuleTester } from "oxlint/plugins-dev";
 import { throwInEffectGenRule } from "./throw-in-effect-gen.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+
 const imports = `import { Effect, Stream } from "effect";`;
+
 const thrown = [{ messageId: "throwInEffectGen" }];
 
 tester.run("anti-slop-effect/throw-in-effect-gen", throwInEffectGenRule, {

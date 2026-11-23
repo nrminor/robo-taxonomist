@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+
 const sentinel = "robo-taxonomist-build-only-sentinel-9ce19f6d";
 
 await test(
@@ -40,18 +41,22 @@ await test(
         const help = await run(executable, ["--help"], options);
         assert.match(help.stdout, /robo-taxonomist/u);
         assert.equal(help.stderr, "");
+
         const equal = await run(
           executable,
           ["compare", "labels", "Voucher A17", "Voucher A17"],
           options,
         );
+
         assert.equal(equal.stdout, "true\n");
         assert.equal(equal.stderr, "");
+
         const different = await run(
           executable,
           ["compare", "labels", "Voucher A17", "Voucher B18"],
           options,
         );
+
         assert.equal(different.stdout, "false\n");
         assert.equal(different.stderr, "");
       },
@@ -69,6 +74,7 @@ await test(
           assert.equal(error.stdout, "");
           assert.match(error.stderr, /ROBO_TAXONOMIST_MODEL/u);
           assert.equal(error.stderr.includes(sentinel), false);
+
           return true;
         });
       },
@@ -82,6 +88,7 @@ await test(
           env: { ...environment, TYPESAFE_API_KEY: "fixture-key" },
           stdio: ["ignore", "pipe", "pipe"],
         });
+
         const exit = once(child, "close");
         t.after(async () => {
           if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
@@ -100,34 +107,42 @@ await test(
         child.stderr.on("data", (chunk) => {
           diagnostics += chunk;
           const match = /http:\/\/127\.0\.0\.1:\d+/u.exec(diagnostics);
+
           if (match !== null) readiness.resolve(match[0]);
         });
+
         const address = await Promise.race([
           readiness.promise,
           exit.then(() => {
             throw new Error(`Server exited before readiness: ${diagnostics}`);
           }),
         ]);
+
         const response = await fetch(`${address}/compare/labels`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ left: "Voucher A17", right: "Voucher A17" }),
           signal: AbortSignal.timeout(5_000),
         });
+
         assert.equal(response.status, 200);
         assert.equal(await response.json(), true);
         const metadata = "[".repeat(65) + "null" + "]".repeat(65);
+
         const oversizedDepth = await fetch(`${address}/sets/create`, {
           method: "POST",
           headers: { "content-type": "Application/JSON; charset=utf-8" },
           body: `{"targets":[{"scientificName":"Quercus","metadata":${metadata}}]}`,
           signal: AbortSignal.timeout(5_000),
         });
+
         assert.equal(oversizedDepth.status, 400);
         assert.deepEqual(await oversizedDepth.json(), { _tag: "RequestTooDeep", maxJsonDepth: 64 });
+
         const specification = await fetch(`${address}/openapi.json`, {
           signal: AbortSignal.timeout(5_000),
         });
+
         assert.equal(specification.status, 200);
         const contract = await specification.json();
         assert.ok(contract.paths["/classify"]);

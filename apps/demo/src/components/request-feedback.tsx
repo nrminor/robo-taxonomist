@@ -18,6 +18,7 @@ export const RequestFeedback = ({
     },
     [returnFocusRef],
   );
+
   return (
     <section ref={card} className={styles.feedback} aria-label="Panel update">
       {children}

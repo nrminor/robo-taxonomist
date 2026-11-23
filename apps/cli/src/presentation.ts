@@ -10,13 +10,18 @@ import {
 } from "robo-taxonomist";
 
 const labeledRecord = Schema.Union([RecordLabel, Schema.Struct({ label: RecordLabel })]);
+
 const namedTarget = Schema.Union([
   Schema.Struct({ scientificName: TaxonName }),
   Schema.Struct({ label: RecordLabel }),
 ]);
+
 const Membership = Data.taggedEnum<TaxonMembershipJudgment>();
+
 const needsSetClarification = TaxonSetRelationJudgment.isAnyOf(["MultipleTaxaInSet"]);
+
 const needsCollectionClarification = CollectionMembershipJudgment.isAnyOf(["MultipleTaxaInTarget"]);
+
 const needsMembershipClarification = TaxonMembershipJudgment.isAnyOf(["MultipleTaxaInTarget"]);
 
 const recordText = Effect.fnUntraced(function* (record: unknown) {
@@ -48,6 +53,7 @@ const targetText = Effect.fnUntraced(function* (
   );
 
   if (Predicate.hasProperty(named, "scientificName")) return named.scientificName;
+
   return named.label;
 });
 
@@ -56,6 +62,7 @@ export const relationRow = Effect.fnUntraced(function* (judgment: TaxonSetRelati
   if (!needsSetClarification(judgment)) return { judgment, clarification: "" };
 
   const clarification = yield* targetText(judgment.taxon.record, "json");
+
   return { judgment, clarification };
 });
 
@@ -64,6 +71,7 @@ export const quantifierRow = Effect.fnUntraced(function* (judgment: CollectionMe
   if (!needsCollectionClarification(judgment)) return { judgment, clarification: "" };
 
   const clarification = yield* targetText(judgment.target.record, "json");
+
   return { judgment, clarification };
 });
 
@@ -76,9 +84,11 @@ export type MembershipEntry = {
 /** Keep the original membership entry with its record label and clarification text. */
 export const membershipRow = Effect.fnUntraced(function* (entry: MembershipEntry) {
   const record = yield* recordText(entry.record);
+
   if (!needsMembershipClarification(entry.judgment)) return { entry, record, clarification: "" };
 
   const clarification = yield* targetText(entry.judgment.target.record, "jsonl");
+
   return { entry, record, clarification };
 });
 
@@ -88,18 +98,22 @@ export type Partition = Effect.Success<ReturnType<typeof Taxonomy.partitionRecor
 /** Emit membership entries in bucket order, preserving order and repetitions within each bucket. */
 export const partitionEntries = (partition: Partition) => {
   const members = partition.Member.map((record) => ({ record, judgment: Membership.Member() }));
+
   const nonmembers = partition.NotMember.map((record) => ({
     record,
     judgment: Membership.NotMember(),
   }));
+
   const mixed = partition.MixedMembership.map((record) => ({
     record,
     judgment: Membership.MixedMembership(),
   }));
+
   const unresolved = partition.Undetermined.map((record) => ({
     record,
     judgment: Membership.Undetermined(),
   }));
+
   const clarifications = partition.MultipleTaxaInTarget.map(({ record, target }) => ({
     record,
     judgment: Membership.MultipleTaxaInTarget({ target }),
