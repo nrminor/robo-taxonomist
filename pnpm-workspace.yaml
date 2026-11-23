@@ -4,3 +4,12 @@ packages:
 
 allowBuilds:
   esbuild@0.28.2: true
+  esbuild@0.25.12: false
+
+permissions:
+  traits:
+    skills: true
+
+skills:
+  dirs:
+    - .agents/skills

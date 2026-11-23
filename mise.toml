@@ -13,6 +13,7 @@ bootstrap = { description = "Install locked package dependencies", run = "pnpm i
 check = { description = "Run all repository checks and build the library", run = "pnpm run check" }
 "check:fast" = { description = "Run lint, TypeScript, and Effect feedback between edits", run = "pnpm run check:fast" }
 "review:clef" = { description = "Review changed source and tests with Clef (sends selected files to Cloudflare)", run = "pnpm --filter @robo-taxonomist/demo exec varlock run --inject vars --filter CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN -- node ../../tools/review/cli.ts" }
+"traits:mcp" = { description = "Serve Traits using Clef and OpenAI", run = "pnpm --filter @robo-taxonomist/demo exec varlock run --inject vars --filter CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN -- pnpm -C ../.. exec traits" }
 "check:review" = { description = "Run fast checks and Clef review before handoff", run = [
   "mise run check:fast",
   "mise run review:clef",

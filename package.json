@@ -39,16 +39,20 @@
     "prepack": "pnpm run build"
   },
   "devDependencies": {
+    "@effect/ai-cloudflare": "4.1.5",
+    "@effect/ai-openai": "4.1.5",
+    "@effect/platform-node": "4.1.5",
     "@effect/tsgo": "0.67.5",
-    "@effect/vitest": "4.1.1",
+    "@effect/vitest": "4.1.5",
     "@interfere/landmines": "0.1.1",
     "@oxlint/plugins": "1.89.0",
     "@types/node": "24.19.0",
-    "effect": "4.1.1",
+    "effect": "4.1.5",
     "esbuild": "0.28.2",
     "knip": "6.42.1",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
+    "traits": "0.5.16",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   },
