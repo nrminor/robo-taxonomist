@@ -14,6 +14,15 @@
 !/vitest.config.ts
 !/LICENSE
 !/README.md
+!/AGENTS.md
+
+!/tools/
+!/tools/oxlint/
+!/tools/oxlint/anti-slop/
+!/tools/oxlint/anti-slop/**/
+!/tools/oxlint/anti-slop/**/*.ts
+!/tools/oxlint/anti-slop/**/LICENSE
+!/tools/oxlint/anti-slop/**/UPSTREAM.md
 
 !/src/
 !/src/**/

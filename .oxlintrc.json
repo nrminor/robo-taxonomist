@@ -4,13 +4,55 @@
     "typeAware": true,
     "reportUnusedDisableDirectives": "error"
   },
+  "jsPlugins": [
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" },
+    { "name": "landmines", "specifier": "@interfere/landmines/testing" }
+  ],
   "rules": {
+    "anti-slop/max-ternary-depth": ["error", { "maxDepth": 2 }],
+    "anti-slop/no-array-filter-map": "error",
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-spread": "error",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-manual-tag-comparison": "error",
+    "anti-slop/no-manual-tagged-construction": "error",
+    "anti-slop/no-manual-tagged-type": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-ordie-in-service-construction": "error",
+    "anti-slop/no-reduce-accumulator-copy": "error",
+    "anti-slop/no-static-effect-service-forwarders": "error",
+    "anti-slop/no-unbounded-retry": "error",
+    "anti-slop/no-unknown-returns": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/prefer-effect-match": "error",
+    "anti-slop/require-cause-when-narrowing": "error",
+    "anti-slop/require-named-adapter-constructor": "error",
+    "anti-slop/require-readable-spacing": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "anti-slop/stream-large-files": "error",
+    "landmines/no-fixed-sleep": "error",
+    "landmines/no-flake-masking": "error",
+    "landmines/no-unsignaled-poll": "error",
+    "landmines/strict-msw": "error",
+    "oxc/no-accumulating-spread": "error",
     "typescript/no-explicit-any": "error",
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
     "typescript/no-unsafe-type-assertion": "error",
     "typescript/no-unnecessary-type-assertion": "error",
     "typescript/no-non-null-assertion": "error",
     "typescript/no-floating-promises": "error",
     "typescript/no-misused-promises": "error",
+    "typescript/switch-exhaustiveness-check": [
+      "error",
+      { "considerDefaultExhaustiveForUnions": false }
+    ],
     "typescript/ban-ts-comment": [
       "error",
       {
@@ -20,5 +62,23 @@
       }
     ]
   },
+  "overrides": [
+    {
+      "files": ["src/**/*.ts", "apps/*/src/**/*.{ts,tsx}"],
+      "rules": {
+        "anti-slop/throw-in-effect-gen": "error",
+        "max-lines": ["error", 500]
+      }
+    },
+    {
+      "files": ["**/*.{test,spec}.{ts,tsx}", "**/vitest.config.ts"],
+      "rules": {
+        "vitest/no-conditional-expect": "error",
+        "vitest/no-disabled-tests": "error",
+        "vitest/no-focused-tests": "error",
+        "vitest/require-awaited-expect-poll": "error"
+      }
+    }
+  ],
   "ignorePatterns": [".agents/**", "**/dist/**", "**/.next/**", "**/next-env.d.ts"]
 }

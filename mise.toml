@@ -20,6 +20,7 @@ fmt = { description = "Format project files", run = "pnpm run fmt" }
 lint = { description = "Build the library and run type-aware Oxlint", run = "pnpm run lint" }
 typecheck = { description = "Check TypeScript and Effect diagnostics", run = "pnpm run typecheck" }
 test = { description = "Run tests", run = "pnpm run test" }
+"test:lint-rules" = { description = "Test the local Oxlint rules", run = "pnpm run test:lint-rules" }
 "test:watch" = { description = "Run tests in watch mode", run = "pnpm run test:watch", interactive = true }
 knip = { description = "Check unused code and dependencies", run = "pnpm run knip" }
 "demo:dev" = { description = "Run the demo locally with supplied answers", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo dev" }
