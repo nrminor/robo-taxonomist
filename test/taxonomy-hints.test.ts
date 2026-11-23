@@ -1,5 +1,16 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Data, Deferred, Effect, Fiber, Layer, Option, Record, Schema } from "effect";
+import {
+  Array,
+  Data,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+} from "effect";
 import { DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
@@ -299,7 +310,7 @@ it.effect("delivers hints across comparison, relation, membership and delegated 
         states.push(state);
 
         const answers = Record.map(decisions, (decision) => {
-          if (decision._tag !== "Classify") throw new Error("Expected classification");
+          if (!Predicate.isTagged(decision, "Classify")) throw new Error("Expected classification");
           const instruction = Schema.decodeUnknownSync(Schema.String)(decision.instructions);
           instructions.push(instruction);
 
@@ -356,7 +367,8 @@ it.effect(
           requests.push({ state, decisions });
 
           const answers = Record.map(decisions, (decision) => {
-            if (decision._tag !== "Classify") throw new Error("Expected classification");
+            if (!Predicate.isTagged(decision, "Classify"))
+              throw new Error("Expected classification");
 
             return Classify({
               label: "undetermined",

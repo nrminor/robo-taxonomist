@@ -483,7 +483,8 @@ it.effect(
         taxon: duplicate,
       });
 
-      if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected clarification");
+      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+        throw new Error("Expected clarification");
       expect(result.taxon).toBe(duplicate);
       expect(result.taxon).not.toBe(a);
     }).pipe(Effect.provide(layer));
@@ -691,7 +692,7 @@ for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations
 
       expect(result).toEqual(expected);
 
-      if (result._tag === "MultipleTaxaInSet")
+      if (Predicate.isTagged(result, "MultipleTaxaInSet"))
         expect(result.taxon).toBe(result.side === "left" ? left : right);
     }),
   );
@@ -765,7 +766,8 @@ it.effect(
         taxon: a,
       });
 
-      if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected clarification");
+      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+        throw new Error("Expected clarification");
       expect(result.taxon).toBe(a);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));

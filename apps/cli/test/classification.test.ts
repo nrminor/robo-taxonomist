@@ -8,6 +8,7 @@ import {
   Layer,
   Match,
   Option,
+  Predicate,
   Result,
   Schema,
   Sink,
@@ -583,7 +584,8 @@ it.effect.each([1, 2])(
       expect(
         groups.every(
           (group) =>
-            group.panel._tag === "Taxon" && group.panel.record.scientificName === "Quercus",
+            Predicate.isTagged(group.panel, "Taxon") &&
+            group.panel.record.scientificName === "Quercus",
         ),
       ).toBe(true);
       expect(result.requests).toBe(3);

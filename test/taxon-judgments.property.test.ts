@@ -323,7 +323,8 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
     Effect.provide(layer),
   );
 
-  if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
+  if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+    throw new Error("Expected clarification");
   expect(result.target).toBe(label === "multipleTarget0" ? first : second);
 
   return { ...Option.getOrThrow(observation), result };

@@ -477,7 +477,8 @@ it.effect(
         target: duplicate,
       });
 
-      if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
+      if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+        throw new Error("Expected clarification");
       expect(result.target).toBe(duplicate);
       expect(result.target).not.toBe(a);
     }).pipe(Effect.provide(layer));

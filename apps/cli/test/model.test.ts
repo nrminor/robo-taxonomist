@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 import { AiError } from "effect/ai";
 import { CliError } from "effect/cli";
 import { Errors } from "robo-taxonomist";
@@ -57,9 +57,13 @@ it("gives safe guidance for unusable answers and invalid user input", () => {
     const provider = new AiError.AiError({ module: "fixture", method: "decide", reason });
     const failure = Model.cliFailure(provider);
     expect(failure.cause).toBe(provider);
-    expect(failure.userMessage).toContain(
-      reason._tag === "InvalidUserInputError" ? "input" : "unusable answer",
+
+    const guidance = Match.value(reason).pipe(
+      Match.tag("InvalidUserInputError", () => "input"),
+      Match.orElse(() => "unusable answer"),
     );
+
+    expect(failure.userMessage).toContain(guidance);
     expect(failure.userMessage).not.toContain(secret);
   }
 });

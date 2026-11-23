@@ -1,5 +1,5 @@
 // Compile only, against package exports after build; never executed by Vitest.
-import { Array, Effect, Schema, type Types } from "effect";
+import { Array, Effect, Predicate, Schema, type Types } from "effect";
 import type { AiError, Decision, DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
 import {
@@ -94,7 +94,7 @@ type ShorthandTarget = { readonly scientificName: TaxonName };
 
 const trees = TaxonSet.union(oaks, TaxonSet.empty());
 
-if (trees._tag === "Union") {
+if (Predicate.isTagged(trees, "Union")) {
   // @ts-expect-error Inspectable expression tags remain readonly after narrowing.
   trees._tag = "Union";
   // @ts-expect-error Nonempty expression operands remain readonly after narrowing.
@@ -103,7 +103,7 @@ if (trees._tag === "Union") {
 
 const shared = TaxonSet.intersection(oaks, oaks);
 
-if (shared._tag === "Intersection") {
+if (Predicate.isTagged(shared, "Intersection")) {
   // @ts-expect-error Intersection operands remain readonly after narrowing too.
   shared.operands.push(oaks);
 }
@@ -294,7 +294,7 @@ const assignedSetCollection = Taxonomy.allRecordsBelongTo(records, assignedOaks)
 // Narrowing a diagnostic exposes the original record, with no name-only fallback.
 const assignedDiagnostic = assignedMembership.pipe(
   Effect.map((judgment) => {
-    if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+    if (!Predicate.isTagged(judgment, "MultipleTaxaInTarget")) return undefined;
     const { scientificName, assignmentId, rank } = judgment.target.record;
 
     return { scientificName, assignmentId, rank };
@@ -303,7 +303,7 @@ const assignedDiagnostic = assignedMembership.pipe(
 
 const assignedSetDiagnostic = assignedSetMembership.pipe(
   Effect.map((judgment) => {
-    if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+    if (!Predicate.isTagged(judgment, "MultipleTaxaInTarget")) return undefined;
     const { scientificName, assignmentId, rank } = judgment.target.record;
 
     return { scientificName, assignmentId, rank };
@@ -312,7 +312,7 @@ const assignedSetDiagnostic = assignedSetMembership.pipe(
 
 const namedDiagnostic = namedMembership.pipe(
   Effect.map((judgment) => {
-    if (judgment._tag !== "MultipleTaxaInTarget") return undefined;
+    if (!Predicate.isTagged(judgment, "MultipleTaxaInTarget")) return undefined;
 
     return judgment.target.record.scientificName;
   }),

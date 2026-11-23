@@ -132,22 +132,23 @@ it("retains all 19 upstream failure categories while allowlisting their fields",
       new AiError.AiError({ module: secret, method: secret, reason }),
     );
 
-    expect(failure._tag).toBe("ModelFailure");
+    expect(failure).toSatisfy(ClassificationFailure.guards.ModelFailure);
 
-    if (failure._tag !== "ModelFailure") throw new Error("Expected model failure");
+    if (!ClassificationFailure.guards.ModelFailure(failure))
+      throw new Error("Expected model failure");
     expect(failure.reason._tag).toBe(reason._tag);
     expect(failure.retryable).toBe(reason.isRetryable);
 
-    if (failure.reason._tag === "AuthenticationError")
+    if (PublicModelReason.guards.AuthenticationError(failure.reason))
       expect(failure.reason.kind).toBe("InvalidKey");
 
-    if (failure.reason._tag === "QuotaExhaustedError") {
+    if (PublicModelReason.guards.QuotaExhaustedError(failure.reason)) {
       expect(failure.reason.resetAt).toEqual(DateTime.makeUnsafe("2026-10-29T00:00:00Z"));
     }
 
     const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
 
-    if (failure.reason._tag === "QuotaExhaustedError") {
+    if (PublicModelReason.guards.QuotaExhaustedError(failure.reason)) {
       expect(encoded).toMatchObject({
         reason: { _tag: "QuotaExhaustedError", resetAt: "2026-10-29T00:00:00.000Z" },
       });

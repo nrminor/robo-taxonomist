@@ -1291,7 +1291,8 @@ it.effect("retains the original late clarification leader at quantified policy b
 
     expect(result).toEqual({ _tag: "MultipleTaxaInTarget", quantifier: "any", target: b });
 
-    if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected clarification");
+    if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+      throw new Error("Expected clarification");
     expect(result.target).toBe(b);
   }).pipe(Effect.provide(layer));
 });

@@ -224,7 +224,8 @@ it.effect("identifies the original ID-only target node without fabricating a nam
     const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), target);
     expect(result).toEqual({ _tag: "MultipleTaxaInTarget", target });
 
-    if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected target clarification");
+    if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+      throw new Error("Expected target clarification");
     expect(result.target).toBe(target);
     expect(result.target.record).toBe(record);
   }).pipe(Effect.provide(layer));
@@ -249,7 +250,8 @@ it.effect(
       const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), target);
       expect(result).toEqual({ _tag: "MultipleTaxaInTarget", target: second });
 
-      if (result._tag !== "MultipleTaxaInTarget") throw new Error("Expected target clarification");
+      if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+        throw new Error("Expected target clarification");
       expect(result.target).toBe(second);
       expect(result.target.record).toBe(second.record);
     }).pipe(Effect.provide(modelLayer("multipleTarget1")));
@@ -270,7 +272,8 @@ it.effect.each(["left", "right"] as const)(
       const result = yield* comparison;
       expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation: "equivalent", side, taxon });
 
-      if (result._tag !== "MultipleTaxaInSet") throw new Error("Expected set clarification");
+      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+        throw new Error("Expected set clarification");
       expect(result.taxon).toBe(taxon);
     }).pipe(Effect.provide(modelLayer(side === "left" ? "multipleLeft0" : "multipleRight0")));
   },
