@@ -16,6 +16,7 @@
 !/README.md
 !/AGENTS.md
 !/traits.ts
+!/.env.schema
 !/.agents/
 !/.agents/traits/
 !/.agents/traits/*.md
