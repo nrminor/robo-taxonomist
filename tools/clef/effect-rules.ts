@@ -10,7 +10,7 @@
  * diagnostic at the offending line.
  */
 // Questions from K-Mistele/anti-slop, 13b020367525e8c6efe6cede8f387697b2a8d907.
-// MIT license: ./LICENSE.
+// MIT notice for the adapted questions: ./effect-rules.LICENSE.
 interface JevRule {
   readonly id: string;
   readonly target: "file";

@@ -20,6 +20,14 @@ pnpm add robo-taxonomist
 
 This release supports Effect `^4.0.0`. With default settings, pnpm and other package managers will automatically install the right version of Effect if missing. If your application already uses Effect, make sure its version satisfies the library's peer requirement.
 
+## Repository checks
+
+Run `mise run bootstrap` and `mise run demo:browser:install` to prepare a checkout. Run `mise run check` before handoff: it builds and tests the project and runs Clef on changed source and tests. Use `mise run check:fast` between edits or `mise run check:offline` for the full credential-free suite.
+
+Clef sends selected changed files to Cloudflare. On macOS, configure its local credentials with `mise run demo:credentials:account` and `mise run demo:credentials:token`.
+
+Agents run `check_traits` on changed files before handoff through the standard Traits MCP server, not as part of the unattended checks. For local OpenCode setup, run `mise run traits:credentials:key`, `mise run traits:credentials:check`, and `mise run traits:connect`. No OpenAI key is needed in CI.
+
 Most operations in this library require internet access as well as access to a live decision model. Wire it up in an Effect `DecisionModel` layer, as demonstrated below.
 
 ## Example

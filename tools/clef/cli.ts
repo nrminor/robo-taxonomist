@@ -41,12 +41,34 @@ const readCommittedFile = (root: string, commit: string, path: string) => {
   return git("-C", root, "cat-file", "blob", `${commit}:${path}`);
 };
 
-const changedFiles = (base: string, commit?: string) =>
+const target = Schema.TaggedUnion({
+  WorkingTree: { base: Schema.String },
+  PinnedRevision: { base: Schema.String, commit: Schema.String },
+});
+
+const changedFiles = (input: typeof target.Type) =>
   Effect.try({
     try: () => {
       const root = git("rev-parse", "--show-toplevel").trim();
-      const mergeBase = git("-C", root, "merge-base", "--", base, commit ?? "HEAD").trim();
-      const target = commit === undefined ? [] : [commit];
+
+      const selection = Match.value(input).pipe(
+        Match.tagsExhaustive({
+          WorkingTree: () => ({
+            revision: "HEAD",
+            diffTarget: [],
+            untracked: git("-C", root, "ls-files", "--others", "--exclude-standard", "-z"),
+            read: (path: string) => readWorkingFile(root, path),
+          }),
+          PinnedRevision: ({ commit }) => ({
+            revision: commit,
+            diffTarget: [commit],
+            untracked: "",
+            read: (path: string) => readCommittedFile(root, commit, path),
+          }),
+        }),
+      );
+
+      const mergeBase = git("-C", root, "merge-base", "--", input.base, selection.revision).trim();
 
       const changed = git(
         "-C",
@@ -58,28 +80,18 @@ const changedFiles = (base: string, commit?: string) =>
         "--name-only",
         "-z",
         mergeBase,
-        ...target,
+        ...selection.diffTarget,
         "--",
       );
 
-      const untracked =
-        commit === undefined
-          ? git("-C", root, "ls-files", "--others", "--exclude-standard", "-z")
-          : "";
-
-      const paths = new Set([...changed.split("\0"), ...untracked.split("\0")]);
+      const paths = new Set([...changed.split("\0"), ...selection.untracked.split("\0")]);
 
       return [...paths]
         .sort((left, right) => left.localeCompare(right))
         .flatMap((path) => {
           if (!/^(?:src|test|apps\/[^/]+\/(?:src|test))\/.*\.[cm]?tsx?$/.test(path)) return [];
 
-          const source =
-            commit === undefined
-              ? readWorkingFile(root, path)
-              : readCommittedFile(root, commit, path);
-
-          return [{ path, source }];
+          return [{ path, source: selection.read(path) }];
         });
     },
     catch: (cause) =>
@@ -178,38 +190,43 @@ const usage = "Usage: review:clef [--smoke | --base <ref> [--commit <sha>] | --h
 const mode = Schema.TaggedUnion({
   Help: {},
   Smoke: {},
-  Review: { base: Schema.String, commit: Schema.optional(Schema.String) },
+  Review: { target },
 });
 
-const parseArgs = Effect.gen(function* () {
-  const [first, second, ...rest] = args;
+const commitSha = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/));
 
-  if (args.length === 0) return mode.cases.Review.make({ base: "main" });
+const noArgs = Schema.is(Schema.Tuple([]));
 
-  if (first === "--base" && second !== undefined && rest.length === 0) {
-    return mode.cases.Review.make({ base: second });
-  }
+const helpArgs = Schema.is(Schema.Tuple([Schema.Literal("--help")]));
 
-  const [flag, commit] = rest;
+const smokeArgs = Schema.is(Schema.Tuple([Schema.Literal("--smoke")]));
 
-  if (
-    first === "--base" &&
-    second !== undefined &&
-    /^[a-f0-9]{40}$/.test(second) &&
-    rest.length === 2 &&
-    flag === "--commit" &&
-    commit !== undefined &&
-    /^[a-f0-9]{40}$/.test(commit)
-  ) {
-    return mode.cases.Review.make({ base: second, commit });
-  }
+const workingArgs = Schema.is(Schema.Tuple([Schema.Literal("--base"), Schema.String]));
 
-  if (args.length === 1 && first === "--smoke") return mode.cases.Smoke.make({});
+const pinnedArgs = Schema.is(
+  Schema.Tuple([Schema.Literal("--base"), commitSha, Schema.Literal("--commit"), commitSha]),
+);
 
-  if (args.length === 1 && first === "--help") return mode.cases.Help.make({});
+const parseArgs = Match.value(args).pipe(
+  Match.when(noArgs, () => {
+    const workingTree = target.cases.WorkingTree.make({ base: "main" });
 
-  return yield* new ReviewInputError({ message: usage });
-});
+    return Effect.succeed(mode.cases.Review.make({ target: workingTree }));
+  }),
+  Match.when(helpArgs, () => Effect.succeed(mode.cases.Help.make({}))),
+  Match.when(smokeArgs, () => Effect.succeed(mode.cases.Smoke.make({}))),
+  Match.when(workingArgs, ([, base]) => {
+    const workingTree = target.cases.WorkingTree.make({ base });
+
+    return Effect.succeed(mode.cases.Review.make({ target: workingTree }));
+  }),
+  Match.when(pinnedArgs, ([, base, , commit]) => {
+    const pinnedRevision = target.cases.PinnedRevision.make({ base, commit });
+
+    return Effect.succeed(mode.cases.Review.make({ target: pinnedRevision }));
+  }),
+  Match.orElse(() => new ReviewInputError({ message: usage })),
+);
 
 const program = parseArgs.pipe(
   Effect.flatMap(
@@ -240,9 +257,9 @@ const program = parseArgs.pipe(
 
             return 0;
           }),
-        Review: ({ base, commit }) =>
+        Review: ({ target }) =>
           Effect.gen(function* () {
-            const files = yield* changedFiles(base, commit);
+            const files = yield* changedFiles(target);
 
             if (files.length === 0) {
               yield* Console.log("No changed TypeScript source or test files to review.");

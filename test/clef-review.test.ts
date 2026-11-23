@@ -2,7 +2,7 @@ import { Effect, Exit, Redacted } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { it } from "@effect/vitest";
 import { expect } from "vitest";
-import { askClef, LocationQuestion, VerdictQuestion } from "../tools/review/clef.ts";
+import { askClef, LocationQuestion, VerdictQuestion } from "../tools/clef/clef.ts";
 
 const credentials = { accountId: "test-account", token: Redacted.make("test-token") };
 

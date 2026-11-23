@@ -88,7 +88,7 @@ jobs:
         run: |
           : "${CLOUDFLARE_ACCOUNT_ID:?Set the Actions variable CLOUDFLARE_ACCOUNT_ID}"
           : "${CLOUDFLARE_API_TOKEN:?Set the Actions secret CLOUDFLARE_API_TOKEN}"
-          mise exec -- node tools/review/cli.ts --base "$BASE_SHA" --commit "$HEAD_SHA"
+          mise exec -- node tools/clef/cli.ts --base "$BASE_SHA" --commit "$HEAD_SHA"
 
       - name: Publish PR revision status
         if: always() && steps.revisions.outcome == 'success'

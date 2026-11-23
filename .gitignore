@@ -22,9 +22,9 @@
 !/.agents/traits/*.md
 
 !/tools/
-!/tools/review/
-!/tools/review/*.ts
-!/tools/review/LICENSE
+!/tools/clef/
+!/tools/clef/*.ts
+!/tools/clef/effect-rules.LICENSE
 !/tools/oxlint/
 !/tools/oxlint/anti-slop/
 !/tools/oxlint/anti-slop/**/

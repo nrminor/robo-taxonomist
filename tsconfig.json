@@ -118,7 +118,7 @@
               "test/taxon-set.property.test.ts",
               "test/taxon-judgments.property.test.ts",
               "test/clef-review.test.ts",
-              "tools/review/clef.ts",
+              "tools/clef/clef.ts",
               "**/apps/demo/**/*.ts",
               "**/apps/demo/**/*.tsx",
               "**/apps/cli/**/*.ts"

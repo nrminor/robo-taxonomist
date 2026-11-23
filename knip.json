@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["traits.ts"],
+      "entry": ["traits.ts", "tools/clef/cli.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts", "!test/fixtures/**"]
     },
     "apps/cli": {

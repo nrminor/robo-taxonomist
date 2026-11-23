@@ -35,8 +35,10 @@ jobs:
       - name: Install browser test dependencies
         run: mise run demo:browser:install
 
+      # The local aggregate is `mise run check`. Credentialed model review runs
+      # separately against PR objects in clef-review.yml, not against this checkout.
       - name: Check source and tooling
-        run: mise run check
+        run: mise run check:offline
 
       - name: Pack checked library
         run: mise run pack
