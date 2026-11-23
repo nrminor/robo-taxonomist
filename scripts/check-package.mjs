@@ -13,14 +13,37 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { Schema } from "effect";
 import { buildSync } from "esbuild";
 
 const root = dirname(import.meta.dirname);
 
 const require = createRequire(import.meta.url);
 
-const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const peerDependencies = Schema.StructWithRest(Schema.Struct({ effect: Schema.String }), [
+  Schema.Record(Schema.String, Schema.String),
+]);
 
+const packageManifest = Schema.Struct({
+  name: Schema.String,
+  version: Schema.String,
+  type: Schema.String,
+  types: Schema.String,
+  exports: Schema.Json,
+  peerDependencies,
+});
+
+const decodeManifest = Schema.decodeSync(Schema.fromJsonString(packageManifest));
+
+const decodeConfig = Schema.decodeSync(Schema.fromJsonString(Schema.JsonObject));
+
+const manifest = decodeManifest(readFileSync(join(root, "package.json"), "utf8"));
+
+/**
+ * @param {string} command
+ * @param {readonly string[]} args
+ * @param {string} cwd
+ */
 function run(command, args, cwd) {
   execFileSync(command, args, { cwd, stdio: "inherit" });
 }
@@ -68,7 +91,7 @@ function check() {
       assert(lstatSync(join(installed, file)).size > 0, `Artifact missing or empty: ${file}`);
     }
 
-    const packed = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+    const packed = decodeManifest(readFileSync(join(installed, "package.json"), "utf8"));
     assert.equal(packed.name, manifest.name);
     assert.equal(packed.version, manifest.version);
     assert.equal(packed.type, "module");
@@ -82,9 +105,9 @@ function check() {
       copyFileSync(join(fixtures, file), join(consumer, file));
     }
 
-    const config = JSON.parse(readFileSync(join(fixtures, "tsconfig.json"), "utf8"));
-    config.extends = join(root, "tsconfig.json");
-    writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify(config));
+    const config = decodeConfig(readFileSync(join(fixtures, "tsconfig.json"), "utf8"));
+    const consumerConfig = { ...config, extends: join(root, "tsconfig.json") };
+    writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify(consumerConfig));
     const compiler = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
     run(process.execPath, [compiler, "--project", join(consumer, "tsconfig.json")], consumer);
     run(process.execPath, [join(consumer, "smoke.mjs")], consumer);
