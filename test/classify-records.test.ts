@@ -1,5 +1,16 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Data, Deferred, Effect, Fiber, Layer, Option, Record, Schema } from "effect";
+import {
+  Array,
+  Data,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+} from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
@@ -400,11 +411,18 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
           'Taxonomy: "ncbi"\nTaxon ID: "5476"\nTaxonomy release: "fixture-release"',
           'Record label: "Saccharomyces paradoxus"',
         ]);
-        expect(state).toMatchObject({
-          nodes: expect.arrayContaining([
-            expect.objectContaining({ _tag: "Difference" }),
-            { _tag: "Taxon", record: { scientificName: "Saccharomyces" } },
-          ]),
+
+        const { nodes } = Schema.decodeUnknownSync(
+          Schema.Struct({ nodes: Schema.Array(Schema.Unknown) }),
+        )(state);
+
+        expect(nodes).toSatisfy(
+          (values: typeof nodes) => values.some(Predicate.isTagged("Difference")),
+          "expected a Difference node",
+        );
+        expect(nodes).toContainEqual({
+          _tag: "Taxon",
+          record: { scientificName: "Saccharomyces" },
         });
 
         return Effect.succeed({

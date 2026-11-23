@@ -140,15 +140,14 @@ it.effect.each(["left", "right"] as const)(
         decide: ({ state, decisions }) => {
           expect(state).toBeNull();
           expect(Record.keys(decisions)).toEqual(["identity"]);
-          expect(decisions.identity).toMatchObject({
-            _tag: "Classify",
-            instructions: expect.stringContaining(
-              'Left taxon:\nScientific name: "Oak\\n\\\"A\\\""\nRight taxon:\nScientific name: "Beech\\\\B"',
-            ),
-            criteria: {
-              same: expect.any(String),
-            },
-          });
+          const question = Record.get(decisions, "identity").pipe(Option.getOrThrow);
+
+          if (!Predicate.isTagged(question, "Classify"))
+            return Effect.die("Expected classification");
+          expect(Schema.decodeUnknownSync(Schema.String)(question.instructions)).toContain(
+            'Left taxon:\nScientific name: "Oak\\n\\\"A\\\""\nRight taxon:\nScientific name: "Beech\\\\B"',
+          );
+          expect(Schema.is(Schema.Struct({ same: Schema.String }))(question.criteria)).toBe(true);
 
           return Effect.succeed({
             answers: {
@@ -188,12 +187,12 @@ it.effect("asks one identity question with quoted names and null state", () => {
         calls++;
         expect(state).toBeNull();
         expect(Record.keys(decisions)).toEqual(["identity"]);
-        expect(decisions.identity).toMatchObject({
-          _tag: "Classify",
-          instructions: expect.stringContaining(
-            'Left taxon:\nScientific name: "Oak\\n\\\"A\\\""\nRight taxon:\nScientific name: "Oak\\n\\\"A\\\""',
-          ),
-        });
+        const question = Record.get(decisions, "identity").pipe(Option.getOrThrow);
+
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
+        expect(Schema.decodeUnknownSync(Schema.String)(question.instructions)).toContain(
+          'Left taxon:\nScientific name: "Oak\\n\\\"A\\\""\nRight taxon:\nScientific name: "Oak\\n\\\"A\\\""',
+        );
 
         return Effect.succeed({
           answers: {
@@ -425,18 +424,21 @@ it.effect(
             ],
             target: 0,
           });
-          expect(decisions.record0).toMatchObject({
-            criteria: {
-              multipleTarget0: expect.stringContaining("Target taxon node 3 "),
-              multipleTarget1: expect.stringContaining("Target taxon node 7 "),
-              multipleTarget2: expect.stringContaining("Target taxon node 5 "),
-              multipleTarget3: expect.stringContaining("Target taxon node 6 "),
-            },
-          });
           const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
 
           if (!Predicate.isTagged(question, "Classify"))
             return Effect.die("Expected classification");
+
+          for (const [key, fragment] of [
+            ["multipleTarget0", "Target taxon node 3 "],
+            ["multipleTarget1", "Target taxon node 7 "],
+            ["multipleTarget2", "Target taxon node 5 "],
+            ["multipleTarget3", "Target taxon node 6 "],
+          ] as const) {
+            const criterion = Record.get(question.criteria, key).pipe(Option.getOrThrow);
+            expect(Schema.decodeUnknownSync(Schema.String)(criterion)).toContain(fragment);
+          }
+
           expect(Record.keys(question.criteria)).toEqual([
             "member",
             "notMember",
@@ -954,23 +956,28 @@ it.effect("provides shared target once and record facts once in singleton member
           target: 0,
         });
         expect(Record.keys(decisions)).toEqual(["record0"]);
-        expect(decisions.record0).toMatchObject({
-          _tag: "Classify",
-          instructions: expect.stringContaining(
-            'Record label: "Voucher \\"A\\"\\nline"\nScientific name: "Quercus robur"\nTaxonomy: "local"\nTaxon ID: "17"\nTaxonomy release: "2026"',
-          ),
-          criteria: {
-            member: expect.any(String),
-            notMember: expect.any(String),
-            mixed: expect.any(String),
-            undetermined: expect.any(String),
-            multipleTarget0: expect.stringContaining("Target taxon node 0 "),
-          },
-        });
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
 
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
         const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+        expect(instructions).toContain(
+          'Record label: "Voucher \\"A\\"\\nline"\nScientific name: "Quercus robur"\nTaxonomy: "local"\nTaxon ID: "17"\nTaxonomy release: "2026"',
+        );
+        expect(
+          Schema.is(
+            Schema.Struct({
+              member: Schema.String,
+              notMember: Schema.String,
+              mixed: Schema.String,
+              undetermined: Schema.String,
+            }),
+          )(question.criteria),
+        ).toBe(true);
+        expect(
+          Schema.decodeUnknownSync(Schema.String)(
+            Record.get(question.criteria, "multipleTarget0").pipe(Option.getOrThrow),
+          ),
+        ).toContain("Target taxon node 0 ");
 
         for (const field of [
           "Record label",
@@ -1159,17 +1166,21 @@ it.effect("asks the direct containment question with original left = inner", () 
       decide: ({ state, decisions }) => {
         expect(state).toBeNull();
         expect(Record.keys(decisions)).toEqual(["containment"]);
-        expect(decisions.containment).toMatchObject({
-          _tag: "Classify",
-          instructions: expect.stringContaining(
-            'Left (inner) taxon:\nScientific name: "A"\nRight (outer) taxon:\nScientific name: "B"',
-          ),
-          criteria: {
-            equal: expect.any(String),
-            partialOverlap: expect.any(String),
-            disjoint: expect.any(String),
-          },
-        });
+        const question = Record.get(decisions, "containment").pipe(Option.getOrThrow);
+
+        if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
+        expect(Schema.decodeUnknownSync(Schema.String)(question.instructions)).toContain(
+          'Left (inner) taxon:\nScientific name: "A"\nRight (outer) taxon:\nScientific name: "B"',
+        );
+        expect(
+          Schema.is(
+            Schema.Struct({
+              equal: Schema.String,
+              partialOverlap: Schema.String,
+              disjoint: Schema.String,
+            }),
+          )(question.criteria),
+        ).toBe(true);
 
         return Effect.succeed({
           answers: {

@@ -727,13 +727,11 @@ it.effect(
             "multipleRight0",
             "multipleRight1",
           ]);
-          expect(question.criteria).toMatchObject({
-            multipleLeft0: expect.stringContaining("Left taxon node 3 "),
-            multipleLeft1: expect.stringContaining("Left taxon node 5 "),
-            multipleLeft2: expect.stringContaining("Left taxon node 2 "),
-            multipleRight0: expect.stringContaining("Right taxon node 7 "),
-            multipleRight1: expect.stringContaining("Right taxon node 3 "),
-          });
+          expect(question.criteria.multipleLeft0).toContain("Left taxon node 3 ");
+          expect(question.criteria.multipleLeft1).toContain("Left taxon node 5 ");
+          expect(question.criteria.multipleLeft2).toContain("Left taxon node 2 ");
+          expect(question.criteria.multipleRight0).toContain("Right taxon node 7 ");
+          expect(question.criteria.multipleRight1).toContain("Right taxon node 3 ");
 
           return Effect.succeed({
             answers: {
@@ -1213,12 +1211,9 @@ it.effect("asks overlap directly with one complete-expression classification", (
       decide: ({ decisions }) => {
         calls++;
         expect(Record.keys(decisions)).toEqual(["relation"]);
-        expect(decisions.relation).toMatchObject({
-          criteria: {
-            partialOverlap: expect.any(globalThis.String),
-            disjoint: expect.any(globalThis.String),
-          },
-        });
+        const question = relationQuestion(decisions);
+        expect(Predicate.isString(question.criteria.partialOverlap)).toBe(true);
+        expect(Predicate.isString(question.criteria.disjoint)).toBe(true);
 
         return Effect.succeed({
           answers: {
@@ -1250,9 +1245,8 @@ it.effect("asks organism-set equivalence directly even for the same expression",
       decide: ({ decisions }) => {
         calls++;
         expect(Record.keys(decisions)).toEqual(["relation"]);
-        expect(decisions.relation).toMatchObject({
-          criteria: { equal: expect.any(globalThis.String) },
-        });
+        const question = relationQuestion(decisions);
+        expect(Predicate.isString(question.criteria.equal)).toBe(true);
 
         return Effect.succeed({
           answers: {
@@ -1283,12 +1277,9 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
       decide: ({ decisions }) => {
         calls++;
         expect(Record.keys(decisions)).toEqual(["relation"]);
-        expect(decisions.relation).toMatchObject({
-          criteria: {
-            properSubset: expect.any(globalThis.String),
-            leftEmpty: expect.any(globalThis.String),
-          },
-        });
+        const question = relationQuestion(decisions);
+        expect(Predicate.isString(question.criteria.properSubset)).toBe(true);
+        expect(Predicate.isString(question.criteria.leftEmpty)).toBe(true);
 
         return Effect.succeed({
           answers: {
@@ -1337,19 +1328,14 @@ it.effect(
             right: 3,
           });
           expect(Record.keys(decisions)).toEqual(["relation"]);
-          expect(decisions.relation).toMatchObject({
-            _tag: "Classify",
-            criteria: {
-              equal: expect.any(globalThis.String),
-              properSubset: expect.any(globalThis.String),
-              disjoint: expect.any(globalThis.String),
-              undetermined: expect.any(globalThis.String),
-              multipleLeft0: expect.stringContaining("Left taxon node 1 "),
-              multipleLeft1: expect.stringContaining("Left taxon node 2 "),
-              multipleRight0: expect.stringContaining("Right taxon node 3 "),
-            },
-          });
           const question = relationQuestion(decisions);
+          expect(Predicate.isString(question.criteria.equal)).toBe(true);
+          expect(Predicate.isString(question.criteria.properSubset)).toBe(true);
+          expect(Predicate.isString(question.criteria.disjoint)).toBe(true);
+          expect(Predicate.isString(question.criteria.undetermined)).toBe(true);
+          expect(question.criteria.multipleLeft0).toContain("Left taxon node 1 ");
+          expect(question.criteria.multipleLeft1).toContain("Left taxon node 2 ");
+          expect(question.criteria.multipleRight0).toContain("Right taxon node 3 ");
 
           return Effect.succeed({
             answers: {

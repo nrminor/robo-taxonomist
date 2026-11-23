@@ -420,9 +420,8 @@ it.effect(
           calls++;
           expect(Record.keys(decisions)).toEqual(["record0"]);
           const decision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
-          expect(decision).toMatchObject({
-            instructions: expect.stringContaining('Record label: "decisive"'),
-          });
+          const instructions = Schema.decodeUnknownSync(Schema.String)(decision.instructions);
+          expect(instructions).toContain('Record label: "decisive"');
 
           return Effect.succeed(response(["member"]));
         },
@@ -611,9 +610,12 @@ it.effect("reconstructs partitions in input order after batches finish in revers
 
           for (const [local, name] of names.entries()) {
             const decision = Record.get(decisions, `record${local}`).pipe(Option.getOrThrow);
-            expect(decision).toMatchObject({
-              instructions: expect.stringContaining(`Scientific name: "${name}"`),
-            });
+
+            const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+              decision.instructions,
+            ).pipe(Effect.orDie);
+
+            expect(instructions).toContain(`Scientific name: "${name}"`);
           }
 
           active++;
@@ -725,9 +727,12 @@ it.effect.each(quantifiers)(
               : ["third", "fourth"]
             ).entries()) {
               const decision = Record.get(decisions, `record${local}`).pipe(Option.getOrThrow);
-              expect(decision).toMatchObject({
-                instructions: expect.stringContaining(`Record label: "${name}"`),
-              });
+
+              const instructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                decision.instructions,
+              ).pipe(Effect.orDie);
+
+              expect(instructions).toContain(`Record label: "${name}"`);
             }
 
             if (calls === 2) yield* Deferred.succeed(bothStarted, undefined);
@@ -1113,12 +1118,17 @@ it.effect(
           expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
           const firstDecision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
           const secondDecision = Record.get(decisions, "record1").pipe(Option.getOrThrow);
-          expect(firstDecision).toMatchObject({
-            instructions: expect.stringContaining('Record label: "voucher \\"one\\"\\nline"'),
-          });
-          expect(secondDecision).toMatchObject({
-            instructions: expect.stringContaining('Scientific name: "second name"'),
-          });
+
+          const firstInstructions = Schema.decodeUnknownSync(Schema.String)(
+            firstDecision.instructions,
+          );
+
+          const secondInstructions = Schema.decodeUnknownSync(Schema.String)(
+            secondDecision.instructions,
+          );
+
+          expect(firstInstructions).toContain('Record label: "voucher \\"one\\"\\nline"');
+          expect(secondInstructions).toContain('Scientific name: "second name"');
 
           return Effect.succeed({
             answers: {
@@ -1807,12 +1817,17 @@ it.effect(
               expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
               const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
               const outsideQuestion = Record.get(decisions, "record2").pipe(Option.getOrThrow);
-              expect(sharedQuestion).toMatchObject({
-                instructions: expect.stringContaining('Scientific name: "shared"'),
-              });
-              expect(outsideQuestion).toMatchObject({
-                instructions: expect.stringContaining('Scientific name: "outside"'),
-              });
+
+              const sharedInstructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                sharedQuestion.instructions,
+              ).pipe(Effect.orDie);
+
+              const outsideInstructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                outsideQuestion.instructions,
+              ).pipe(Effect.orDie);
+
+              expect(sharedInstructions).toContain('Scientific name: "shared"');
+              expect(outsideInstructions).toContain('Scientific name: "outside"');
               yield* Deferred.succeed(firstStarted, undefined);
               yield* Deferred.await(releaseFirst);
               completed.push("first");
@@ -1824,12 +1839,17 @@ it.effect(
               expect(Record.keys(decisions)).toEqual(["record0", "record1", "record2"]);
               const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
               const uncertainQuestion = Record.get(decisions, "record2").pipe(Option.getOrThrow);
-              expect(sharedQuestion).toMatchObject({
-                instructions: expect.stringContaining('Scientific name: "shared"'),
-              });
-              expect(uncertainQuestion).toMatchObject({
-                instructions: expect.stringContaining('Scientific name: "uncertain"'),
-              });
+
+              const sharedInstructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                sharedQuestion.instructions,
+              ).pipe(Effect.orDie);
+
+              const uncertainInstructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+                uncertainQuestion.instructions,
+              ).pipe(Effect.orDie);
+
+              expect(sharedInstructions).toContain('Scientific name: "shared"');
+              expect(uncertainInstructions).toContain('Scientific name: "uncertain"');
               yield* Deferred.succeed(secondStarted, undefined);
               yield* Deferred.await(releaseSecond);
               completed.push("second");
@@ -1841,9 +1861,12 @@ it.effect(
             expect(instructions).toContain('Scientific name: "third sentinel"');
             expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
             const sharedQuestion = Record.get(decisions, "record1").pipe(Option.getOrThrow);
-            expect(sharedQuestion).toMatchObject({
-              instructions: expect.stringContaining('Scientific name: "shared"'),
-            });
+
+            const sharedInstructions = yield* Schema.decodeUnknownEffect(Schema.String)(
+              sharedQuestion.instructions,
+            ).pipe(Effect.orDie);
+
+            expect(sharedInstructions).toContain('Scientific name: "shared"');
             yield* Deferred.succeed(thirdStarted, undefined);
             yield* Deferred.await(releaseThird);
             completed.push("third");
@@ -2149,18 +2172,19 @@ it.effect.each(["failure", "interrupt"] as const)(
           decide: Effect.fnUntraced(function* ({ state, decisions }) {
             const {
               nodes: [node],
-            } = yield* Schema.decodeUnknownEffect(namedTargetState)(state).pipe(Effect.orDie);
+            } = yield* Schema.decodeUnknownEffect(namedTargetState)(state);
 
             freshSeen.push(node.record.scientificName);
             const decision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
-            expect(decision).toMatchObject({
-              criteria: {
-                multipleTarget0: expect.stringContaining("Target taxon node 0 "),
-              },
-            });
+
+            const { criteria } = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({ criteria: Schema.Struct({ multipleTarget0: Schema.String }) }),
+            )(decision);
+
+            expect(criteria.multipleTarget0).toContain("Target taxon node 0 ");
 
             return response(["multipleTarget0"]);
-          }),
+          }, Effect.orDie),
         }),
       );
 

@@ -59,24 +59,25 @@ it.effect("compares the original record descriptions at the requested rank", () 
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         expect(state).toBeNull();
-        expect(decisions.comparison).toMatchObject({
-          _tag: "Classify",
-          criteria: {
-            equalSingle: expect.any(String),
-            equalMultiple: expect.any(String),
-            properSubset: expect.any(String),
-            properSuperset: expect.any(String),
-            partialOverlap: expect.any(String),
-            disjoint: expect.any(String),
-            undetermined: expect.any(String),
-            multipleLeft: expect.any(String),
-            multipleRight: expect.any(String),
-            multipleBoth: expect.any(String),
-          },
-        });
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
 
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
+
+        for (const key of [
+          "equalSingle",
+          "equalMultiple",
+          "properSubset",
+          "properSuperset",
+          "partialOverlap",
+          "disjoint",
+          "undetermined",
+          "multipleLeft",
+          "multipleRight",
+          "multipleBoth",
+        ]) {
+          expect(Predicate.isString(question.criteria[key]), key).toBe(true);
+        }
+
         const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
         expect(instructions).toContain("species rank");
         expect(instructions).toContain('Left record:\nRecord label: "Voucher A17 | Quercus robur"');
@@ -140,22 +141,18 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           expect(state).toBeNull();
-          expect(decisions.comparison).toMatchObject({
-            instructions: expect.stringContaining(
-              'Left record:\nRecord label: "Voucher \\"A17\\"\\nFagus sylvatica"\n' +
-                'Scientific name: "Quercus robur"\nTaxonomy: "local\\\\taxonomy"\n' +
-                'Taxon ID: "id\\"17"\nTaxonomy release: "2026\\n01"\n' +
-                'Right record:\nScientific name: "Quercus petraea"',
-            ),
-          });
-          expect(decisions.comparison).toMatchObject({
-            instructions: expect.stringContaining("genus rank"),
-          });
           const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
 
           if (!Predicate.isTagged(question, "Classify"))
             return Effect.die("Expected classification");
           const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+          expect(instructions).toContain(
+            'Left record:\nRecord label: "Voucher \\"A17\\"\\nFagus sylvatica"\n' +
+              'Scientific name: "Quercus robur"\nTaxonomy: "local\\\\taxonomy"\n' +
+              'Taxon ID: "id\\"17"\nTaxonomy release: "2026\\n01"\n' +
+              'Right record:\nScientific name: "Quercus petraea"',
+          );
+          expect(instructions).toContain("genus rank");
           expect(instructions).not.toContain("caller-only");
 
           for (const field of [
@@ -714,18 +711,16 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         expect(state).toBeNull();
-        expect(decisions.comparison).toMatchObject({
-          instructions: expect.stringContaining(
-            'Left record:\nRecord label: "Voucher A17"\n' +
-              'Scientific name: "Quercus robur"\nTaxonomy: "example-taxonomy"\n' +
-              'Taxon ID: "oak-17"\nTaxonomy release: "2026-01"\n' +
-              'Right record:\nTaxonomy: "example-taxonomy"\nTaxon ID: "oak-18"',
-          ),
-        });
         const question = Record.get(decisions, "comparison").pipe(Option.getOrThrow);
 
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
         const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
+        expect(instructions).toContain(
+          'Left record:\nRecord label: "Voucher A17"\n' +
+            'Scientific name: "Quercus robur"\nTaxonomy: "example-taxonomy"\n' +
+            'Taxon ID: "oak-17"\nTaxonomy release: "2026-01"\n' +
+            'Right record:\nTaxonomy: "example-taxonomy"\nTaxon ID: "oak-18"',
+        );
         expect(instructions).toContain("family rank");
         expect(instructions.split("Taxonomy release:")).toHaveLength(2);
         expect(instructions.split("Record label:")).toHaveLength(2);
