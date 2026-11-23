@@ -31,12 +31,13 @@ export const layer = Layer.effect(
           ? { taxonomy: source.taxonomy, id }
           : { taxonomy: source.taxonomy, id, release: source.release };
 
-      return {
-        taxonId,
-        scientificName,
-        ...(isRank(rank) ? { rank } : {}),
-        sourceRank: rank,
-      };
+      const summary = { taxonId, scientificName };
+
+      if (isRank(rank)) {
+        return { ...summary, rank, sourceRank: rank };
+      }
+
+      return { ...summary, sourceRank: rank };
     };
 
     const byId = Effect.fn("NcbiTaxonomy.byId")(function* (requested: TaxonId) {

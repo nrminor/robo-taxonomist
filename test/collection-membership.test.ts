@@ -456,20 +456,19 @@ for (const [quantifier, operation] of quantifiers) {
             calls++;
             expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
 
-            return Effect.succeed({
-              answers: {
-                record0: membershipAnswer(quantifier === "all" ? "notMember" : "member"),
-                ...(mode === "missing"
-                  ? {}
-                  : {
-                      record1: Classify({
-                        label: "invented",
-                        probabilities: { invented: 1 },
-                      }),
-                    }),
-              },
-              usage: { inputTokens: undefined, outputTokens: undefined },
+            const record0 = membershipAnswer(quantifier === "all" ? "notMember" : "member");
+            const usage = { inputTokens: undefined, outputTokens: undefined };
+
+            if (mode === "missing") {
+              return Effect.succeed({ answers: { record0 }, usage });
+            }
+
+            const record1 = Classify({
+              label: "invented",
+              probabilities: { invented: 1 },
             });
+
+            return Effect.succeed({ answers: { record0, record1 }, usage });
           },
         }),
       );
