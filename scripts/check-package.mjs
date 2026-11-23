@@ -33,11 +33,19 @@ const packageManifest = Schema.Struct({
   peerDependencies,
 });
 
-const decodeManifest = Schema.decodeSync(Schema.fromJsonString(packageManifest));
+const packageManifestJson = Schema.fromJsonString(packageManifest);
 
-const decodeConfig = Schema.decodeSync(Schema.fromJsonString(Schema.JsonObject));
+const decodeManifest = Schema.decodeSync(packageManifestJson);
 
-const manifest = decodeManifest(readFileSync(join(root, "package.json"), "utf8"));
+const configJson = Schema.fromJsonString(Schema.JsonObject);
+
+const decodeConfig = Schema.decodeSync(configJson);
+
+const manifestPath = join(root, "package.json");
+
+const manifestText = readFileSync(manifestPath, "utf8");
+
+const manifest = decodeManifest(manifestText);
 
 /**
  * @param {string} command
@@ -91,7 +99,9 @@ function check() {
       assert(lstatSync(join(installed, file)).size > 0, `Artifact missing or empty: ${file}`);
     }
 
-    const packed = decodeManifest(readFileSync(join(installed, "package.json"), "utf8"));
+    const packedManifestPath = join(installed, "package.json");
+    const packedManifestText = readFileSync(packedManifestPath, "utf8");
+    const packed = decodeManifest(packedManifestText);
     assert.equal(packed.name, manifest.name);
     assert.equal(packed.version, manifest.version);
     assert.equal(packed.type, "module");
@@ -105,7 +115,9 @@ function check() {
       copyFileSync(join(fixtures, file), join(consumer, file));
     }
 
-    const config = decodeConfig(readFileSync(join(fixtures, "tsconfig.json"), "utf8"));
+    const configPath = join(fixtures, "tsconfig.json");
+    const configText = readFileSync(configPath, "utf8");
+    const config = decodeConfig(configText);
     const consumerConfig = { ...config, extends: join(root, "tsconfig.json") };
     writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify(consumerConfig));
     const compiler = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
