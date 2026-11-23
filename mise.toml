@@ -12,6 +12,11 @@ bun = "1.4.4"
 bootstrap = { description = "Install locked package dependencies", run = "pnpm install --frozen-lockfile" }
 check = { description = "Run all repository checks and build the library", run = "pnpm run check" }
 "check:fast" = { description = "Run lint, TypeScript, and Effect feedback between edits", run = "pnpm run check:fast" }
+"review:clef" = { description = "Review changed source and tests with Clef (sends selected files to Cloudflare)", run = "pnpm --filter @robo-taxonomist/demo exec varlock run --inject vars --filter CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN -- node ../../tools/review/cli.ts" }
+"check:review" = { description = "Run fast checks and Clef review before handoff", run = [
+  "mise run check:fast",
+  "mise run review:clef",
+] }
 "check:package" = { description = "Check an existing tarball in an isolated consumer", run = "pnpm run check:package" }
 pack = { description = "Pack the already-built library without rebuilding", run = "pnpm --config.ignore-scripts=true pack --pack-destination artifacts" }
 build = { description = "Build ESM and TypeScript declarations", run = "pnpm run build" }

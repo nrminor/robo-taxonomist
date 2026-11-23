@@ -17,6 +17,9 @@
 !/AGENTS.md
 
 !/tools/
+!/tools/review/
+!/tools/review/*.ts
+!/tools/review/LICENSE
 !/tools/oxlint/
 !/tools/oxlint/anti-slop/
 !/tools/oxlint/anti-slop/**/
