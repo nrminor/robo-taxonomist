@@ -25,6 +25,7 @@ import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 import * as ClefModel from "../src/server/clef-model.ts";
+import { PanelResults } from "../src/server/panel-results.ts";
 import * as TestJson from "./Json.ts";
 
 vi.mock("server-only", () => ({}));
@@ -68,19 +69,22 @@ it.effect.each([
     name: "a rating decision",
     decision: Decision.rate({ instructions: "Rate this", criteria: ["low", "high"] }),
     description: "This Clef adapter supports only Classify decisions",
+    schemaFailure: false,
   },
   {
     name: "a probability decision",
     decision: Decision.probability({ instructions: "Estimate this" }),
     description: "This Clef adapter supports only Classify decisions",
+    schemaFailure: false,
   },
   {
     name: "structured classification instructions",
     decision: Decision.classify({
-      instructions: { task: "Classify this" },
+      instructions: { task: "SECRET instructions" },
       criteria: { yes: "Yes", no: "No" },
     }),
     description: "This Clef adapter requires string instructions and criteria",
+    schemaFailure: true,
   },
   {
     name: "a null classification criterion",
@@ -89,18 +93,60 @@ it.effect.each([
       criteria: { yes: "Yes", no: null },
     }),
     description: "This Clef adapter requires string instructions and criteria",
+    schemaFailure: true,
   },
-])("rejects $name before transport", ({ decision, description }) => {
+])("rejects $name before transport", ({ decision, description, schemaFailure }) => {
   const execute = vi.fn(() => Effect.die("Unexpected provider transport"));
   const definition = Decision.make({ input: Schema.Null, decisions: { question: decision } });
 
   return Effect.gen(function* () {
-    const error = yield* DecisionModel.decide(definition, { input: null }).pipe(Effect.flip);
+    const exit = yield* DecisionModel.decide(definition, { input: null }).pipe(Effect.exit);
+    assert(Exit.isFailure(exit));
+    const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
     assert(AiError.isAiError(error));
     expect(error).toMatchObject({ module: "ClefModel", method: "decide" });
     expect(error.reason).toBeInstanceOf(AiError.InvalidRequestError);
     expect(error.reason).toMatchObject({ description });
     expect(execute).not.toHaveBeenCalled();
+
+    const original = Context.getOrUndefined(
+      Cause.annotations(exit.cause),
+      ClefModel.ClefRequestCause,
+    );
+
+    if (!schemaFailure) {
+      expect(original).toBeUndefined();
+
+      return;
+    }
+
+    assert(original !== undefined);
+    const inputError = Option.getOrThrow(Cause.findErrorOption(original));
+    expect(Schema.isSchemaError(inputError)).toBe(true);
+
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        ManagedRuntime.make(
+          Layer.succeed(PanelResults, { classify: () => Effect.failCause(exit.cause) }),
+        ),
+      ),
+      (runtime) => runtime.disposeEffect,
+    );
+
+    const response = yield* Effect.promise(() =>
+      makeHandlers(runtime).classifyHttp(requestPanel()),
+    );
+
+    expect(response.status).toBe(503);
+    const wire = yield* Effect.promise(() => response.text());
+    expect(wire).not.toContain("SECRET");
+    const actual = yield* TestJson.decode(wire);
+
+    const expected = yield* TestJson.decode(
+      '{"_tag":"ModelFailure","reason":{"_tag":"InvalidRequestError"},"retryable":false}',
+    );
+
+    expect(actual).toEqual(expected);
   }).pipe(
     Effect.provide(
       ClefModel.clefModelLayer({ accountId, apiToken: Redacted.make(token) }).pipe(

@@ -1,8 +1,21 @@
 import "server-only";
-import { Clock, Data, Effect, Layer, Match, Option, Redacted, Result, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Context,
+  Data,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+} from "effect";
 import { AiError, DecisionModel, type Decision } from "effect/ai";
 import {
   Headers,
+  type HttpBody,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
@@ -41,6 +54,29 @@ const responseSchema = Schema.Struct({
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
 const Decisions = Data.taggedEnum<Decision.Any>();
+
+/** Original request-construction failure, retained only on the internal Effect cause. */
+export class ClefRequestCause extends Context.Service<
+  ClefRequestCause,
+  Cause.Cause<Schema.SchemaError | HttpBody.HttpBodyError>
+>()("demo/ClefRequestCause") {}
+
+const invalidRequest = (description: string) =>
+  AiError.make({
+    module: "ClefModel",
+    method: "decide",
+    reason: new AiError.InvalidRequestError({ description }),
+  });
+
+const mapInvalidRequest = (description: string) =>
+  Effect.catchCause((cause: Cause.Cause<Schema.SchemaError | HttpBody.HttpBodyError>) => {
+    const annotated = Cause.annotate(
+      Cause.map(cause, () => invalidRequest(description)),
+      Context.make(ClefRequestCause, cause),
+    );
+
+    return Effect.failCause(annotated);
+  });
 
 const invalidOutput = () =>
   AiError.make({
@@ -120,135 +156,122 @@ const httpError = (error: HttpClientError.HttpClientError, now: number): AiError
     }),
   );
 
+type ClefOptions = {
+  readonly accountId: string;
+  readonly apiToken: Redacted.Redacted<string>;
+};
+
+const buildClefModel = (options: ClefOptions) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const url = `https://api.cloudflare.com/client/v4/accounts/${options.accountId}/ai/run/@cf/cloudflare/clef`;
+
+    const decide = Effect.fn("ClefModel.decide")(function* ({
+      state,
+      decisions,
+    }: DecisionModel.ProviderOptions): Effect.fn.Return<
+      DecisionModel.ProviderResponse,
+      AiError.AiError
+    > {
+      const entries = Object.entries(decisions);
+
+      if (entries.length === 0 || entries.length > 64) {
+        return yield* AiError.make({
+          module: "ClefModel",
+          method: "decide",
+          reason: new AiError.InvalidRequestError({
+            description: "Clef requires between 1 and 64 questions",
+          }),
+        });
+      }
+
+      const questions: Record<
+        string,
+        {
+          readonly type: "choice";
+          readonly instructions: string;
+          readonly criteria: Readonly<Record<string, string>>;
+        }
+      > = Object.create(null);
+
+      for (const [key, decision] of entries) {
+        if (!Decisions.$is("Classify")(decision)) {
+          return yield* AiError.make({
+            module: "ClefModel",
+            method: "decide",
+            reason: new AiError.InvalidRequestError({
+              description: "This Clef adapter supports only Classify decisions",
+            }),
+          });
+        }
+
+        const question = yield* Schema.decodeUnknownEffect(classifyQuestionSchema)(decision).pipe(
+          mapInvalidRequest("This Clef adapter requires string instructions and criteria"),
+        );
+
+        questions[key] = {
+          type: "choice",
+          instructions: question.instructions,
+          criteria: question.criteria,
+        };
+      }
+
+      const request = yield* HttpClientRequest.post(url).pipe(
+        HttpClientRequest.bearerToken(options.apiToken),
+        HttpClientRequest.bodyJson({ model: "clef", state, questions }),
+        mapInvalidRequest("Could not encode the Clef request as JSON"),
+      );
+
+      const clock = yield* Clock.Clock;
+
+      const response = yield* client
+        .execute(request)
+        .pipe(Effect.mapError((error) => httpError(error, clock.currentTimeMillisUnsafe())));
+
+      if (response.status < 200 || response.status >= 300) {
+        const now = yield* Clock.currentTimeMillis;
+
+        return yield* AiError.make({
+          module: "ClefModel",
+          method: "decide",
+          reason: httpReason(response, now),
+        });
+      }
+
+      const body = yield* response.json.pipe(Effect.mapError(invalidOutput));
+
+      const decoded = yield* Schema.decodeUnknownEffect(responseSchema)(body).pipe(
+        Effect.mapError(invalidOutput),
+      );
+
+      const answers: Record<string, DecisionModel.ProviderClassifyAnswer> = Object.create(null);
+
+      for (const [key, answer] of Object.entries(decoded.result.answers)) {
+        answers[key] = Classify({
+          label: answer.choice,
+          probabilities: answer.probabilities,
+          confidence: answer.confidence,
+        });
+      }
+
+      return {
+        answers,
+        usage: {
+          inputTokens: decoded.result.usage.input_tokens,
+          outputTokens: decoded.result.usage.output_tokens,
+        },
+      };
+    });
+
+    return yield* DecisionModel.make({ decide });
+  });
+
 /**
  * Live Cloudflare Clef adapter requiring an HTTP client and server-side credentials.
  * Accepts 1–64 Classify decisions per call; validates response shape, [0, 1] probabilities and
  * nonnegative integer token counts. Response decoding alone does not enforce probability normalization.
  */
-export const clefModelLayer = (options: {
-  readonly accountId: string;
-  readonly apiToken: Redacted.Redacted<string>;
-}): Layer.Layer<DecisionModel.DecisionModel, never, HttpClient.HttpClient> => {
-  return Layer.effect(
-    DecisionModel.DecisionModel,
-    Effect.gen(function* () {
-      const client = yield* HttpClient.HttpClient;
-      const url = `https://api.cloudflare.com/client/v4/accounts/${options.accountId}/ai/run/@cf/cloudflare/clef`;
-
-      const decide = Effect.fn("ClefModel.decide")(function* ({
-        state,
-        decisions,
-      }: DecisionModel.ProviderOptions): Effect.fn.Return<
-        DecisionModel.ProviderResponse,
-        AiError.AiError
-      > {
-        const entries = Object.entries(decisions);
-
-        if (entries.length === 0 || entries.length > 64) {
-          return yield* AiError.make({
-            module: "ClefModel",
-            method: "decide",
-            reason: new AiError.InvalidRequestError({
-              description: "Clef requires between 1 and 64 questions",
-            }),
-          });
-        }
-
-        const questions: Record<
-          string,
-          {
-            readonly type: "choice";
-            readonly instructions: string;
-            readonly criteria: Readonly<Record<string, string>>;
-          }
-        > = Object.create(null);
-
-        for (const [key, decision] of entries) {
-          if (!Decisions.$is("Classify")(decision)) {
-            return yield* AiError.make({
-              module: "ClefModel",
-              method: "decide",
-              reason: new AiError.InvalidRequestError({
-                description: "This Clef adapter supports only Classify decisions",
-              }),
-            });
-          }
-
-          const question = yield* Schema.decodeUnknownEffect(classifyQuestionSchema)(decision).pipe(
-            Effect.mapError(() =>
-              AiError.make({
-                module: "ClefModel",
-                method: "decide",
-                reason: new AiError.InvalidRequestError({
-                  description: "This Clef adapter requires string instructions and criteria",
-                }),
-              }),
-            ),
-          );
-
-          questions[key] = {
-            type: "choice",
-            instructions: question.instructions,
-            criteria: question.criteria,
-          };
-        }
-
-        const request = yield* HttpClientRequest.post(url).pipe(
-          HttpClientRequest.bearerToken(options.apiToken),
-          HttpClientRequest.bodyJson({ model: "clef", state, questions }),
-          Effect.mapError(() =>
-            AiError.make({
-              module: "ClefModel",
-              method: "decide",
-              reason: new AiError.InvalidRequestError({
-                description: "Could not encode the Clef request as JSON",
-              }),
-            }),
-          ),
-        );
-
-        const clock = yield* Clock.Clock;
-
-        const response = yield* client
-          .execute(request)
-          .pipe(Effect.mapError((error) => httpError(error, clock.currentTimeMillisUnsafe())));
-
-        if (response.status < 200 || response.status >= 300) {
-          const now = yield* Clock.currentTimeMillis;
-
-          return yield* AiError.make({
-            module: "ClefModel",
-            method: "decide",
-            reason: httpReason(response, now),
-          });
-        }
-
-        const body = yield* response.json.pipe(Effect.mapError(invalidOutput));
-
-        const decoded = yield* Schema.decodeUnknownEffect(responseSchema)(body).pipe(
-          Effect.mapError(invalidOutput),
-        );
-
-        const answers: Record<string, DecisionModel.ProviderClassifyAnswer> = Object.create(null);
-
-        for (const [key, answer] of Object.entries(decoded.result.answers)) {
-          answers[key] = Classify({
-            label: answer.choice,
-            probabilities: answer.probabilities,
-            confidence: answer.confidence,
-          });
-        }
-
-        return {
-          answers,
-          usage: {
-            inputTokens: decoded.result.usage.input_tokens,
-            outputTokens: decoded.result.usage.output_tokens,
-          },
-        };
-      });
-
-      return yield* DecisionModel.make({ decide });
-    }),
-  );
-};
+export const clefModelLayer = (
+  options: ClefOptions,
+): Layer.Layer<DecisionModel.DecisionModel, never, HttpClient.HttpClient> =>
+  Layer.effect(DecisionModel.DecisionModel, buildClefModel(options));
