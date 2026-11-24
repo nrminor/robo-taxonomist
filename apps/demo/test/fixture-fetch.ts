@@ -2,6 +2,30 @@ import { expect, vi } from "vitest";
 import { Schema } from "effect";
 import { ClassifyRequest } from "../src/lib/contract.ts";
 
+/** Observe the first call to a fetch response handler without changing when it replies. */
+export const observeFetch = (respond: typeof globalThis.fetch) => {
+  const started = Promise.withResolvers<Parameters<typeof globalThis.fetch>>();
+
+  const fetch: typeof globalThis.fetch = (...args) => {
+    started.resolve(args);
+
+    return respond(...args);
+  };
+
+  return { fetch, started: started.promise };
+};
+
+/** Wait for cancellation, including when it happened before the test could listen. */
+export const waitForRequestAbort = (signal: AbortSignal | null | undefined) => {
+  if (signal == null) throw new Error("Expected a request with an abort signal");
+
+  if (signal.aborted) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+};
+
 // Every mount sends a real initial POST through FetchHttpClient. The supplied
 // interactiveFetch double counts only subsequent requests; this returned double
 // records all requests, including the initial Broad groups query.

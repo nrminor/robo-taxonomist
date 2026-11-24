@@ -11,7 +11,7 @@ import { PanelResponse, ClassificationFailure, PublicModelReason } from "../src/
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
-import { initialBroadReplyThenFetch } from "./fixture-fetch.ts";
+import { initialBroadReplyThenFetch, observeFetch, waitForRequestAbort } from "./fixture-fetch.ts";
 
 afterEach(() => cleanup());
 
@@ -99,14 +99,17 @@ it.each([320, 1440])("shows a results skeleton during the initial POST at %i px"
 it("accepts a panel selection while the initial result is pending and ignores its late reply", async () => {
   const initial = Promise.withResolvers<Response>();
   const pending = Promise.withResolvers<Response>();
+  const broadRequest = observeFetch(() => initial.promise);
+  const nestedRequest = observeFetch(() => pending.promise);
 
   const fetch = vi
     .fn<typeof globalThis.fetch>()
-    .mockReturnValueOnce(initial.promise)
-    .mockReturnValueOnce(pending.promise);
+    .mockImplementationOnce(broadRequest.fetch)
+    .mockImplementationOnce(nestedRequest.fetch);
 
   await renderHttpDemo(fetch);
-  await expect.poll(() => fetch.mock.calls.length).toBe(1);
+  const [, broadInit] = await broadRequest.started;
+  expect(fetch).toHaveBeenCalledTimes(1);
   await expect
     .element(
       page
@@ -117,8 +120,9 @@ it("accepts a panel selection while the initial result is pending and ignores it
   await expect.element(page.getByRole("region", { name: "Panel targets" })).not.toBeInTheDocument();
 
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();
-  await expect.poll(() => fetch.mock.calls.length).toBe(2);
-  await expect.poll(() => fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  await nestedRequest.started;
+  await waitForRequestAbort(broadInit?.signal);
+  expect(fetch).toHaveBeenCalledTimes(2);
   const nested = await replyFor("nested");
   pending.resolve(Response.json(nested));
   await expect.element(page.getByRole("region", { name: "Groups and subgroups" })).toBeVisible();
@@ -373,22 +377,28 @@ it("ignores superseded HTTP replies when Broad groups is selected again before t
   const initial = Promise.withResolvers<Response>();
   const first = Promise.withResolvers<Response>();
   const latest = Promise.withResolvers<Response>();
+  const initialRequest = observeFetch(() => initial.promise);
+  const firstSelection = observeFetch(() => first.promise);
+  const latestSelection = observeFetch(() => latest.promise);
 
   const fetch = vi
     .fn<typeof globalThis.fetch>()
-    .mockReturnValueOnce(initial.promise)
-    .mockReturnValueOnce(first.promise)
-    .mockReturnValueOnce(latest.promise);
+    .mockImplementationOnce(initialRequest.fetch)
+    .mockImplementationOnce(firstSelection.fetch)
+    .mockImplementationOnce(latestSelection.fetch);
 
   await renderHttpDemo(fetch);
-  await expect.poll(() => fetch.mock.calls.length).toBe(1);
+  const [, initialInit] = await initialRequest.started;
+  expect(fetch).toHaveBeenCalledTimes(1);
 
   await page.getByRole("radio", { name: "Families, genera and species" }).click();
-  await expect.poll(() => fetch.mock.calls.length).toBe(2);
-  await expect.poll(() => fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  const [, firstInit] = await firstSelection.started;
+  await waitForRequestAbort(initialInit?.signal);
+  expect(fetch).toHaveBeenCalledTimes(2);
   await page.getByRole("radio", { name: "Broad groups" }).click();
-  await expect.poll(() => fetch.mock.calls.length).toBe(3);
-  await expect.poll(() => fetch.mock.calls[1]?.[1]?.signal?.aborted).toBe(true);
+  await latestSelection.started;
+  await waitForRequestAbort(firstInit?.signal);
+  expect(fetch).toHaveBeenCalledTimes(3);
   const broad = await replyFor("broad");
   latest.resolve(Response.json(broad));
   await expect.element(page.getByText("22 of 24 records match a target.")).toBeVisible();
@@ -462,15 +472,17 @@ it("does not count a support-only change as a change in matches", async () => {
 
   const wire = Schema.encodeSync(Schema.toCodecJson(PanelResponse))(revised);
   const pending = Promise.withResolvers<Response>();
+  const nestedRequest = observeFetch(() => pending.promise);
 
   const fetch = vi
-    .fn(() => pending.promise)
-    .mockReturnValueOnce(pending.promise)
+    .fn<typeof globalThis.fetch>(() => pending.promise)
+    .mockImplementationOnce(nestedRequest.fetch)
     .mockResolvedValueOnce(Response.json(wire));
 
   await renderDemo(Promise.resolve(original), fetch);
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();
-  await expect.poll(() => fetch.mock.calls.length).toBe(1);
+  await nestedRequest.started;
+  expect(fetch).toHaveBeenCalledTimes(1);
   await page.getByRole("radio", { name: "Broad groups" }).click();
   await expect
     .element(page.getByText("Matches changed for 0 records since Broad groups."))
@@ -481,15 +493,17 @@ it("does not count a support-only change as a change in matches", async () => {
 it("does not report a superseded failure", async () => {
   const earlier = Promise.withResolvers<Response>();
   const focused = await replyFor("focused");
+  const nestedRequest = observeFetch(() => earlier.promise);
 
   const fetch = vi
-    .fn(() => earlier.promise)
-    .mockReturnValueOnce(earlier.promise)
+    .fn<typeof globalThis.fetch>(() => earlier.promise)
+    .mockImplementationOnce(nestedRequest.fetch)
     .mockImplementationOnce(() => Promise.resolve(Response.json(focused)));
 
   await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
   await page.getByRole("radio", { name: "Groups and subgroups" }).click();
-  await expect.poll(() => fetch.mock.calls.length).toBe(1);
+  await nestedRequest.started;
+  expect(fetch).toHaveBeenCalledTimes(1);
   await page.getByRole("radio", { name: "Families, genera and species" }).click();
   await expect.element(page.getByText("13 of 24 records match a target.")).toBeVisible();
   earlier.reject(new Error("Superseded request failed"));
@@ -501,22 +515,28 @@ it("does not report a superseded failure", async () => {
 
 it("interrupts an unfinished request when its registry is disposed", async () => {
   const pending = Promise.withResolvers<Response>();
-  const fetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);
+  const request = observeFetch(() => pending.promise);
+  const fetch = vi.fn(request.fetch);
   const view = await renderDemo(Promise.resolve(await replyFor("broad")), fetch);
   await view.getByRole("radio", { name: "Groups and subgroups" }).click();
-  await expect.poll(() => fetch.mock.calls.length).toBe(1);
+  const [, init] = await request.started;
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(init?.signal?.aborted).toBe(false);
   await view.unmount();
-  await expect.poll(() => fetch.mock.calls[0]?.[1]?.signal?.aborted, { timeout: 2_000 }).toBe(true);
+  await waitForRequestAbort(init?.signal);
 });
 
 it("aborts the initial POST when the demo unmounts", async () => {
   const pending = Promise.withResolvers<Response>();
-  const fetch = vi.fn<typeof globalThis.fetch>(() => pending.promise);
+  const request = observeFetch(() => pending.promise);
+  const fetch = vi.fn(request.fetch);
   const view = await renderHttpDemo(fetch);
-  await expect.poll(() => fetch.mock.calls.length).toBe(1);
-  expect(fetch.mock.calls[0]?.[1]?.method).toBe("POST");
+  const [, init] = await request.started;
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(init?.method).toBe("POST");
+  expect(init?.signal?.aborted).toBe(false);
   await view.unmount();
-  await expect.poll(() => fetch.mock.calls[0]?.[1]?.signal?.aborted, { timeout: 2_000 }).toBe(true);
+  await waitForRequestAbort(init?.signal);
 });
 
 it.each([

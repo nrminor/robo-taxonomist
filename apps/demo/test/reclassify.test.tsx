@@ -11,7 +11,7 @@ import { browserRuntime } from "../src/client/panel-atoms.ts";
 import { type PanelId } from "../src/lib/catalog.ts";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
-import { initialBroadReplyThenFetch } from "./fixture-fetch.ts";
+import { initialBroadReplyThenFetch, observeFetch } from "./fixture-fetch.ts";
 
 afterEach(async () => {
   await cdp().send("Emulation.setEmulatedMedia", {
@@ -167,11 +167,13 @@ it("carries submitted hints across panels and refreshes, retries their exact sna
     }),
   );
 
+  const refresh = observeFetch(() => Promise.resolve(Response.json(focused)));
+
   const interactiveFetch = vi
     .fn<typeof globalThis.fetch>()
     .mockResolvedValueOnce(Response.json(broad))
     .mockResolvedValueOnce(Response.json(focused))
-    .mockResolvedValueOnce(Response.json(focused))
+    .mockImplementationOnce(refresh.fetch)
     .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
     .mockResolvedValueOnce(Response.json(focused))
     .mockResolvedValueOnce(Response.json(focused));
@@ -193,7 +195,8 @@ it("carries submitted hints across panels and refreshes, retries their exact sna
     .toBeVisible();
   const reclassify = view.getByRole("button", { name: "Reclassify panel", exact: true });
   await reclassify.click();
-  await expect.poll(() => interactiveFetch.mock.calls.length).toBe(3);
+  await refresh.started;
+  expect(interactiveFetch).toHaveBeenCalledTimes(3);
   await expect.element(reclassify).not.toHaveAttribute("aria-disabled", "true");
 
   await edit.click();
