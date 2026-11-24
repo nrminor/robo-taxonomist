@@ -60,14 +60,16 @@ const exceedsJsonDepth = (value: unknown, maximum: number): boolean => {
   return false;
 };
 
-const requestReadFailure = (error: HttpServerError.HttpServerError, maxBodyBytes: number) =>
-  Match.value(error.reason).pipe(
-    Match.when(
-      { _tag: "RequestParseError", reason: "BodyTooLarge" },
-      () => new Api.RequestTooLarge({ maxBodyBytes }),
-    ),
-    Match.orElse(() => new Api.RequestReadFailure({ message: "Cannot read the request body" })),
+const requestReadFailure = (error: HttpServerError.HttpServerError, maxBodyBytes: number) => {
+  const bodyTooLarge = Match.value(error.reason).pipe(
+    Match.tag("RequestParseError", ({ reason }) => reason === "BodyTooLarge"),
+    Match.orElse(() => false),
   );
+
+  return bodyTooLarge
+    ? new Api.RequestTooLarge({ maxBodyBytes })
+    : new Api.RequestReadFailure({ message: "Cannot read the request body" });
+};
 
 /** Check depth before endpoint validation; let the API handle syntax and content-type errors. */
 const checkJsonDepth = Effect.fnUntraced(function* (
