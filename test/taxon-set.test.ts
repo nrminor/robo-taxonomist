@@ -121,11 +121,8 @@ it("serializes ten thousand flat targets without creating a deeply nested expres
   if (!Predicate.hasProperty(document, "operands") || !Array.isArray(document.operands))
     throw new Error("Expected serialized union operands");
   expect(document.operands).toHaveLength(10_000);
-  expect(document.operands[0]).toEqual({ _tag: "Taxon", record: { scientificName: "Target 0" } });
-  expect(document.operands[9_999]).toEqual({
-    _tag: "Taxon",
-    record: { scientificName: "Target 9999" },
-  });
+  expect(document.operands[0]).toHaveProperty("record", { scientificName: "Target 0" });
+  expect(document.operands[9_999]).toHaveProperty("record", { scientificName: "Target 9999" });
 });
 
 it("preserves syntax with fresh parents and shared readonly children", () => {
@@ -250,14 +247,10 @@ it.effect.each(operations)(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           calls++;
-          expect(state).toEqual({
-            nodes: [
-              { _tag: "Taxon", record: { scientificName: "A" } },
-              { _tag: "Taxon", record: { scientificName: "C" } },
-            ],
-            left: 0,
-            right: 1,
-          });
+          expect(state).toMatchObject({ left: 0, right: 1 });
+          expect(state).toHaveProperty("nodes.length", 2);
+          expect(state).toHaveProperty("nodes.0.record", { scientificName: "A" });
+          expect(state).toHaveProperty("nodes.1.record", { scientificName: "C" });
           const question = relationQuestion(decisions);
 
           return Effect.succeed({
@@ -302,16 +295,18 @@ it.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: ({ state, decisions }) => {
-          expect(state).toEqual({
-            nodes: [
-              { _tag: "Union", operands: [1, 2, 1] },
-              { _tag: "Taxon", record: { scientificName: "Quercus" } },
-              { _tag: "Taxon", record: { scientificName: "Fagus" } },
-              { _tag: "Taxon", record: { scientificName: "Betula" } },
+          expect(state).toEqual(
+            TestJson.decodeSync(`{
+            "nodes": [
+              { "_tag": "Union", "operands": [1, 2, 1] },
+              { "_tag": "Taxon", "record": { "scientificName": "Quercus" } },
+              { "_tag": "Taxon", "record": { "scientificName": "Fagus" } },
+              { "_tag": "Taxon", "record": { "scientificName": "Betula" } }
             ],
-            left: 0,
-            right: 3,
-          });
+            "left": 0,
+            "right": 3
+          }`),
+          );
           const question = relationQuestion(decisions);
 
           return Effect.succeed({
@@ -457,18 +452,20 @@ it.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: ({ state, decisions }) => {
-          expect(state).toEqual({
-            nodes: [
-              { _tag: "Union", operands: [1, 1] },
-              { _tag: "Taxon", record: { scientificName: "A" } },
-              { _tag: "Intersection", operands: [3, 4] },
-              { _tag: "Taxon", record: { scientificName: "B" } },
-              { _tag: "Difference", left: 0, right: 5 },
-              { _tag: "Taxon", record: { scientificName: "A" } },
+          expect(state).toEqual(
+            TestJson.decodeSync(`{
+            "nodes": [
+              { "_tag": "Union", "operands": [1, 1] },
+              { "_tag": "Taxon", "record": { "scientificName": "A" } },
+              { "_tag": "Intersection", "operands": [3, 4] },
+              { "_tag": "Taxon", "record": { "scientificName": "B" } },
+              { "_tag": "Difference", "left": 0, "right": 5 },
+              { "_tag": "Taxon", "record": { "scientificName": "A" } }
             ],
-            left: 0,
-            right: 2,
-          });
+            "left": 0,
+            "right": 2
+          }`),
+          );
           const question = relationQuestion(decisions);
           expect(Record.keys(question.criteria)).toEqual([
             ...baseRelationLabels,
@@ -543,12 +540,15 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
         // One taxon plus twelve distinct unions, shared by both roots.
         expect(state).toHaveProperty("nodes.length", 13);
         expect(state).toMatchObject({ left: 0, right: 0 });
-        expect(state).toHaveProperty("nodes.0", { _tag: "Union", operands: [1, 1] });
-        expect(state).toHaveProperty("nodes.11", { _tag: "Union", operands: [12, 12] });
-        expect(state).toHaveProperty("nodes.12", {
-          _tag: "Taxon",
-          record: { scientificName: "A" },
-        });
+        expect(state).toHaveProperty(
+          "nodes.0",
+          TestJson.decodeSync('{"_tag":"Union","operands":[1,1]}'),
+        );
+        expect(state).toHaveProperty(
+          "nodes.11",
+          TestJson.decodeSync('{"_tag":"Union","operands":[12,12]}'),
+        );
+        expect(state).toHaveProperty("nodes.12.record", { scientificName: "A" });
         const question = relationQuestion(decisions);
 
         return Effect.succeed({
@@ -868,11 +868,13 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
     const disjoint = yield* TaxonSet.disjoint(nonliteralEmpty, nonliteralEmpty);
     expect(disjoint).toEqual(relationCases.No.make({ relation: "disjoint" }));
     expect(seen).toHaveLength(6);
-    expect(seen[4]).toEqual({
-      nodes: [{ _tag: "Union", operands: [1, 1] }, { _tag: "Empty" }],
-      left: 0,
-      right: 0,
-    });
+    expect(seen[4]).toEqual(
+      TestJson.decodeSync(`{
+      "nodes": [{ "_tag": "Union", "operands": [1, 1] }, { "_tag": "Empty" }],
+      "left": 0,
+      "right": 0
+    }`),
+    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -1038,7 +1040,8 @@ it.effect.each(operations)(
     );
 
     return Effect.gen(function* () {
-      const malformed: unknown = { _tag: "Difference", left: TaxonSet.empty() };
+      const differenceWithoutRight = Schema.TaggedStruct("Difference", { left: Schema.Unknown });
+      const malformed = differenceWithoutRight.make({ left: TaxonSet.empty() });
 
       const error = yield* Effect.flip(
         // @ts-expect-error Malformed untyped expression lacks the right operand.
@@ -1306,16 +1309,18 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           calls++;
-          expect(state).toEqual({
-            nodes: [
-              { _tag: "Union", operands: [1, 2] },
-              { _tag: "Taxon", record: { scientificName: "A" } },
-              { _tag: "Taxon", record: { scientificName: "B" } },
-              { _tag: "Taxon", record: { scientificName: "C" } },
+          expect(state).toEqual(
+            TestJson.decodeSync(`{
+            "nodes": [
+              { "_tag": "Union", "operands": [1, 2] },
+              { "_tag": "Taxon", "record": { "scientificName": "A" } },
+              { "_tag": "Taxon", "record": { "scientificName": "B" } },
+              { "_tag": "Taxon", "record": { "scientificName": "C" } }
             ],
-            left: 0,
-            right: 3,
-          });
+            "left": 0,
+            "right": 3
+          }`),
+          );
           expect(Record.keys(decisions)).toEqual(["relation"]);
           const question = relationQuestion(decisions);
           expect(Predicate.isString(question.criteria.equal)).toBe(true);

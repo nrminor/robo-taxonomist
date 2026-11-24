@@ -48,14 +48,12 @@ it.effect.prop(
 it("rejects split sharing, merged equal objects and extra rows in a literal wire fixture", () => {
   const a = TaxonSet.of(TaxonName.make("A"));
   const roots = { left: TaxonSet.union(a, a), right: TaxonSet.of(TaxonName.make("A")) };
+  const firstLeaf = rowSchema.cases.Taxon.make({ record: { scientificName: "A" } });
+  const secondLeaf = rowSchema.cases.Taxon.make({ record: { scientificName: "A" } });
 
   // Valid references need not follow the compiler's particular row order.
   const wire: Wire = {
-    nodes: [
-      { _tag: "Taxon", record: { scientificName: "A" } },
-      { _tag: "Taxon", record: { scientificName: "A" } },
-      { _tag: "Union", operands: [0, 0] },
-    ],
+    nodes: [firstLeaf, secondLeaf, rowSchema.cases.Union.make({ operands: [0, 0] })],
     left: 2,
     right: 1,
   };
@@ -63,26 +61,23 @@ it("rejects split sharing, merged equal objects and extra rows in a literal wire
   expectSameGraph(wire, roots);
   expectSameGraph(
     {
-      nodes: [
-        { _tag: "Union", operands: [2, 2] },
-        { _tag: "Taxon", record: { scientificName: "A" } },
-        { _tag: "Taxon", record: { scientificName: "A" } },
-      ],
+      nodes: [rowSchema.cases.Union.make({ operands: [2, 2] }), secondLeaf, firstLeaf],
       left: 0,
       right: 1,
     },
     roots,
   );
   expect(() => expectSameGraph({ ...wire, right: 0 }, roots)).toThrow();
+
+  const splitSharing = rowSchema.cases.Union.make({ operands: [1, 0] });
+
   expect(() =>
-    expectSameGraph(
-      { ...wire, nodes: [...wire.nodes.slice(0, 2), { _tag: "Union", operands: [1, 0] }] },
-      roots,
-    ),
+    expectSameGraph({ ...wire, nodes: [firstLeaf, secondLeaf, splitSharing] }, roots),
   ).toThrow();
-  expect(() =>
-    expectSameGraph({ ...wire, nodes: [...wire.nodes, { _tag: "Empty" }] }, roots),
-  ).toThrow();
+
+  const extraNode = rowSchema.cases.Empty.make({});
+
+  expect(() => expectSameGraph({ ...wire, nodes: [...wire.nodes, extraNode] }, roots)).toThrow();
 });
 
 interface Step {
