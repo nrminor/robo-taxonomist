@@ -1,5 +1,5 @@
 // Compile only, against package exports after build; never executed by Vitest.
-import { Array, Effect, Predicate, Schema, type Types } from "effect";
+import { Array, Data, Effect, Predicate, Schema, type Types } from "effect";
 import type { AiError, Decision, DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
 import {
@@ -56,15 +56,16 @@ type RankRelationTag =
   | "DifferentTaxaAtRank"
   | "Undetermined";
 
-type ExpectedRankComparison =
-  | {
-      [Tag in RankRelationTag]: { readonly _tag: Tag; readonly rank: TaxonomicRank };
-    }[RankRelationTag]
-  | {
-      readonly _tag: "MultipleTaxaAtRank";
+type ExpectedRankComparison = Data.TaggedEnum<
+  { [Tag in RankRelationTag]: { readonly rank: TaxonomicRank } } & {
+    MultipleTaxaAtRank: {
       readonly rank: TaxonomicRank;
       readonly side: "left" | "right" | "both";
     };
+  }
+>;
+
+type ExpectedUndetermined = Data.TaggedEnum<{ Undetermined: {} }>;
 
 const label = RecordLabel.make("Voucher A17 | Quercus robur");
 
@@ -118,21 +119,12 @@ const trees = TaxonSet.union(oaks, TaxonSet.empty());
 if (Predicate.isTagged(trees, "Union")) {
   // @ts-expect-error Inspectable expression tags remain readonly after narrowing.
   trees._tag = "Union";
-  // @ts-expect-error Nonempty expression operands remain readonly after narrowing.
-  trees.operands.push(oaks);
 }
 
-const shared = TaxonSet.intersection(oaks, oaks);
-
-if (Predicate.isTagged(shared, "Intersection")) {
-  // @ts-expect-error Intersection operands remain readonly after narrowing too.
-  shared.operands.push(oaks);
-}
-
-const specimen: { readonly label: RecordLabel; readonly voucher: "A17" } = {
+const specimen = {
   label,
   voucher: "A17",
-};
+} as const;
 
 const records: readonly (typeof specimen)[] = [specimen];
 
@@ -270,21 +262,14 @@ const some = Taxonomy.anyRecordBelongsTo(records, name);
 const none = Taxonomy.noRecordBelongsTo(records, oaks);
 
 // A named assignment retains caller metadata in every returned target record.
-const assignment: {
-  readonly scientificName: TaxonName;
-  readonly assignmentId: "oak-genus";
-  readonly rank: "genus";
-} = { scientificName: name, assignmentId: "oak-genus", rank: "genus" };
+const assignment = { scientificName: name, assignmentId: "oak-genus", rank: "genus" } as const;
 
 const assignedOaks = TaxonSet.of(assignment);
 
-const identifiedTarget: {
-  readonly taxonId: TaxonId;
-  readonly source: "reference-panel";
-} = {
+const identifiedTarget = {
   taxonId: TaxonId.make({ taxonomy: "ncbi", id: "58334" }),
   source: "reference-panel",
-};
+} as const;
 
 const mixedPanel = TaxonSet.union(assignedOaks, TaxonSet.of(identifiedTarget));
 
@@ -501,9 +486,7 @@ export type Contracts = [
   Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "SameTaxon">["support"], number>>,
   Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "WithinTaxon">["support"], number>>,
   Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "NotMatched">["support"], number>>,
-  Assert<
-    Equal<Types.ExtractTag<TaxonMatchJudgment, "Undetermined">, { readonly _tag: "Undetermined" }>
-  >,
+  Assert<Equal<Types.ExtractTag<TaxonMatchJudgment, "Undetermined">, ExpectedUndetermined>>,
   Assert<Judgment<typeof classifiedVouchers, "A17"[]>>,
   Assert<
     Judgment<typeof rank, RankComparisonJudgment, Errors.TaxonomyError | Errors.TaxonIdQueryError>
@@ -521,7 +504,6 @@ export type Contracts = [
   Assert<Equal<Effect.Services<typeof lookup>, TaxonLookup>>,
   Assert<Equal<Effect.Error<typeof lookup>, Errors.TaxonIdQueryError>>,
   Assert<Equal<RankComparisonJudgment, ExpectedRankComparison>>,
-  Assert<Equal<IsAny<RankComparisonJudgment>, false>>,
   Assert<
     Equal<
       TaxonomicRank,

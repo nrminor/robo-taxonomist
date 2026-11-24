@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Array, Data, Effect, Layer, Option, Schema } from "effect";
+import { Array, Effect, Layer, Option, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
 import {
@@ -39,7 +39,10 @@ const panel = TaxonSet.unionAll([oaks, species]);
 
 const record = { scientificName: TaxonName.make("Quercus robur"), abundance: 8 };
 
-const { Classify } = Data.taggedEnum();
+const ClassifyAnswer = Schema.TaggedStruct("Classify", {
+  label: Schema.String,
+  probabilities: Schema.Record(Schema.String, Schema.Finite),
+});
 
 const model = Layer.effect(
   DecisionModel.DecisionModel,
@@ -47,7 +50,7 @@ const model = Layer.effect(
     decide: () =>
       Effect.succeed({
         answers: {
-          r0t0: Classify({
+          r0t0: ClassifyAnswer.make({
             label: "withinTaxon",
             probabilities: {
               sameTaxon: 0.01,
@@ -56,7 +59,7 @@ const model = Layer.effect(
               undetermined: 0.02,
             },
           }),
-          r0t1: Classify({
+          r0t1: ClassifyAnswer.make({
             label: "sameTaxon",
             probabilities: {
               sameTaxon: 0.94,
