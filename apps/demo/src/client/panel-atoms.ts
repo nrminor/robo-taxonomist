@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Redacted, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { initialPanelId, PanelId } from "../lib/catalog.ts";
@@ -8,7 +8,7 @@ import {
   ClassifyRequest,
   PanelResponse,
 } from "../lib/contract.ts";
-import { retainCauseAs } from "../lib/failure-diagnostic.ts";
+import { ClassificationFailureWithCause } from "../lib/failures.ts";
 
 /** Server failures plus local transport/decoding failures, whose causes are not server response fields. */
 export const RequestFailure = Schema.TaggedUnion({
@@ -28,7 +28,15 @@ const encodeRequest = (request: typeof ClassifyRequest.Type) =>
   HttpClientRequest.schemaBodyJson(ClassifyRequest)(
     HttpClientRequest.post("/api/classify"),
     request,
-  ).pipe(retainCauseAs(() => RequestFailure.cases.InternalFailure.make({})));
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ClassificationFailureWithCause({
+          failure: RequestFailure.cases.InternalFailure.make({}),
+          cause: Redacted.make(cause),
+        }),
+    ),
+  );
 
 const readSuccess = (response: HttpClientResponse.HttpClientResponse, panelId: PanelId) =>
   HttpClientResponse.schemaBodyJson(PanelResponse)(response).pipe(

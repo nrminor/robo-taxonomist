@@ -1,7 +1,7 @@
 import "server-only";
-import { Config, Effect, Layer, Match, Schema } from "effect";
+import { Config, Effect, Layer, Match, Redacted, Schema } from "effect";
 import { ClassificationFailure } from "../lib/contract.ts";
-import { retainCauseAs } from "../lib/failure-diagnostic.ts";
+import { ClassificationFailureWithCause } from "../lib/failures.ts";
 import { clefModelLayer } from "./clef-model.ts";
 import { PanelResults } from "./panel-results.ts";
 
@@ -37,5 +37,13 @@ export const ConfiguredPanelResults = Layer.unwrap(
           ),
       }),
     );
-  }).pipe(retainCauseAs(() => ClassificationFailure.cases.ConfigurationFailure.make({}))),
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ClassificationFailureWithCause({
+          failure: ClassificationFailure.cases.ConfigurationFailure.make({}),
+          cause: Redacted.make(cause),
+        }),
+    ),
+  ),
 );

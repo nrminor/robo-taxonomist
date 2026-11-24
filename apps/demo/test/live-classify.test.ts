@@ -23,7 +23,7 @@ import { AiError, Decision, DecisionModel } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import { TaxonMatchJudgment, TaxonName, Taxonomy } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
-import { FailureDiagnostic } from "../src/lib/failure-diagnostic.ts";
+import { ClassificationFailureWithCause } from "../src/lib/failures.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 import * as ClefModel from "../src/server/clef-model.ts";
@@ -262,14 +262,10 @@ it.each(invalidConfigurations)(
       const startup = await runtime.runPromiseExit(Effect.void);
       assert(Exit.isFailure(startup));
 
-      const diagnostic = Context.getOrUndefined(
-        Cause.annotations(startup.cause),
-        FailureDiagnostic,
-      );
-
-      assert(diagnostic !== undefined);
-      const original = Option.getOrThrow(Cause.findErrorOption(Redacted.value(diagnostic)));
-      expect(original).toBeInstanceOf(Config.ConfigError);
+      const failure = Option.getOrThrow(Cause.findErrorOption(startup.cause));
+      assert(failure instanceof ClassificationFailureWithCause);
+      expect(failure.failure).toSatisfy(ClassificationFailure.guards.ConfigurationFailure);
+      expect(Redacted.value(failure.cause)).toBeInstanceOf(Config.ConfigError);
     } finally {
       await runtime.dispose();
     }

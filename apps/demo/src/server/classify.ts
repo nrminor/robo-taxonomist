@@ -1,9 +1,8 @@
 import "server-only";
-import { Effect, Exit, Layer, ManagedRuntime, Option, Schema } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Schema } from "effect";
 import { FetchHttpClient, HttpServerRequest } from "effect/http";
 import { ClassificationFailure, ClassifyRequest, PanelResponse } from "../lib/contract.ts";
-import { retainCauseAs } from "../lib/failure-diagnostic.ts";
-import { publicCauseFailure } from "../lib/failures.ts";
+import { ClassificationFailureWithCause, publicCauseFailure } from "../lib/failures.ts";
 import { classifyPanel, PanelResults } from "./panel-results.ts";
 import { ConfiguredPanelResults } from "./configured-model.ts";
 
@@ -33,7 +32,13 @@ const decodeEnvelope = Schema.decodeUnknownEffect(requestEnvelope, {
 const readEnvelope = HttpServerRequest.HttpServerRequest.pipe(
   Effect.flatMap((request) => request.json),
   Effect.flatMap(decodeEnvelope),
-  retainCauseAs(() => ClassificationFailure.cases.InvalidPanel.make({})),
+  Effect.mapError(
+    (cause) =>
+      new ClassificationFailureWithCause({
+        failure: ClassificationFailure.cases.InvalidPanel.make({}),
+        cause: Redacted.make(cause),
+      }),
+  ),
 );
 
 /** Classify the current HTTP request while preserving distinct envelope and hint failures. */
@@ -41,7 +46,13 @@ export const classifyRequest = Effect.gen(function* () {
   const envelope = yield* readEnvelope;
 
   const input = yield* Schema.decodeUnknownEffect(ClassifyRequest)(envelope).pipe(
-    retainCauseAs(() => ClassificationFailure.cases.InvalidHints.make({})),
+    Effect.mapError(
+      (cause) =>
+        new ClassificationFailureWithCause({
+          failure: ClassificationFailure.cases.InvalidHints.make({}),
+          cause: Redacted.make(cause),
+        }),
+    ),
   );
 
   return yield* classifyPanel(input.panelId, input.refresh, input.hints);
@@ -73,7 +84,10 @@ const toHttpResponse = (
  * Interruption-only exits produce an empty 499 response.
  */
 export const makeHandlers = (
-  runtime: ManagedRuntime.ManagedRuntime<PanelResults, ClassificationFailure>,
+  runtime: ManagedRuntime.ManagedRuntime<
+    PanelResults,
+    ClassificationFailure | ClassificationFailureWithCause
+  >,
 ) => ({
   classifyHttp: async (request: Request): Promise<Response> => {
     const program = classifyRequest.pipe(

@@ -4,7 +4,6 @@ import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
 import {
   Cause,
-  Context,
   Data,
   Deferred,
   Effect,
@@ -22,7 +21,7 @@ import { AiError, DecisionModel } from "effect/ai";
 import { HttpClientRequest, HttpClientResponse, HttpServerRequest } from "effect/http";
 import { Errors } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
-import { FailureDiagnostic } from "../src/lib/failure-diagnostic.ts";
+import { ClassificationFailureWithCause } from "../src/lib/failures.ts";
 import { POST } from "../src/app/api/classify/route.ts";
 import { classifyRequest, makeHandlers } from "../src/server/classify.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
@@ -353,12 +352,9 @@ it.effect("keeps the rejected hint cause on the internal classification failure"
 
     assert(Exit.isFailure(exit));
     const failure = Option.getOrThrow(Cause.findErrorOption(exit.cause));
-    expect(failure).toSatisfy(ClassificationFailure.guards.InvalidHints);
-
-    const diagnostic = Context.getOrUndefined(Cause.annotations(exit.cause), FailureDiagnostic);
-    assert(diagnostic !== undefined);
-    const original = Option.getOrThrow(Cause.findErrorOption(Redacted.value(diagnostic)));
-    expect(Schema.isSchemaError(original)).toBe(true);
+    assert(failure instanceof ClassificationFailureWithCause);
+    expect(failure.failure).toSatisfy(ClassificationFailure.guards.InvalidHints);
+    expect(Schema.isSchemaError(Redacted.value(failure.cause))).toBe(true);
   }),
 );
 

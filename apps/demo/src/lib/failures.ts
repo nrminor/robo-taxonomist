@@ -1,6 +1,14 @@
-import { Cause, Duration, Match, Option, Schema } from "effect";
+import { Cause, Data, Duration, Match, Option, type Redacted, Schema } from "effect";
 import { AiError } from "effect/ai";
 import { ClassificationFailure, PublicModelReason } from "./contract.ts";
+
+/** An internal failure with the safe value to use at the HTTP or presentation boundary. */
+export class ClassificationFailureWithCause extends Data.TaggedError(
+  "ClassificationFailureWithCause",
+)<{
+  readonly failure: ClassificationFailure;
+  readonly cause: Redacted.Redacted<unknown>;
+}> {}
 
 const publicReason = Match.type<AiError.AiErrorReason>().pipe(
   Match.tagsExhaustive({
@@ -61,6 +69,9 @@ export const publicCauseFailure = (
   const error = Cause.findErrorOption(cause);
 
   if (Option.isSome(error)) {
+    if (error.value instanceof ClassificationFailureWithCause)
+      return Option.some(error.value.failure);
+
     if (AiError.isAiError(error.value)) return Option.some(publicModelFailure(error.value));
 
     if (Schema.is(ClassificationFailure)(error.value)) return Option.some(error.value);

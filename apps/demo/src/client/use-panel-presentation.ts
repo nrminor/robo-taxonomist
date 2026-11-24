@@ -8,6 +8,7 @@ import { useCallback, useEffect, useReducer } from "react";
 import { initialPanelId } from "../lib/catalog.ts";
 import { ClassificationFailure, ClassifyRequest, PanelResponse } from "../lib/contract.ts";
 import { type Display, replaceDisplayed } from "../lib/display.ts";
+import { ClassificationFailureWithCause } from "../lib/failures.ts";
 import { RequestFailure, selectPanelAtom } from "./panel-atoms.ts";
 
 const ReplyReference = Schema.declare<PanelResponse>(Schema.is(PanelResponse));
@@ -214,6 +215,11 @@ const intentMotion = Intent.match({
 
 const genericInternalFailure = ClassificationFailure.cases.InternalFailure.make({});
 
+type PanelRequestError = RequestFailure | ClassificationFailureWithCause;
+
+const toPresentationFailure = (error: PanelRequestError): RequestFailure =>
+  error instanceof ClassificationFailureWithCause ? error.failure : error;
+
 const safeRequestFailure = (cause: Cause.Cause<RequestFailure>): RequestFailure =>
   Cause.hasDies(cause)
     ? genericInternalFailure
@@ -279,7 +285,10 @@ export const usePanelPresentation = () => {
 
       dispatch(Event.cases.Start.make({ intent, now: performance.now() }));
       void run(request).then(
-        (exit) => dispatch(Event.cases.Completed.make({ token, exit })),
+        (exit) =>
+          dispatch(
+            Event.cases.Completed.make({ token, exit: Exit.mapError(exit, toPresentationFailure) }),
+          ),
         () =>
           dispatch(Event.cases.Completed.make({ token, exit: Exit.fail(genericInternalFailure) })),
       );
@@ -288,14 +297,19 @@ export const usePanelPresentation = () => {
   );
 
   const reportInitial = useCallback(
-    (token: symbol, result: AsyncResult.AsyncResult<PanelResponse, RequestFailure>): void => {
+    (token: symbol, result: AsyncResult.AsyncResult<PanelResponse, PanelRequestError>): void => {
       if (AsyncResult.isWaiting(result)) return;
       AsyncResult.match(result, {
         onInitial: () => undefined,
         onSuccess: ({ value }) =>
           dispatch(Event.cases.Completed.make({ token, exit: Exit.succeed(value) })),
         onFailure: ({ cause }) =>
-          dispatch(Event.cases.Completed.make({ token, exit: Exit.failCause(cause) })),
+          dispatch(
+            Event.cases.Completed.make({
+              token,
+              exit: Exit.failCause(Cause.map(cause, toPresentationFailure)),
+            }),
+          ),
       });
     },
     [],
