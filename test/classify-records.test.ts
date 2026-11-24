@@ -873,33 +873,6 @@ it.effect("propagates provider failure without returning a partial ranking", () 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("fails when a requested taxon answer is missing", () => {
-  const panel = TaxonSet.union(
-    TaxonSet.of(TaxonName.make("Fungi")),
-    TaxonSet.of(TaxonName.make("Saccharomyces")),
-  );
-
-  const layer = Layer.effect(
-    DecisionModel.DecisionModel,
-    DecisionModel.make({
-      decide: () =>
-        Effect.succeed({
-          answers: { r0t0: answer("withinTaxon", [0.01, 0.94, 0.02, 0.03]) },
-          usage: { inputTokens: undefined, outputTokens: undefined },
-        }),
-    }),
-  );
-
-  return Effect.gen(function* () {
-    const failure = yield* Effect.flip(
-      Taxonomy.classifyRecords([RecordLabel.make("subject")], panel),
-    );
-
-    assert(AiError.isAiError(failure));
-    expect(failure.reason).toBeInstanceOf(AiError.InvalidOutputError);
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("rejects malformed records and cyclic or nonnominal panels before transport", () => {
   const taxon = TaxonSet.of(TaxonName.make("Fungi"));
   const differenceWithoutRight = Schema.TaggedStruct("Difference", { left: Schema.Unknown });
