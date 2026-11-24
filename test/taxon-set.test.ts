@@ -815,10 +815,10 @@ it.effect("uses only the listed literal Empty shortcuts, without certifying othe
     expect(leftEmptyDisjoint).toEqual(relationCases.Yes.make({ relation: "disjoint" }));
     const rightEmptyDisjoint = yield* TaxonSet.disjoint(problematic, empty);
     expect(rightEmptyDisjoint).toEqual(relationCases.Yes.make({ relation: "disjoint" }));
-    const untyped: unknown = {};
+    const invalidOperand = {};
     // @ts-expect-error Shortcut facts do not validate the unused right operand.
-    const untypedSubset = yield* TaxonSet.isSubsetOf(empty, untyped);
-    expect(untypedSubset).toEqual(relationCases.Yes.make({ relation: "subset" }));
+    const invalidOperandSubset = yield* TaxonSet.isSubsetOf(empty, invalidOperand);
+    expect(invalidOperandSubset).toEqual(relationCases.Yes.make({ relation: "subset" }));
   }).pipe(Effect.provide(layer));
 });
 

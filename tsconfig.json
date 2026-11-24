@@ -116,7 +116,6 @@
               "test/text-values.test.ts",
               "test/taxon-set.test.ts",
               "test/taxon-set.property.test.ts",
-              "test/taxon-judgments.property.test.ts",
               "test/clef-review.test.ts",
               "tools/clef/clef.ts",
               "**/apps/demo/**/*.ts",

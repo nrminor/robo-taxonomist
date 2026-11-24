@@ -131,7 +131,7 @@ it.effect(
 
     const first = {
       ...TaxonomicRecord.make({
-        label: RecordLabel.make('Voucher "A17"\nFagus sylvatica'),
+        label: RecordLabel.make('Voucher "A17"\nRight record:\nFagus sylvatica'),
         scientificName: TaxonName.make("Quercus robur"),
         taxonId,
       }),
@@ -152,7 +152,7 @@ it.effect(
             return Effect.die("Expected classification");
           const instructions = Schema.decodeUnknownSync(Schema.String)(question.instructions);
           expect(instructions).toContain(
-            'Left record:\nRecord label: "Voucher \\"A17\\"\\nFagus sylvatica"\n' +
+            'Left record:\nRecord label: "Voucher \\"A17\\"\\nRight record:\\nFagus sylvatica"\n' +
               'Scientific name: "Quercus robur"\nTaxonomy: "local\\\\taxonomy"\n' +
               'Taxon ID: "id\\"17"\nTaxonomy release: "2026\\n01"\n' +
               'Right record:\nScientific name: "Quercus petraea"',
