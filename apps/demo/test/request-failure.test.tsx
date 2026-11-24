@@ -217,11 +217,16 @@ it("shows safe reply guidance for malformed initial data rather than exposing it
 });
 
 it("does not display an invalid authentication kind from a malformed reply", async () => {
-  const invalid = {
-    _tag: "ModelFailure",
-    reason: { _tag: "AuthenticationError", kind: "SECRET invalid authentication kind" },
-    retryable: false,
-  };
+  const decodeWireJson = Schema.decodeSync(Schema.fromJsonString(Schema.Json));
+
+  const invalid = decodeWireJson(`{
+    "_tag": "ModelFailure",
+    "reason": {
+      "_tag": "AuthenticationError",
+      "kind": "SECRET invalid authentication kind"
+    },
+    "retryable": false
+  }`);
 
   const mockFetch = vi.fn(() => Promise.reject(new Error("Unexpected request")));
   await renderDemo(invalid, mockFetch, 503);

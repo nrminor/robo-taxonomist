@@ -350,7 +350,8 @@ it.effect("rejects malformed hints without exposing their contents or starting i
       const wire = yield* Effect.promise(() => response.text());
       expect(wire).not.toContain("SECRET");
       const document = yield* TestJson.decode(wire);
-      expect(document).toEqual({ _tag: "InvalidHints" });
+      const expected = yield* TestJson.decode('{"_tag":"InvalidHints"}');
+      expect(document).toEqual(expected);
       expect(calls).toBe(0);
     }
   }),
@@ -625,15 +626,10 @@ it("returns a safe 503 reply when classification fails at the provider", async (
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
-    expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-        TestJson.decodeSync(wire),
+    expect(TestJson.decodeSync(wire)).toEqual(
+      TestJson.decodeSync(
+        '{"_tag":"ModelFailure","reason":{"_tag":"RateLimitError"},"retryable":true}',
       ),
-    ).toEqual(
-      ClassificationFailure.cases.ModelFailure.make({
-        reason: PublicModelReason.cases.RateLimitError.make({}),
-        retryable: true,
-      }),
     );
   } finally {
     await runtime.dispose();

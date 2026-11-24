@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Cause, DateTime, Duration, Effect, Option, Schema } from "effect";
 import { AiError } from "effect/ai";
+import { TaxonMatchJudgment } from "robo-taxonomist";
 import { panels, records } from "../src/lib/catalog.ts";
 import {
   ClassificationFailure,
@@ -22,7 +23,7 @@ it("preserves optional confidence at the panel response JSON boundary", () => {
       recordId: record.id,
       matches: panel.targets.map((target) => ({
         targetId: target.id,
-        judgment: { _tag: "Undetermined" },
+        judgment: TaxonMatchJudgment.cases.Undetermined.make({}),
         answer: {
           label: "undetermined",
           probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
@@ -65,7 +66,7 @@ it.effect("accepts legacy classification requests and explicit boolean refresh r
 it("round trips safe failures as direct JSON bodies", () => {
   const failure = ClassificationFailure.cases.InvalidPanel.make({});
   const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
-  expect(encoded).toEqual({ _tag: "InvalidPanel" });
+  expect(encoded).toEqual(TestJson.decodeSync('{"_tag":"InvalidPanel"}'));
   expect(TestJson.decodeSync(TestJson.encodeSync(encoded))).toEqual(encoded);
   expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
 });
@@ -149,9 +150,7 @@ it("retains all 19 upstream failure categories while allowlisting their fields",
     const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
 
     if (PublicModelReason.guards.QuotaExhaustedError(failure.reason)) {
-      expect(encoded).toMatchObject({
-        reason: { _tag: "QuotaExhaustedError", resetAt: "2026-10-29T00:00:00.000Z" },
-      });
+      expect(encoded).toHaveProperty("reason.resetAt", "2026-10-29T00:00:00.000Z");
     }
 
     expect(TestJson.encodeSync(failure)).not.toContain("SECRET");
@@ -180,11 +179,11 @@ it("redacts invalid provider responses while preserving their category and non-r
   );
 
   const encoded = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(failure);
-  expect(encoded).toEqual({
-    _tag: "ModelFailure",
-    reason: { _tag: "InvalidResponseError" },
-    retryable: false,
-  });
+  expect(encoded).toEqual(
+    TestJson.decodeSync(
+      '{"_tag":"ModelFailure","reason":{"_tag":"InvalidResponseError"},"retryable":false}',
+    ),
+  );
   expect(TestJson.encodeSync(failure)).not.toContain("SECRET");
   expect(TestJson.encodeSync(encoded)).not.toContain("SECRET");
   expect(Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))(encoded)).toEqual(failure);
@@ -194,12 +193,18 @@ it("rejects invalid retry delays and malformed failure bodies at the boundary", 
   expect(() =>
     Schema.decodeSync(Schema.toCodecJson(ClassificationFailure))({ unexpected: true }),
   ).toThrow();
-  expect(() =>
-    Schema.decodeSync(PublicModelReason)({ _tag: "RateLimitError", retryAfterMs: -1 }),
-  ).toThrow();
-  expect(() =>
-    Schema.decodeSync(PublicModelReason)({ _tag: "RateLimitError", retryAfterMs: Infinity }),
-  ).toThrow();
+
+  const rateLimitInput = Schema.TaggedStruct("RateLimitError", {
+    retryAfterMs: Schema.Unknown,
+  });
+
+  const decodeReason = Schema.decodeUnknownSync(PublicModelReason);
+
+  expect(() => decodeReason(rateLimitInput.make({ retryAfterMs: 1 }))).not.toThrow();
+
+  for (const retryAfterMs of [-1, Infinity]) {
+    expect(() => decodeReason(rateLimitInput.make({ retryAfterMs }))).toThrow();
+  }
 });
 
 it("projects retry guidance without leaking provider descriptions or causes", () => {
