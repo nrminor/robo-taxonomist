@@ -425,10 +425,12 @@ it.effect("keeps nested subtraction in context and restores its included taxon",
           (values: typeof nodes) => values.some(Predicate.isTagged("Difference")),
           "expected a Difference node",
         );
-        expect(nodes).toContainEqual({
-          _tag: "Taxon",
-          record: { scientificName: "Saccharomyces" },
-        });
+
+        const expectedTaxon = Schema.TaggedStruct("Taxon", {
+          record: Schema.Struct({ scientificName: Schema.String }),
+        }).make({ record: { scientificName: "Saccharomyces" } });
+
+        expect(nodes).toContainEqual(expectedTaxon);
 
         return Effect.succeed({
           answers: {
@@ -900,7 +902,8 @@ it.effect("fails when a requested taxon answer is missing", () => {
 
 it.effect("rejects malformed records and cyclic or nonnominal panels before transport", () => {
   const taxon = TaxonSet.of(TaxonName.make("Fungi"));
-  const malformed = { _tag: "Difference", left: taxon };
+  const differenceWithoutRight = Schema.TaggedStruct("Difference", { left: Schema.Unknown });
+  const malformed = differenceWithoutRight.make({ left: taxon });
   const cyclic = TaxonSet.union(taxon, TaxonSet.empty());
   Reflect.set(cyclic, "operands", [cyclic]);
 
@@ -923,11 +926,11 @@ it.effect("rejects malformed records and cyclic or nonnominal panels before tran
 
     const invalid = [
       // @ts-expect-error Untyped input lacks an identifying description.
-      Taxonomy.classifyRecords([{}], taxon),
+      Taxonomy.classifyRecords([{}], taxon).pipe(Effect.asVoid),
       // @ts-expect-error Untyped input bypasses the record-label schema.
-      Taxonomy.classifyRecords([" "], taxon),
+      Taxonomy.classifyRecords([" "], taxon).pipe(Effect.asVoid),
       // @ts-expect-error Untyped input supplies a malformed expression.
-      Taxonomy.classifyRecords([RecordLabel.make("subject")], malformed),
+      Taxonomy.classifyRecords([RecordLabel.make("subject")], malformed).pipe(Effect.asVoid),
     ];
 
     for (const operation of invalid) {

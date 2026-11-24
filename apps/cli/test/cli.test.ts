@@ -710,19 +710,26 @@ it.effect("reports unreadable target sources on stderr without emitting an artif
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+const ArtifactEmpty = Schema.TaggedStruct("Empty", {});
+
+const ArtifactUnion = Schema.TaggedStruct("Union", { operands: Schema.Array(Schema.Unknown) });
+
+const ArtifactIntersection = Schema.TaggedStruct("Intersection", {
+  operands: Schema.Array(Schema.Unknown),
+});
+
 it.effect.each([
   { document: [{ sample: "unidentified" }] },
   { document: [{ label: " " }] },
   { document: [{ scientificName: "" }] },
   { document: [{ taxonId: { taxonomy: "ncbi" } }] },
-  { document: { _tag: "Union", operands: [] } },
-  { document: { _tag: "Union", operands: [{ _tag: "Empty" }] } },
-  { document: { _tag: "Intersection", operands: [{ _tag: "Empty" }] } },
+  { document: ArtifactUnion.make({ operands: [] }) },
+  { document: ArtifactUnion.make({ operands: [ArtifactEmpty.make({})] }) },
+  { document: ArtifactIntersection.make({ operands: [ArtifactEmpty.make({})] }) },
   {
-    document: {
-      _tag: "Intersection",
-      operands: [{ _tag: "Empty" }, { _tag: "Empty" }, { _tag: "Empty" }],
-    },
+    document: ArtifactIntersection.make({
+      operands: [ArtifactEmpty.make({}), ArtifactEmpty.make({}), ArtifactEmpty.make({})],
+    }),
   },
 ])("rejects unidentified targets and unsupported artifact arities: $document", ({ document }) =>
   Effect.gen(function* () {

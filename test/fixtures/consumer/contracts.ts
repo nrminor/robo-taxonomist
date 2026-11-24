@@ -72,20 +72,41 @@ const name = TaxonName.make("Quercus");
 
 const oaks = TaxonSet.of(name);
 
+const oakOperand = Schema.declare((value): value is typeof oaks => value === oaks);
+
+const UnbrandedEmpty = Schema.TaggedStruct("Empty", {});
+
+const UnbrandedTaxon = Schema.TaggedStruct("Taxon", {
+  record: Schema.Struct({ scientificName: TaxonName }),
+});
+
+const UnbrandedUnion = Schema.TaggedStruct("Union", {
+  operands: Schema.Tuple([oakOperand]),
+});
+
+const UnbrandedIntersection = Schema.TaggedStruct("Intersection", {
+  operands: Schema.Tuple([oakOperand]),
+});
+
+const UnbrandedDifference = Schema.TaggedStruct("Difference", {
+  left: oakOperand,
+  right: oakOperand,
+});
+
 // @ts-expect-error Empty expressions require construction, not a matching object shape.
-TaxonSet.union(oaks, { _tag: "Empty" });
+TaxonSet.union(oaks, UnbrandedEmpty.make({}));
 
 // @ts-expect-error Taxon expressions require construction even with a valid record.
-TaxonSet.union(oaks, { _tag: "Taxon", record: { scientificName: name } });
+TaxonSet.union(oaks, UnbrandedTaxon.make({ record: { scientificName: name } }));
 
 // @ts-expect-error Union expressions require construction even with valid operands.
-TaxonSet.union(oaks, { _tag: "Union", operands: [oaks] });
+TaxonSet.union(oaks, UnbrandedUnion.make({ operands: [oaks] }));
 
 // @ts-expect-error Intersection expressions require construction even with valid operands.
-TaxonSet.union(oaks, { _tag: "Intersection", operands: [oaks] });
+TaxonSet.union(oaks, UnbrandedIntersection.make({ operands: [oaks] }));
 
 // @ts-expect-error Difference expressions require construction even with valid sides.
-TaxonSet.union(oaks, { _tag: "Difference", left: oaks, right: oaks });
+TaxonSet.union(oaks, UnbrandedDifference.make({ left: oaks, right: oaks }));
 
 type NamedTarget = { readonly scientificName: TaxonName };
 

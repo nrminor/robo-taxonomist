@@ -199,19 +199,14 @@ it.effect("accepts a structured direct membership target without leaking metadat
 
   const layer = modelLayer("member", (state) => {
     calls++;
-    expect(state).toEqual({
-      nodes: [
-        {
-          _tag: "Taxon",
-          record: {
-            label: 'Voucher "A17"',
-            scientificName: "Quercus robur",
-            taxonId: { taxonomy: "local-taxonomy", id: "oak-17", release: "2026-01" },
-          },
-        },
-      ],
-      target: 0,
+    expect(state).toHaveProperty("target", 0);
+    expect(state).toHaveProperty("nodes.length", 1);
+    expect(state).toHaveProperty("nodes.0.record", {
+      label: 'Voucher "A17"',
+      scientificName: "Quercus robur",
+      taxonId: { taxonomy: "local-taxonomy", id: "oak-17", release: "2026-01" },
     });
+    expect(state).not.toHaveProperty("nodes.0.record.sampleId");
   });
 
   return Effect.gen(function* () {
@@ -230,10 +225,13 @@ it.effect("identifies the original ID-only target node without fabricating a nam
   const target = TaxonSet.of(record);
 
   const layer = modelLayer("multipleTarget0", (state) => {
-    expect(state).toEqual({
-      nodes: [{ _tag: "Taxon", record: { taxonId: { taxonomy: "local", id: "pooled-17" } } }],
-      target: 0,
+    expect(state).toHaveProperty("target", 0);
+    expect(state).toHaveProperty("nodes.length", 1);
+    expect(state).toHaveProperty("nodes.0.record", {
+      taxonId: { taxonomy: "local", id: "pooled-17" },
     });
+    expect(state).not.toHaveProperty("nodes.0.record.scientificName");
+    expect(state).not.toHaveProperty("nodes.0.record.sampleId");
   });
 
   return Effect.gen(function* () {

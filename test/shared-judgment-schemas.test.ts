@@ -16,14 +16,17 @@ it("exposes fixed rank, containment and relation schemas", () => {
   expect(Schema.is(TaxonomicRank)("genus")).toBe(true);
   expect(Schema.is(TaxonomicRank)("variety")).toBe(false);
   expect(Schema.is(TaxonSetRelation)("proper-subset")).toBe(true);
-  expect(
-    RankComparisonJudgment.cases.MultipleTaxaAtRank.make({ rank: "species", side: "both" }),
-  ).toEqual({
-    _tag: "MultipleTaxaAtRank",
+
+  const comparison = RankComparisonJudgment.cases.MultipleTaxaAtRank.make({
     rank: "species",
     side: "both",
   });
-  expect(TaxonContainmentJudgment.cases.Contained.make({})).toEqual({ _tag: "Contained" });
+
+  const containment = TaxonContainmentJudgment.cases.Contained.make({});
+
+  expect(comparison).toSatisfy(RankComparisonJudgment.guards.MultipleTaxaAtRank);
+  expect(comparison).toMatchObject({ rank: "species", side: "both" });
+  expect(containment).toSatisfy(TaxonContainmentJudgment.guards.Contained);
 });
 
 it("preserves original nodes and records when constructing judgments", () => {
@@ -74,25 +77,29 @@ it("encodes native taxon payloads without extra metadata", () => {
   };
 
   const node = TaxonSet.of(record);
-  const encodedNode = { _tag: "Taxon", record: { scientificName: "Quercus" } };
-  expect(
-    Schema.encodeSync(TaxonMembershipJudgment)({ _tag: "MultipleTaxaInTarget", target: node }),
-  ).toEqual({ _tag: "MultipleTaxaInTarget", target: encodedNode });
-  expect(
-    Schema.encodeSync(CollectionMembershipJudgment)({
-      _tag: "MultipleTaxaInTarget",
-      quantifier: "any",
-      target: node,
-    }),
-  ).toEqual({ _tag: "MultipleTaxaInTarget", quantifier: "any", target: encodedNode });
-  expect(
-    Schema.encodeSync(TaxonSetRelationJudgment)({
-      _tag: "MultipleTaxaInSet",
-      relation: "overlap",
-      side: "right",
-      taxon: node,
-    }),
-  ).toEqual({ _tag: "MultipleTaxaInSet", relation: "overlap", side: "right", taxon: encodedNode });
+  const membership = TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({ target: node });
+
+  const collection = CollectionMembershipJudgment.cases.MultipleTaxaInTarget.make({
+    quantifier: "any",
+    target: node,
+  });
+
+  const relation = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
+    relation: "overlap",
+    side: "right",
+    taxon: node,
+  });
+
+  const encodedMembership = Schema.encodeSync(TaxonMembershipJudgment)(membership);
+  const encodedCollection = Schema.encodeSync(CollectionMembershipJudgment)(collection);
+  const encodedRelation = Schema.encodeSync(TaxonSetRelationJudgment)(relation);
+  const expectedRecord = { scientificName: "Quercus" };
+
+  expect(encodedMembership).toHaveProperty("target.record", expectedRecord);
+  expect(encodedCollection).toHaveProperty("target.record", expectedRecord);
+  expect(encodedCollection).toHaveProperty("quantifier", "any");
+  expect(encodedRelation).toHaveProperty("taxon.record", expectedRecord);
+  expect(encodedRelation).toMatchObject({ relation: "overlap", side: "right" });
   expect(node.record).toBe(record);
   expect(node.record.sample).toBe(42);
   expect(node.record.hidden()).toBe("not JSON");

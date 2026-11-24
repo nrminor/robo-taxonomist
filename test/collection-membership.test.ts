@@ -28,17 +28,24 @@ import {
   TaxonSet,
   TaxonMembershipJudgment,
 } from "../src/index.ts";
+import * as TestJson from "./Json.ts";
 
 const membershipCases = CollectionMembershipJudgment.cases;
 
+const namedTargetNode = Schema.TaggedStruct("Taxon", {
+  record: Schema.Struct({ scientificName: Schema.String }),
+});
+
 const namedTargetState = Schema.Struct({
-  nodes: Schema.Tuple([
-    Schema.TaggedStruct("Taxon", {
-      record: Schema.Struct({ scientificName: Schema.String }),
-    }),
-  ]),
+  nodes: Schema.Tuple([namedTargetNode]),
   target: Schema.Literal(0),
 });
+
+const namedTargetWire = (scientificName: string) =>
+  namedTargetState.make({
+    nodes: [namedTargetNode.make({ record: { scientificName } })],
+    target: 0,
+  });
 
 const firstClassificationQuestion = (decisions: Readonly<Record<string, Decision.Any>>) => {
   const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
@@ -71,10 +78,7 @@ it.effect(
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           calls++;
-          expect(state).toEqual({
-            nodes: [{ _tag: "Taxon", record: { scientificName: target } }],
-            target: 0,
-          });
+          expect(state).toEqual(namedTargetWire(target));
           expect(Record.keys(decisions)).toEqual([
             "record0",
             "record1",
@@ -390,10 +394,10 @@ it.effect("snapshots one prepared target across batches but prepares it afresh o
     }
 
     expect(seen).toEqual([
-      { nodes: [{ _tag: "Taxon", record: { scientificName: "A" } }], target: 0 },
-      { nodes: [{ _tag: "Taxon", record: { scientificName: "A" } }], target: 0 },
-      { nodes: [{ _tag: "Taxon", record: { scientificName: "B" } }], target: 0 },
-      { nodes: [{ _tag: "Taxon", record: { scientificName: "B" } }], target: 0 },
+      namedTargetWire("A"),
+      namedTargetWire("A"),
+      namedTargetWire("B"),
+      namedTargetWire("B"),
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -1111,14 +1115,17 @@ it.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: ({ state, decisions }) => {
-          expect(state).toEqual({
-            nodes: [
-              { _tag: "Union", operands: [1, 2] },
-              { _tag: "Taxon", record: { scientificName: "A" } },
-              { _tag: "Taxon", record: { scientificName: 'B and "C"' } },
+          // The independent wire fixture preserves both the union and its node mapping.
+          expect(state).toEqual(
+            TestJson.decodeSync(`{
+            "nodes": [
+              { "_tag": "Union", "operands": [1, 2] },
+              { "_tag": "Taxon", "record": { "scientificName": "A" } },
+              { "_tag": "Taxon", "record": { "scientificName": "B and \\"C\\"" } }
             ],
-            target: 0,
-          });
+            "target": 0
+          }`),
+          );
           expect(Record.keys(decisions)).toEqual(["record0", "record1"]);
           const firstDecision = Record.get(decisions, "record0").pipe(Option.getOrThrow);
           const secondDecision = Record.get(decisions, "record1").pipe(Option.getOrThrow);
@@ -1608,10 +1615,12 @@ it.effect("does not turn nonliteral empty expressions into collection shortcuts"
     DecisionModel.make({
       decide: ({ state }) => {
         calls++;
-        expect(state).toEqual({
-          nodes: [{ _tag: "Difference", left: 1, right: 2 }, { _tag: "Empty" }, { _tag: "Empty" }],
-          target: 0,
-        });
+        // A difference of empty nodes must remain a nonliteral graph on the wire.
+        expect(state).toEqual(
+          TestJson.decodeSync(
+            '{"nodes":[{"_tag":"Difference","left":1,"right":2},{"_tag":"Empty"},{"_tag":"Empty"}],"target":0}',
+          ),
+        );
 
         return Effect.succeed({
           answers: {
@@ -1642,7 +1651,9 @@ it.effect("rejects invalid original records/targets before transporting their ba
   );
 
   return Effect.gen(function* () {
-    const malformedTarget = { _tag: "Difference", left: TaxonSet.empty() };
+    const malformedTarget = Schema.TaggedStruct("Difference", {
+      left: Schema.Unknown,
+    }).make({ left: TaxonSet.empty() });
 
     const invalidRecords = [
       // @ts-expect-error Untyped caller supplies a record without facts.

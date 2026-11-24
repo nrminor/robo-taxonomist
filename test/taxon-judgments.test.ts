@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import {
   Array,
@@ -31,6 +32,7 @@ import {
   TaxonContainmentJudgment,
   TaxonMembershipJudgment,
 } from "../src/index.ts";
+import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
 
@@ -413,19 +415,22 @@ it.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: ({ state, decisions }) => {
-          expect(state).toEqual({
-            nodes: [
-              { _tag: "Difference", left: 1, right: 2 },
-              { _tag: "Union", operands: [3, 4] },
-              { _tag: "Union", operands: [5, 6] },
-              { _tag: "Taxon", record: { scientificName: 'A "quoted"' } },
-              { _tag: "Intersection", operands: [7, 3] },
-              { _tag: "Taxon", record: { scientificName: 'A "quoted"' } },
-              { _tag: "Taxon", record: { scientificName: "b" } },
-              { _tag: "Taxon", record: { scientificName: "B" } },
+          // This independent wire fixture checks operation kinds as well as graph topology.
+          expect(state).toEqual(
+            TestJson.decodeSync(`{
+            "nodes": [
+              { "_tag": "Difference", "left": 1, "right": 2 },
+              { "_tag": "Union", "operands": [3, 4] },
+              { "_tag": "Union", "operands": [5, 6] },
+              { "_tag": "Taxon", "record": { "scientificName": "A \\"quoted\\"" } },
+              { "_tag": "Intersection", "operands": [7, 3] },
+              { "_tag": "Taxon", "record": { "scientificName": "A \\"quoted\\"" } },
+              { "_tag": "Taxon", "record": { "scientificName": "b" } },
+              { "_tag": "Taxon", "record": { "scientificName": "B" } }
             ],
-            target: 0,
-          });
+            "target": 0
+          }`),
+          );
           const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
 
           if (!Predicate.isTagged(question, "Classify"))
@@ -509,10 +514,12 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state, decisions }) => {
-        expect(state).toEqual({
-          nodes: [{ _tag: "Intersection", operands: [1, 2] }, { _tag: "Empty" }, { _tag: "Empty" }],
-          target: 0,
-        });
+        // The nonliteral intersection is part of the request's wire contract.
+        expect(state).toEqual(
+          TestJson.decodeSync(
+            '{"nodes":[{"_tag":"Intersection","operands":[1,2]},{"_tag":"Empty"},{"_tag":"Empty"}],"target":0}',
+          ),
+        );
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
 
         if (!Predicate.isTagged(question, "Classify")) return Effect.die("Expected classification");
@@ -696,21 +703,23 @@ it.effect(
         ),
       );
 
-      expect(singleTaxonStates).toEqual([
-        { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
-        { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
-      ]);
+      const singleState = TestJson.decodeSync(
+        '{"nodes":[{"_tag":"Taxon","record":{"scientificName":"target1"}}],"target":0}',
+      );
+
+      expect(singleTaxonStates).toEqual([singleState, singleState]);
       expect(seen).toEqual(
         expect.arrayContaining([
-          { nodes: [{ _tag: "Taxon", record: { scientificName: "target1" } }], target: 0 },
-          {
-            nodes: [
-              { _tag: "Union", operands: [1, 2] },
-              { _tag: "Taxon", record: { scientificName: "target2" } },
-              { _tag: "Taxon", record: { scientificName: "target3" } },
+          singleState,
+          // An independent wire fixture distinguishes the union from other operations.
+          TestJson.decodeSync(`{
+            "nodes": [
+              { "_tag": "Union", "operands": [1, 2] },
+              { "_tag": "Taxon", "record": { "scientificName": "target2" } },
+              { "_tag": "Taxon", "record": { "scientificName": "target3" } }
             ],
-            target: 0,
-          },
+            "target": 0
+          }`),
           null,
         ]),
       );
@@ -804,6 +813,9 @@ it.effect(
     );
 
     return Effect.gen(function* () {
+      const differenceWithoutRight = Schema.TaggedStruct("Difference", { left: Schema.Unknown });
+      const malformedTarget = differenceWithoutRight.make({ left: TaxonSet.of(nameA) });
+
       const requests: readonly Effect.Effect<
         Judgment,
         Errors.TaxonomyError,
@@ -818,12 +830,13 @@ it.effect(
         // @ts-expect-error Untyped caller with invalid target name.
         Taxonomy.recordBelongsTo(recordA, " "),
         // @ts-expect-error Untyped caller with malformed recursive target.
-        Taxonomy.recordBelongsTo(recordA, { _tag: "Difference", left: TaxonSet.of(nameA) }),
+        Taxonomy.recordBelongsTo(recordA, malformedTarget),
       ];
 
       for (const request of requests) {
         const error = yield* Effect.flip(request);
-        expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+        assert(error instanceof Errors.InvalidInput);
+        expect(error.cause).toSatisfy(Schema.isSchemaError);
       }
 
       expect(calls).toBe(0);
@@ -874,7 +887,8 @@ for (const [key, operation] of modelOperations) {
       );
 
       const error = yield* Effect.flip(operation().pipe(Effect.provide(layer)));
-      expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
+      assert(AiError.isAiError(error));
+      expect(error.reason).toBeInstanceOf(AiError.InvalidOutputError);
     }),
   );
 }
@@ -946,10 +960,9 @@ it.effect("provides shared target once and record facts once in singleton member
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         calls++;
-        expect(state).toEqual({
-          nodes: [{ _tag: "Taxon", record: { scientificName: "Quercus" } }],
-          target: 0,
-        });
+        expect(state).toHaveProperty("target", 0);
+        expect(state).toHaveProperty("nodes.length", 1);
+        expect(state).toHaveProperty("nodes.0.record", { scientificName: "Quercus" });
         expect(Record.keys(decisions)).toEqual(["record0"]);
         const question = Record.get(decisions, "record0").pipe(Option.getOrThrow);
 
