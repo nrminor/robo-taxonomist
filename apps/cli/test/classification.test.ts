@@ -151,12 +151,17 @@ it.effect(
       ]);
 
       expect(Result.isSuccess(result.outcome)).toBe(true);
-      const taxon = { _tag: "Taxon", record: { scientificName: "Quercus" } };
+
+      const taxon = yield* TestJson.decode(
+        '{"_tag":"Taxon","record":{"scientificName":"Quercus"}}',
+      );
+
+      const judgment = yield* TestJson.decode('{"_tag":"WithinTaxon","support":1}');
 
       const match = {
         record: "Voucher A17",
         taxon,
-        judgment: { _tag: "WithinTaxon", support: 1 },
+        judgment,
         answer: {
           label: "withinTaxon",
           probabilities: { sameTaxon: 0, withinTaxon: 1, noMatch: 0, undetermined: 0 },

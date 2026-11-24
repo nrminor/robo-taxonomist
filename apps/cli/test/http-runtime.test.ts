@@ -135,12 +135,14 @@ it.effect.each([
         const failure = yield* response.json;
 
         expect(response.status).toBe(413);
-        expect(failure).toEqual({
-          _tag: "CollectionLimit",
-          resource: test.resource,
-          maximum: test.maximum,
-          actual: test.actual,
-        });
+
+        const resource = yield* TestJson.encode(test.resource);
+
+        const expected = yield* TestJson.decode(
+          `{"_tag":"CollectionLimit","resource":${resource},"maximum":${test.maximum},"actual":${test.actual}}`,
+        );
+
+        expect(failure).toEqual(expected);
       }
     }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
   },
@@ -226,7 +228,10 @@ it.live("returns a typed socket deadline and interrupts pending collection infer
       const failure = yield* response.json;
 
       expect(response.status).toBe(504);
-      expect(failure).toEqual({ _tag: "RequestDeadline", timeoutMs: 50 });
+
+      const expected = yield* TestJson.decode('{"_tag":"RequestDeadline","timeoutMs":50}');
+
+      expect(failure).toEqual(expected);
       yield* Deferred.await(interrupted);
     }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
   }).pipe(Effect.timeout("5 seconds")),
@@ -253,7 +258,10 @@ it.effect("rejects deeply nested set expressions before the recursive endpoint s
     const failure = yield* response.json;
 
     expect(response.status).toBe(400);
-    expect(failure).toEqual({ _tag: "RequestTooDeep", maxJsonDepth: 64 });
+
+    const expected = yield* TestJson.decode('{"_tag":"RequestTooDeep","maxJsonDepth":64}');
+
+    expect(failure).toEqual(expected);
   }).pipe(Effect.provide([running, FetchHttpClient.layer])),
 );
 
@@ -281,7 +289,12 @@ it.effect.each([
 
       if (status === 400) {
         const failure = yield* response.json;
-        expect(failure).toEqual({ _tag: "RequestTooDeep", maxJsonDepth });
+
+        const expected = yield* TestJson.decode(
+          `{"_tag":"RequestTooDeep","maxJsonDepth":${maxJsonDepth}}`,
+        );
+
+        expect(failure).toEqual(expected);
       }
     }).pipe(
       Effect.provide([
@@ -460,7 +473,10 @@ it.effect(
       const failure = yield* response.json;
 
       expect(response.status).toBe(413);
-      expect(failure).toEqual({ _tag: "RequestTooLarge", maxBodyBytes: 64 });
+
+      const expected = yield* TestJson.decode('{"_tag":"RequestTooLarge","maxBodyBytes":64}');
+
+      expect(failure).toEqual(expected);
     }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
   },
 );

@@ -600,61 +600,50 @@ export type ErrorContractChecks = [
 // @ts-expect-error The schema retains the existing side literals.
 export const rejectedIdentity = TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "neither" });
 
-// Keep every tag and child valid except the deeply nested numeric scientific name.
-// Otherwise a widened outer tag could mask the recursive-declaration regression.
-const malformed: {
-  readonly _tag: "Difference";
-  readonly left: TaxonSet.TaxonSet;
-  readonly right: {
-    readonly _tag: "Difference";
-    readonly left: TaxonSet.TaxonSet;
-    readonly right: {
-      readonly _tag: "Taxon";
-      readonly record: { readonly scientificName: number };
-    };
-  };
-} = {
-  _tag: "Difference",
-  left: oaks,
-  right: {
-    _tag: "Difference",
-    left: oaks,
-    right: { _tag: "Taxon", record: { scientificName: 42 } },
-  },
-};
+type OuterDifference = Types.ExtractTag<TaxonSet.TaxonSet, "Difference">;
 
-// @ts-expect-error A numeric taxon name remains invalid through two recursive children.
-export const rejectedMembership = Taxonomy.recordBelongsTo(label, malformed);
+type InnerDifference = Types.ExtractTag<OuterDifference["right"], "Difference">;
 
-// @ts-expect-error Subset operands must retain recursive validation.
-export const rejectedSubset = TaxonSet.isSubsetOf(malformed, oaks);
+type NestedTaxon = Types.ExtractTag<InnerDifference["right"], "Taxon">;
 
-// @ts-expect-error Proper-subset operands must retain recursive validation.
-export const rejectedProperSubset = TaxonSet.isProperSubsetOf(oaks, malformed);
+export type RecursiveNameContract = Assert<
+  Equal<NestedTaxon["record"]["scientificName"], TaxonName | undefined>
+>;
 
-// @ts-expect-error Equivalence operands must retain recursive validation.
-export const rejectedEquivalent = TaxonSet.equivalent(malformed, oaks);
+const unbrandedTarget = UnbrandedDifference.make({ left: oaks, right: oaks });
 
-// @ts-expect-error Overlap operands must retain recursive validation.
-export const rejectedOverlap = TaxonSet.overlaps(oaks, malformed);
+// @ts-expect-error Membership targets must be constructed expressions.
+export const rejectedMembership = Taxonomy.recordBelongsTo(label, unbrandedTarget);
 
-// @ts-expect-error Disjointness operands must retain recursive validation.
-export const rejectedDisjoint = TaxonSet.disjoint(malformed, oaks);
+// @ts-expect-error Subset operands must be constructed expressions.
+export const rejectedSubset = TaxonSet.isSubsetOf(unbrandedTarget, oaks);
 
-// @ts-expect-error Partition targets must retain recursive validation.
-export const rejectedPartition = Taxonomy.partitionRecordsByMembership(records, malformed);
+// @ts-expect-error Proper-subset operands must be constructed expressions.
+export const rejectedProperSubset = TaxonSet.isProperSubsetOf(oaks, unbrandedTarget);
 
-// @ts-expect-error Each grouping target must retain recursive validation.
-export const rejectedGroup = Taxonomy.groupRecordsByTaxa(records, [oaks, malformed]);
+// @ts-expect-error Equivalence operands must be constructed expressions.
+export const rejectedEquivalent = TaxonSet.equivalent(unbrandedTarget, oaks);
 
-// @ts-expect-error Universal targets must retain recursive validation.
-export const rejectedAll = Taxonomy.allRecordsBelongTo(records, malformed);
+// @ts-expect-error Overlap operands must be constructed expressions.
+export const rejectedOverlap = TaxonSet.overlaps(oaks, unbrandedTarget);
 
-// @ts-expect-error Existential targets must retain recursive validation.
-export const rejectedSome = Taxonomy.anyRecordBelongsTo(records, malformed);
+// @ts-expect-error Disjointness operands must be constructed expressions.
+export const rejectedDisjoint = TaxonSet.disjoint(unbrandedTarget, oaks);
 
-// @ts-expect-error Negative existential targets must retain recursive validation.
-export const rejectedNone = Taxonomy.noRecordBelongsTo(records, malformed);
+// @ts-expect-error Partition targets must be constructed expressions.
+export const rejectedPartition = Taxonomy.partitionRecordsByMembership(records, unbrandedTarget);
+
+// @ts-expect-error Each grouping target must be a constructed expression.
+export const rejectedGroup = Taxonomy.groupRecordsByTaxa(records, [oaks, unbrandedTarget]);
+
+// @ts-expect-error Universal targets must be constructed expressions.
+export const rejectedAll = Taxonomy.allRecordsBelongTo(records, unbrandedTarget);
+
+// @ts-expect-error Existential targets must be constructed expressions.
+export const rejectedSome = Taxonomy.anyRecordBelongsTo(records, unbrandedTarget);
+
+// @ts-expect-error Negative existential targets must be constructed expressions.
+export const rejectedNone = Taxonomy.noRecordBelongsTo(records, unbrandedTarget);
 
 // Input roles are intentionally distinct even though both brands wrap strings.
 // @ts-expect-error A record label is not a whole-taxon name.
@@ -666,8 +655,8 @@ export const rejectedRecord = Taxonomy.recordBelongsTo(name, oaks);
 // @ts-expect-error Raw text must not bypass validated record labels.
 export const rejectedRawRecord = Taxonomy.recordBelongsTo("unvalidated", name);
 
-// @ts-expect-error Classification panels retain recursive expression validation.
-export const rejectedClassificationPanel = Taxonomy.classifyRecords(records, malformed);
+// @ts-expect-error Classification panels must be constructed expressions.
+export const rejectedClassificationPanel = Taxonomy.classifyRecords(records, unbrandedTarget);
 
 // @ts-expect-error Raw text cannot bypass the record-label schema.
 export const rejectedClassificationRecord = Taxonomy.classifyRecords(["unvalidated"], oaks);

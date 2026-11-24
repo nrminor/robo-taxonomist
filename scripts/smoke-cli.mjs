@@ -6,8 +6,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { Schema } from "effect";
 
 const run = promisify(execFile);
+
+const parseWireJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
 
 const sentinel = "robo-taxonomist-build-only-sentinel-9ce19f6d";
 
@@ -137,7 +140,10 @@ await test(
         });
 
         assert.equal(oversizedDepth.status, 400);
-        assert.deepEqual(await oversizedDepth.json(), { _tag: "RequestTooDeep", maxJsonDepth: 64 });
+        assert.deepEqual(
+          parseWireJson(await oversizedDepth.text()),
+          parseWireJson('{"_tag":"RequestTooDeep","maxJsonDepth":64}'),
+        );
 
         const specification = await fetch(`${address}/openapi.json`, {
           signal: AbortSignal.timeout(5_000),

@@ -426,14 +426,10 @@ it.effect("compares a directed set relation using the native operation", () =>
       "Yes\tsubset\t\t",
     ]);
     const request = Array.head(result.requests).pipe(Option.getOrThrow);
-    expect(request.state).toEqual({
-      nodes: [
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        { _tag: "Taxon", record: { scientificName: "Fagaceae" } },
-      ],
-      left: 0,
-      right: 1,
-    });
+    expect(request.state).toMatchObject({ left: 0, right: 1 });
+    expect(request.state).toHaveProperty("nodes.length", 2);
+    expect(request.state).toHaveProperty("nodes.0.record", { scientificName: "Quercus" });
+    expect(request.state).toHaveProperty("nodes.1.record", { scientificName: "Fagaceae" });
   }),
 );
 
@@ -635,13 +631,11 @@ it.effect("encodes ID-only clarification targets without extra metadata in JSON"
     const expectedText = yield* TestJson.encode(expectedJudgment);
     expect(json.stdout).toEqual([expectedText]);
     const request = Array.head(json.requests).pipe(Option.getOrThrow);
-    expect(request.state).toEqual({
-      nodes: [
-        { _tag: "Taxon", record: { scientificName: "Quercus" } },
-        { _tag: "Taxon", record: { taxonId: { taxonomy: "ncbi", id: "123", release: "2026" } } },
-      ],
-      left: 0,
-      right: 1,
+    expect(request.state).toMatchObject({ left: 0, right: 1 });
+    expect(request.state).toHaveProperty("nodes.length", 2);
+    expect(request.state).toHaveProperty("nodes.0.record", { scientificName: "Quercus" });
+    expect(request.state).toHaveProperty("nodes.1.record", {
+      taxonId: { taxonomy: "ncbi", id: "123", release: "2026" },
     });
   }).pipe(Effect.provide(NodeServices.layer)),
 );

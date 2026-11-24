@@ -1,5 +1,16 @@
 import { expect, it } from "@effect/vitest";
-import { ConfigProvider, Deferred, Effect, Fiber, Layer, Match, Record, Ref, Schema } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Match,
+  Record,
+  Ref,
+  Schema,
+  SchemaIssue,
+} from "effect";
 import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { TestClock } from "effect/testing";
@@ -7,6 +18,7 @@ import {
   Errors,
   RecordLabel,
   TaxonLookup,
+  TaxonMatchJudgment,
   TaxonName,
   TaxonSet,
   TaxonSource,
@@ -288,10 +300,10 @@ it.effect(
 
       for (const row of result.records) {
         expect(row.taxa.map(({ judgment }) => judgment)).toEqual([
-          { _tag: "WithinTaxon", support: 1 },
-          { _tag: "WithinTaxon", support: 1 },
-          { _tag: "NotMatched", support: 1 },
-          { _tag: "Undetermined" },
+          TaxonMatchJudgment.cases.WithinTaxon.make({ support: 1 }),
+          TaxonMatchJudgment.cases.WithinTaxon.make({ support: 1 }),
+          TaxonMatchJudgment.cases.NotMatched.make({ support: 1 }),
+          TaxonMatchJudgment.cases.Undetermined.make({}),
         ]);
         expect(row.ranking).toEqual(row.taxa.slice(0, 2));
         expect(row.taxa.map(({ answer }) => answer.confidence)).toEqual([1, 1, 1, 1]);
@@ -518,7 +530,7 @@ it.effect(
       const match = {
         record,
         taxon,
-        judgment: { _tag: "WithinTaxon", support: 0.7 },
+        judgment: TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.7 }),
         answer: {
           label: "withinTaxon",
           probabilities,
@@ -587,7 +599,6 @@ it.effect("returns a typed provider failure without exposing provider content", 
 
     expect(failure).toBeInstanceOf(Api.ModelFailure);
     expect(failure).toMatchObject({
-      _tag: "ModelFailure",
       message: "The decision model request failed",
     });
     const serializedFailure = yield* TestJson.encode(failure);
@@ -793,22 +804,22 @@ it.effect("does not mistake a record's caller-supplied tag metadata for a set ex
   Effect.gen(function* () {
     const client = yield* HttpApiTest.groups(Api.api, ["sets"]);
 
-    const left = Documents.RecordDocument.make({
-      label: RecordLabel.make("Voucher A17"),
-      _tag: "Empty",
-      metadata: ["caller"],
-    });
+    const input = yield* TestJson.decode(`{
+      "label": "Voucher A17",
+      "_tag": "Empty",
+      "metadata": ["caller"]
+    }`);
+
+    const left = yield* Schema.decodeUnknownEffect(Documents.RecordDocument)(input);
+
+    expect(left).toHaveProperty("_tag", "Empty");
 
     const right = TaxonName.make("Quercus");
 
     const result = yield* client.sets.union({ payload: { left, right } });
 
     const expectedLeft = Documents.SetDocument.cases.Taxon.make({
-      record: Documents.RecordDocument.make({
-        label: RecordLabel.make("Voucher A17"),
-        _tag: "Empty",
-        metadata: ["caller"],
-      }),
+      record: left,
     });
 
     const expectedRight = Documents.SetDocument.cases.Taxon.make({
@@ -821,6 +832,36 @@ it.effect("does not mistake a record's caller-supplied tag metadata for a set ex
 
     expect(result).toEqual(expected);
   }).pipe(Effect.provide([setHandlers, HttpServer.layerServices])),
+);
+
+it.effect("rejects a numeric name at a nested set document leaf", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeEffect(Schema.fromJsonString(Documents.SetDocument));
+
+    const nestedDocument = (nameJson: string) => `{
+      "_tag": "Difference",
+      "left": { "_tag": "Empty" },
+      "right": {
+        "_tag": "Difference",
+        "left": { "_tag": "Empty" },
+        "right": { "_tag": "Taxon", "record": { "scientificName": ${nameJson} } }
+      }
+    }`;
+
+    const valid = yield* decode(nestedDocument('"Quercus"'));
+    expect(valid).toHaveProperty("right.right.record.scientificName", "Quercus");
+
+    const failure = yield* decode(nestedDocument("42")).pipe(Effect.flip);
+    const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+    const { issues } = formatIssues(failure.issue);
+
+    expect(issues.map(({ path }) => path)).toContainEqual([
+      "right",
+      "right",
+      "record",
+      "scientificName",
+    ]);
+  }),
 );
 
 it.effect("intersects operands while preserving supplied artifact topology", () =>
@@ -996,7 +1037,7 @@ it.effect(
         .pipe(Effect.flip);
 
       expect(failure).toBeInstanceOf(Api.RequestTooLarge);
-      expect(failure).toMatchObject({ _tag: "RequestTooLarge", maxBodyBytes: 32 });
+      expect(failure).toHaveProperty("maxBodyBytes", 32);
     }).pipe(Effect.provide([boundedHandlers, HttpServer.layerServices]));
   },
 );
@@ -1046,6 +1087,6 @@ it.effect("interrupts the provider request at the HTTP deadline and returns a ty
 
     const failure = yield* Fiber.join(fiber);
     expect(failure).toBeInstanceOf(Api.RequestDeadline);
-    expect(failure).toMatchObject({ _tag: "RequestDeadline", timeoutMs: 10 });
+    expect(failure).toHaveProperty("timeoutMs", 10);
   }),
 );

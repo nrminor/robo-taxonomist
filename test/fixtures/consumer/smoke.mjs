@@ -20,8 +20,10 @@ assert.equal(Taxonomy.TaxonIdentityJudgment, TaxonIdentityJudgment);
 
 assert.equal(Taxonomy.TaxonMatchJudgment, TaxonMatchJudgment);
 
+const decodeIdentityJson = Schema.decodeSync(Schema.fromJsonString(TaxonIdentityJudgment));
+
 assert.deepEqual(
-  Schema.decodeUnknownSync(TaxonIdentityJudgment)({ _tag: "MultipleTaxa", side: "left" }),
+  decodeIdentityJson('{"_tag":"MultipleTaxa","side":"left"}'),
   TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "left" }),
 );
 
