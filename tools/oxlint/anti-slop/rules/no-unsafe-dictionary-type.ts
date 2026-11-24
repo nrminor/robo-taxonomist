@@ -6,9 +6,9 @@ import {
   createTypeEnvironment,
   type TypeEnvironment,
 } from "../shared/dictionary-types.ts";
-import { visibleTypeAlias } from "../shared/type-alias-resolution.ts";
+import { visibleTypeAlias, withTypeAliasAnalysis } from "../shared/type-alias-resolution.ts";
 
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, Visitor } from "@oxlint/plugins";
 
 const typeNodeKinds: ReadonlySet<string> = new Set([
   "JSDocNonNullableType",
@@ -138,10 +138,7 @@ export const noUnsafeDictionaryTypeRule = defineRule({
       report(node, unsafe.unsafeValue);
     };
 
-    return {
-      Program(node) {
-        environment = createTypeEnvironment(node, context.sourceCode.visitorKeys);
-      },
+    const checks = {
       TSTypeReference: reportIfUnsafe,
       TSTypeLiteral: reportIfUnsafe,
       TSMappedType: reportIfUnsafe,
@@ -160,6 +157,10 @@ export const noUnsafeDictionaryTypeRule = defineRule({
 
         if (unsafe !== null) report(node, unsafe.unsafeValue);
       },
-    };
+    } satisfies Visitor;
+
+    return withTypeAliasAnalysis((program, aliases) => {
+      environment = createTypeEnvironment(program, aliases);
+    }, checks);
   },
 });

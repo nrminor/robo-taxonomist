@@ -14,8 +14,9 @@ import {
   functionParameterTypeAnnotation,
 } from "../shared/function-parameters.ts";
 import { resolveVariable } from "../shared/scope.ts";
+import { withTypeAliasAnalysis } from "../shared/type-alias-resolution.ts";
 
-import type { ESTree, SourceCode, Variable } from "@oxlint/plugins";
+import type { ESTree, SourceCode, Variable, Visitor } from "@oxlint/plugins";
 
 type FunctionExpression = ESTree.ArrowFunctionExpression | ESTree.Function;
 
@@ -333,10 +334,7 @@ export const noKnownValueWideningRule = defineRule({
     const targetFromAnnotation = (annotation: ESTree.TSTypeAnnotation | null | undefined) =>
       environment === null ? null : annotationTarget(annotation, environment);
 
-    return {
-      Program(node) {
-        environment = createTypeEnvironment(node, context.sourceCode.visitorKeys);
-      },
+    const checks = {
       VariableDeclarator(node) {
         if (node.init === null || node.id.type !== "Identifier") return;
         reportFlow(
@@ -450,6 +448,10 @@ export const noKnownValueWideningRule = defineRule({
           "assertion",
         );
       },
-    };
+    } satisfies Visitor;
+
+    return withTypeAliasAnalysis((program, aliases) => {
+      environment = createTypeEnvironment(program, aliases);
+    }, checks);
   },
 });

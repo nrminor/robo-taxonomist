@@ -1,41 +1,29 @@
 import type { ESTree } from "@oxlint/plugins";
 
-type VisitorKeys = Readonly<Record<string, readonly string[]>>;
+export type InferBinders = ReadonlyMap<ESTree.TSConditionalType, ReadonlySet<string>>;
 
-function isNode(value: unknown): value is ESTree.Node {
-  return (
-    typeof value === "object" && value !== null && "type" in value && typeof value.type === "string"
-  );
-}
-
-function collectInferTypeParameterNames(
-  node: ESTree.Node,
-  visitorKeys: VisitorKeys,
-  names: Set<string>,
+/** Index an infer binder for each conditional type whose extends branch contains it. */
+export function recordInferBinder(
+  infer: ESTree.TSInferType,
+  binders: Map<ESTree.TSConditionalType, Set<string>>,
 ): void {
-  if (node.type === "TSInferType") names.add(node.typeParameter.name.name);
-  const record = node as unknown as Readonly<Record<string, unknown>>;
+  let child: ESTree.Node = infer;
 
-  for (const key of visitorKeys[node.type] ?? []) {
-    const value = record[key];
-
-    if (isNode(value)) {
-      collectInferTypeParameterNames(value, visitorKeys, names);
-      continue;
+  for (let parent: ESTree.Node | null = child.parent; parent !== null; parent = parent.parent) {
+    if (parent.type === "TSConditionalType" && parent.extendsType === child) {
+      const names = binders.get(parent) ?? new Set<string>();
+      names.add(infer.typeParameter.name.name);
+      binders.set(parent, names);
     }
 
-    if (!Array.isArray(value)) continue;
-
-    for (const child of value) {
-      if (isNode(child)) collectInferTypeParameterNames(child, visitorKeys, names);
-    }
+    child = parent;
   }
 }
 
 /** Collect type binders that are in scope at a node and can shadow module aliases. */
 export function lexicalTypeParameterNames(
   node: ESTree.Node,
-  visitorKeys: VisitorKeys,
+  inferBinders: InferBinders,
 ): ReadonlySet<string> {
   const names = new Set<string>();
   let descendant: ESTree.Node = node;
@@ -56,7 +44,7 @@ export function lexicalTypeParameterNames(
     }
 
     if (current.type === "TSConditionalType" && descendant === current.trueType) {
-      collectInferTypeParameterNames(current.extendsType, visitorKeys, names);
+      for (const name of inferBinders.get(current) ?? []) names.add(name);
     }
 
     descendant = current;

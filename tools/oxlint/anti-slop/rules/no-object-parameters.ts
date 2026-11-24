@@ -1,14 +1,14 @@
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, Visitor } from "@oxlint/plugins";
 
 import {
   functionParameterBindingName,
   functionParameterTypeAnnotation,
 } from "../shared/function-parameters.ts";
 import {
-  createTypeAliasEnvironment,
   resolvedTypeMatches,
+  withTypeAliasAnalysis,
   type TypeAliasEnvironment,
 } from "../shared/type-alias-resolution.ts";
 
@@ -64,10 +64,7 @@ export const noObjectParametersRule = defineRule({
       }
     };
 
-    return {
-      Program(node) {
-        environment = createTypeAliasEnvironment(node, context.sourceCode.visitorKeys);
-      },
+    const checks = {
       ArrowFunctionExpression: checkParameters,
       FunctionDeclaration: checkParameters,
       FunctionExpression: checkParameters,
@@ -78,6 +75,10 @@ export const noObjectParametersRule = defineRule({
       TSEmptyBodyFunctionExpression: checkParameters,
       TSFunctionType: checkParameters,
       TSMethodSignature: checkParameters,
-    };
+    } satisfies Visitor;
+
+    return withTypeAliasAnalysis((_program, aliases) => {
+      environment = aliases;
+    }, checks);
   },
 });

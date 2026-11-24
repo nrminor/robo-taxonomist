@@ -1,10 +1,10 @@
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, Visitor } from "@oxlint/plugins";
 
 import {
-  createTypeAliasEnvironment,
   resolvedTypeMatches,
+  withTypeAliasAnalysis,
   type TypeAliasEnvironment,
 } from "../shared/type-alias-resolution.ts";
 
@@ -66,10 +66,7 @@ export const noUnknownReturnsRule = defineRule({
       context.report({ node: annotation.typeAnnotation, messageId: "unknownReturn" });
     };
 
-    return {
-      Program(node) {
-        environment = createTypeAliasEnvironment(node, context.sourceCode.visitorKeys);
-      },
+    const checks = {
       ArrowFunctionExpression: checkReturnType,
       FunctionDeclaration: checkReturnType,
       FunctionExpression: checkReturnType,
@@ -80,6 +77,10 @@ export const noUnknownReturnsRule = defineRule({
       TSEmptyBodyFunctionExpression: checkReturnType,
       TSFunctionType: checkReturnType,
       TSMethodSignature: checkReturnType,
-    };
+    } satisfies Visitor;
+
+    return withTypeAliasAnalysis((_program, aliases) => {
+      environment = aliases;
+    }, checks);
   },
 });

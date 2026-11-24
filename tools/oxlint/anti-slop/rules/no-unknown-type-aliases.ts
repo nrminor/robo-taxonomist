@@ -1,10 +1,10 @@
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, Visitor } from "@oxlint/plugins";
 
 import {
-  createTypeAliasEnvironment,
   resolvedTypeMatches,
+  withTypeAliasAnalysis,
   type TypeAliasEnvironment,
 } from "../shared/type-alias-resolution.ts";
 
@@ -36,10 +36,7 @@ export const noUnknownTypeAliasesRule = defineRule({
         return resolved.type === "TSUnionType" && resolved.types.some(matches);
       });
 
-    return {
-      Program(node) {
-        environment = createTypeAliasEnvironment(node, context.sourceCode.visitorKeys);
-      },
+    const checks = {
       TSTypeAliasDeclaration(node) {
         if (!resolvesToUnknown(node.typeAnnotation)) return;
         context.report({
@@ -48,6 +45,10 @@ export const noUnknownTypeAliasesRule = defineRule({
           data: { alias: node.id.name },
         });
       },
-    };
+    } satisfies Visitor;
+
+    return withTypeAliasAnalysis((_program, aliases) => {
+      environment = aliases;
+    }, checks);
   },
 });

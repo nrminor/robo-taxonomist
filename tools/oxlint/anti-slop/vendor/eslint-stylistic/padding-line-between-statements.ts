@@ -13,7 +13,12 @@ type ASTNode = ESTree.Node;
 
 type Token = SyntaxToken | Comment;
 
-import type { RuleOptions, SelectorOption, StatementOption } from "./padding-line-options.d.ts";
+import type {
+  RuleOptions,
+  SelectorOption,
+  StatementOption,
+  StatementType,
+} from "./padding-line-options.d.ts";
 import {
   isClosingBraceToken,
   isFunction,
@@ -49,6 +54,12 @@ type NodeTest = (node: ASTNode, sourceCode: SourceCode) => boolean;
 
 interface NodeTestObject {
   test: NodeTest;
+}
+
+function requirePaddingValue<T>(value: T | null | undefined, detail: string): T {
+  if (value == null) throw new Error(`Padding rule invariant: ${detail}`);
+
+  return value;
 }
 
 const LT = `[${Array.from(LINEBREAKS).join("")}]`;
@@ -272,7 +283,11 @@ function isExpression(node: ASTNode, sourceCode: SourceCode): boolean {
  * @private
  */
 function getActualLastToken(node: ASTNode, sourceCode: SourceCode): Token | null {
-  const semiToken = sourceCode.getLastToken(node)!;
+  const semiToken = requirePaddingValue(
+    sourceCode.getLastToken(node),
+    "statement is missing its last token",
+  );
+
   const prevToken = sourceCode.getTokenBefore(semiToken);
   const nextToken = sourceCode.getTokenAfter(semiToken);
 
@@ -403,7 +418,11 @@ function verifyForAlways(
     loc: getReportLoc(nextNode, context.sourceCode),
     fix(fixer) {
       const sourceCode = context.sourceCode;
-      let prevToken = getActualLastToken(prevNode, sourceCode)!;
+
+      let prevToken = requirePaddingValue(
+        getActualLastToken(prevNode, sourceCode),
+        "previous statement is missing its last token",
+      );
 
       const nextToken =
         sourceCode.getFirstTokenBetween(prevToken, nextNode, {
@@ -438,7 +457,7 @@ function verifyForAlways(
 
             return true;
           },
-        })! || nextNode;
+        }) ?? nextNode;
 
       const insertText = isTokenOnSameLine(prevToken, nextToken) ? "\n\n" : "\n";
 
@@ -459,7 +478,7 @@ const PaddingTypes = {
   always: { verify: verifyForAlways },
 };
 
-const MaybeMultilineStatementType: Record<string, NodeTestObject> = {
+const MaybeMultilineStatementType = {
   "block-like": { test: isBlockLikeStatement },
   expression: { test: isExpression },
   return: newKeywordTester("ReturnStatement", "return"),
@@ -475,14 +494,34 @@ const MaybeMultilineStatementType: Record<string, NodeTestObject> = {
       node.type === "VariableDeclaration" && (node.kind === "using" || node.kind === "await using"),
   },
   type: newKeywordTester("TSTypeAliasDeclaration", "type"),
-};
+} satisfies Record<string, NodeTestObject>;
+
+function lineModeStatements(key: string, value: NodeTestObject): [string, NodeTestObject][] {
+  return [
+    [key, value],
+    [
+      `singleline-${key}`,
+      {
+        ...value,
+        test: (node, sourceCode) => value.test(node, sourceCode) && isSingleLine(node),
+      },
+    ],
+    [
+      `multiline-${key}`,
+      {
+        ...value,
+        test: (node, sourceCode) => value.test(node, sourceCode) && !isSingleLine(node),
+      },
+    ],
+  ];
+}
 
 /**
  * Types of statements.
  * Those have `test` method to check it matches to the given statement.
  * @private
  */
-const StatementTypes: Record<string, NodeTestObject> = {
+const StatementTypes = {
   "*": { test: (): boolean => true },
   exports: { test: isCJSExport },
   require: { test: isCJSRequire },
@@ -528,25 +567,18 @@ const StatementTypes: Record<string, NodeTestObject> = {
   interface: newKeywordTester("TSInterfaceDeclaration", "interface"),
   "function-overload": newNodeTypeTester("TSDeclareFunction"),
   ...Object.fromEntries(
-    Object.entries(MaybeMultilineStatementType).flatMap(([key, value]) => [
-      [key, value],
-      [
-        `singleline-${key}`,
-        {
-          ...value,
-          test: (node, sourceCode) => value.test(node, sourceCode) && isSingleLine(node),
-        },
-      ],
-      [
-        `multiline-${key}`,
-        {
-          ...value,
-          test: (node, sourceCode) => value.test(node, sourceCode) && !isSingleLine(node),
-        },
-      ],
-    ]),
+    Object.entries(MaybeMultilineStatementType).flatMap(([key, value]) =>
+      lineModeStatements(key, value),
+    ),
   ),
-};
+} satisfies Record<string, NodeTestObject>;
+
+function statementMatcher(
+  table: Readonly<Record<string, NodeTestObject>>,
+  type: StatementType,
+): NodeTestObject {
+  return requirePaddingValue(table[type], `unsupported statement type ${type}`);
+}
 
 /** Build the vendored padding rule with caller-owned, typed policy options. */
 export default function createPaddingLineRule(options: RuleOptions): CreateRule {
@@ -696,12 +728,7 @@ export default function createPaddingLineRule(options: RuleOptions): CreateRule 
 
           return true;
         } else {
-          const statementType = StatementTypes[type];
-
-          if (statementType === undefined)
-            throw new Error(`Padding rule invariant: unsupported statement type ${type}`);
-
-          return statementType.test(innerStatementNode, sourceCode);
+          return statementMatcher(StatementTypes, type).test(innerStatementNode, sourceCode);
         }
       }
 
@@ -740,13 +767,18 @@ export default function createPaddingLineRule(options: RuleOptions): CreateRule 
        */
       function getPaddingLineSequences(prevNode: ASTNode, nextNode: ASTNode): [Token, Token][] {
         const pairs: [Token, Token][] = [];
-        let prevToken: Token = getActualLastToken(prevNode, sourceCode)!;
+
+        let prevToken = requirePaddingValue(
+          getActualLastToken(prevNode, sourceCode),
+          "previous statement is missing its last token",
+        );
 
         if (nextNode.loc.start.line - prevToken.loc.end.line >= 2) {
           do {
-            const token: Token = sourceCode.getTokenAfter(prevToken, {
-              includeComments: true,
-            })!;
+            const token = requirePaddingValue(
+              sourceCode.getTokenAfter(prevToken, { includeComments: true }),
+              "token sequence ended before the next statement",
+            );
 
             if (token.loc.start.line - prevToken.loc.end.line >= 2) pairs.push([prevToken, token]);
 
@@ -781,12 +813,13 @@ export default function createPaddingLineRule(options: RuleOptions): CreateRule 
         }
 
         // Save this node as the current previous statement.
-        const prevNode = scopeInfo!.prevNode;
+        const scope = requirePaddingValue(scopeInfo, "statement is outside a padding scope");
+        const prevNode = scope.prevNode;
 
         // Verify.
         if (prevNode) pendingPairs.push({ prevNode, nextNode: node });
 
-        scopeInfo!.prevNode = node;
+        scope.prevNode = node;
       }
 
       function verifyPendingPairs(): void {

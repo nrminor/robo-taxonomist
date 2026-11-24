@@ -1,7 +1,6 @@
 import type { ESTree } from "@oxlint/plugins";
 
 import {
-  createTypeAliasEnvironment,
   hasVisibleTypeBinding,
   visibleTypeAlias,
   type TypeAliasEnvironment as LexicalTypeAliasEnvironment,
@@ -57,7 +56,7 @@ function declaredStatement(statement: ESTree.Statement): ESTree.Node | null {
 
 export function createTypeEnvironment(
   program: ESTree.Program,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  typeAliases: LexicalTypeAliasEnvironment,
 ): TypeEnvironment {
   const interfaces = new Map<string, ESTree.TSInterfaceDeclaration[]>();
 
@@ -72,7 +71,7 @@ export function createTypeEnvironment(
 
   return {
     interfaces,
-    typeAliases: createTypeAliasEnvironment(program, visitorKeys),
+    typeAliases,
   };
 }
 
@@ -212,7 +211,7 @@ function unsafeDirectValue(
     if (unsafeMembers.includes("any")) return "any";
 
     return unsafeMembers.length > 0 && unsafeMembers.every((member) => member !== null)
-      ? unsafeMembers[0]
+      ? (unsafeMembers[0] ?? null)
       : null;
   }
 

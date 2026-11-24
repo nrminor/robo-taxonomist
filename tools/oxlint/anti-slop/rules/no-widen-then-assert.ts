@@ -151,7 +151,34 @@ function isDefinitelyObjectType(type: ESTree.TSType): boolean {
       return unwrapped.types.every(isDefinitelyObjectType);
     case "TSTypeOperator":
       return unwrapped.operator === "readonly" && isDefinitelyObjectType(unwrapped.typeAnnotation);
-    default:
+    case "TSAnyKeyword":
+    case "TSBigIntKeyword":
+    case "TSBooleanKeyword":
+    case "TSConditionalType":
+    case "TSImportType":
+    case "TSIndexedAccessType":
+    case "TSInferType":
+    case "TSIntrinsicKeyword":
+    case "TSJSDocNonNullableType":
+    case "TSJSDocNullableType":
+    case "TSJSDocUnknownType":
+    case "TSLiteralType":
+    case "TSNamedTupleMember":
+    case "TSNeverKeyword":
+    case "TSNullKeyword":
+    case "TSNumberKeyword":
+    case "TSParenthesizedType":
+    case "TSStringKeyword":
+    case "TSSymbolKeyword":
+    case "TSTemplateLiteralType":
+    case "TSThisType":
+    case "TSTypePredicate":
+    case "TSTypeQuery":
+    case "TSTypeReference":
+    case "TSUndefinedKeyword":
+    case "TSUnionType":
+    case "TSUnknownKeyword":
+    case "TSVoidKeyword":
       return false;
   }
 }

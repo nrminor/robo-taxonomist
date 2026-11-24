@@ -1,8 +1,10 @@
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, Visitor } from "@oxlint/plugins";
 
-import { lexicalTypeParameterNames } from "./lexical-type-parameters.ts";
-
-type VisitorKeys = Readonly<Record<string, readonly string[]>>;
+import {
+  lexicalTypeParameterNames,
+  recordInferBinder,
+  type InferBinders,
+} from "./lexical-type-parameters.ts";
 
 type TypeScope = ESTree.Node;
 
@@ -22,21 +24,13 @@ type Substitutions = ReadonlyMap<string, Substitution>;
 export type TypeAliasEnvironment = {
   readonly aliases: readonly ESTree.TSTypeAliasDeclaration[];
   readonly bindingsByName: ReadonlyMap<string, readonly TypeBinding[]>;
-  readonly visitorKeys: VisitorKeys;
+  readonly inferBinders: InferBinders;
 };
 
 export type ResolvedTypeMatcher = (
   type: ESTree.TSType,
   matches: (child: ESTree.TSType) => boolean,
 ) => boolean;
-
-const environmentsByProgram = new WeakMap<ESTree.Program, TypeAliasEnvironment>();
-
-function isNode(value: unknown): value is ESTree.Node {
-  return (
-    typeof value === "object" && value !== null && "type" in value && typeof value.type === "string"
-  );
-}
 
 function enclosingTypeScope(node: ESTree.Node): TypeScope {
   let current: ESTree.Node | null = node.parent;
@@ -86,58 +80,86 @@ function declaredTypeBinding(node: ESTree.Node): {
   return null;
 }
 
-function collectTypeBindings(
-  node: ESTree.Node,
-  visitorKeys: VisitorKeys,
-  bindingsByName: Map<string, TypeBinding[]>,
-  aliases: ESTree.TSTypeAliasDeclaration[],
-): void {
-  const declared = declaredTypeBinding(node);
+function createTypeAliasIndex() {
+  const bindingsByName = new Map<string, TypeBinding[]>();
+  const aliases: ESTree.TSTypeAliasDeclaration[] = [];
+  const inferBinders = new Map<ESTree.TSConditionalType, Set<string>>();
+  const environment: TypeAliasEnvironment = { aliases, bindingsByName, inferBinders };
 
-  if (declared !== null) {
+  const record = (node: ESTree.Node) => {
+    const declared = declaredTypeBinding(node);
+
+    if (declared === null) return;
     const bindings = bindingsByName.get(declared.name) ?? [];
     bindings.push({ ...declared, scope: enclosingTypeScope(node) });
     bindingsByName.set(declared.name, bindings);
 
     if (declared.alias !== null) aliases.push(declared.alias);
-  }
+  };
 
-  // SAFETY: Oxlint's visitor keys identify only ESTree child-node properties.
-  const fields = node as unknown as Readonly<Record<string, unknown>>;
-
-  for (const key of visitorKeys[node.type] ?? []) {
-    const value = fields[key];
-
-    if (isNode(value)) {
-      collectTypeBindings(value, visitorKeys, bindingsByName, aliases);
-      continue;
-    }
-
-    if (!Array.isArray(value)) continue;
-
-    for (const child of value) {
-      if (isNode(child)) {
-        collectTypeBindings(child, visitorKeys, bindingsByName, aliases);
-      }
-    }
-  }
+  return {
+    environment,
+    record,
+    recordInfer: (node: ESTree.TSInferType) => recordInferBinder(node, inferBinders),
+  };
 }
 
-/** Collect every lexical type alias and competing type binding in a program. */
-export function createTypeAliasEnvironment(
-  program: ESTree.Program,
-  visitorKeys: VisitorKeys,
-): TypeAliasEnvironment {
-  const cached = environmentsByProgram.get(program);
+const indexesByProgram = new WeakMap<ESTree.Program, ReturnType<typeof createTypeAliasIndex>>();
 
-  if (cached !== undefined) return cached;
-  const bindingsByName = new Map<string, TypeBinding[]>();
-  const aliases: ESTree.TSTypeAliasDeclaration[] = [];
-  collectTypeBindings(program, visitorKeys, bindingsByName, aliases);
-  const environment = { aliases, bindingsByName, visitorKeys };
-  environmentsByProgram.set(program, environment);
+/** Index each program once with Oxlint's visitors, then run rule checks in encounter order. */
+export function withTypeAliasAnalysis(
+  prepare: (program: ESTree.Program, environment: TypeAliasEnvironment) => void,
+  checks: Visitor,
+): Visitor {
+  let index: ReturnType<typeof createTypeAliasIndex> | undefined;
+  let ownsIndex = false;
+  const pending: { readonly node: ESTree.Node; readonly check: (node: ESTree.Node) => void }[] = [];
+  const deferredChecks: Visitor = {};
 
-  return environment;
+  for (const [selector, check] of Object.entries<Visitor[string]>(checks)) {
+    if (check === undefined) continue;
+
+    deferredChecks[selector] = (node) => {
+      pending.push({ node, check });
+    };
+  }
+
+  const record = (node: ESTree.Node) => {
+    if (ownsIndex) index?.record(node);
+  };
+
+  return {
+    ...deferredChecks,
+    Program(program) {
+      const existing = indexesByProgram.get(program);
+      index = existing ?? createTypeAliasIndex();
+      ownsIndex = existing === undefined;
+
+      if (ownsIndex) indexesByProgram.set(program, index);
+    },
+    TSTypeAliasDeclaration(node) {
+      record(node);
+      deferredChecks.TSTypeAliasDeclaration?.(node);
+    },
+    TSInterfaceDeclaration: record,
+    TSEnumDeclaration: record,
+    ClassDeclaration: record,
+    ClassExpression: record,
+    ImportSpecifier: record,
+    ImportDefaultSpecifier: record,
+    ImportNamespaceSpecifier: record,
+    TSInferType(node) {
+      if (ownsIndex) index?.recordInfer(node);
+    },
+    "Program:exit"(node) {
+      if (node.type !== "Program" || index === undefined)
+        throw new Error("Type alias analysis requires a program index");
+      prepare(node, index.environment);
+
+      for (const { node, check } of pending) check(node);
+      pending.length = 0;
+    },
+  };
 }
 
 function ancestorDistance(ancestor: ESTree.Node, node: ESTree.Node): number | null {
@@ -185,7 +207,7 @@ export function visibleTypeAlias(
   use: ESTree.Node,
   environment: TypeAliasEnvironment,
 ): ESTree.TSTypeAliasDeclaration | null {
-  if (lexicalTypeParameterNames(use, environment.visitorKeys).has(name)) return null;
+  if (lexicalTypeParameterNames(use, environment.inferBinders).has(name)) return null;
   const bindings = nearestTypeBindings(name, use, environment);
 
   return bindings.length === 1 ? (bindings[0]?.alias ?? null) : null;
@@ -198,7 +220,7 @@ export function hasVisibleTypeBinding(
   environment: TypeAliasEnvironment,
 ): boolean {
   return (
-    lexicalTypeParameterNames(use, environment.visitorKeys).has(name) ||
+    lexicalTypeParameterNames(use, environment.inferBinders).has(name) ||
     nearestTypeBindings(name, use, environment).length > 0
   );
 }
