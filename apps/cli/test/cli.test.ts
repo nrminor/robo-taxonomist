@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { execPath } from "node:process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { Array, Effect, FileSystem, Option, Schema, Stream } from "effect";
+import { Array, Effect, FileSystem, Option, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { RecordLabel, TaxonName } from "robo-taxonomist";
 import * as Documents from "../src/documents.ts";
@@ -44,30 +44,61 @@ it.effect("compares identical labels without model configuration", () =>
   }),
 );
 
-it.effect.each([
+it.live.each([
   { command: ["compare", "labels", "A17", "A17"] },
   { command: ["mem", "part", "--target", "Quercus", "--model", "custom/model"] },
 ])("fails with a diagnostic when the primary stdout reader is closed: $command", ({ command }) =>
   Effect.gen(function* () {
-    const result = yield* Effect.promise(
-      () =>
-        new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
-          const child = spawn(execPath, ["src/main.ts", ...command], {
-            env: { NO_COLOR: "1", TYPESAFE_API_KEY: "fixture-key" },
-            stdio: ["ignore", "pipe", "pipe"],
-          });
+    const result = yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const child = spawn(execPath, ["src/main.ts", ...command], {
+          env: { NO_COLOR: "1", TYPESAFE_API_KEY: "fixture-key" },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
 
-          let stderr = "";
-          child.stderr.setEncoding("utf8");
-          child.stderr.on("data", (chunk: string) => {
-            stderr += chunk;
-          });
-          child.on("error", reject);
-          child.on("close", (code) => resolve({ code, stderr }));
+        const closed = new Promise<Result.Result<{ code: number | null; stderr: string }, Error>>(
+          (resolve) => {
+            let stderr = "";
+            let failure: Error | undefined;
+
+            child.stderr.setEncoding("utf8");
+            child.stderr.on("data", (chunk: string) => {
+              stderr += chunk;
+            });
+            child.on("error", (error) => {
+              failure = error;
+            });
+            child.once("close", (code) => {
+              resolve(
+                failure === undefined ? Result.succeed({ code, stderr }) : Result.fail(failure),
+              );
+            });
+          },
+        );
+
+        return { child, closed };
+      }),
+      ({ child, closed }) =>
+        Effect.gen(function* () {
           child.stdout.destroy();
+          const result = yield* Effect.promise(() => closed);
+
+          return yield* Effect.fromResult(result);
+        }).pipe(Effect.timeout("3 seconds")),
+      ({ child, closed }) =>
+        Effect.gen(function* () {
+          if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGKILL");
+          }
+
+          yield* Effect.promise(() => closed).pipe(
+            Effect.timeout("1 second"),
+            Effect.interruptible,
+          );
         }),
     );
 
+    expect(result.code).not.toBeNull();
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("Cannot write results to stdout");
   }),

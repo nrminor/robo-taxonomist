@@ -67,7 +67,7 @@
 !/apps/cli/README.md
 !/apps/cli/LICENSE
 !/apps/cli/tsconfig.json
-!/apps/cli/tsconfig.test.json
+!/apps/cli/test/tsconfig.json
 !/apps/cli/vitest.config.ts
 !/apps/cli/src/
 !/apps/cli/src/**/
