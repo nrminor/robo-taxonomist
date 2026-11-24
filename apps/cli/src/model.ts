@@ -21,16 +21,15 @@ export const modelFlag = Flag.String("model").pipe(
 export const modelLayer = (model: string) =>
   TypeSafeDecisionModel.layer({ model }).pipe(
     Layer.provide(TypeSafeClient.layerConfig()),
-    Layer.catch((cause) =>
-      Layer.effect(
-        DecisionModel.DecisionModel,
-        new CliError.UserError({
-          cause,
-          userMessage:
-            "TypeSafe configuration is missing or invalid; set TYPESAFE_API_KEY in the environment",
-        }),
-      ),
-    ),
+    Layer.catch((cause) => {
+      const configurationFailure = new CliError.UserError({
+        cause,
+        userMessage:
+          "TypeSafe configuration is missing or invalid; set TYPESAFE_API_KEY in the environment",
+      });
+
+      return Layer.effect(DecisionModel.DecisionModel, configurationFailure);
+    }),
   );
 
 const unusableAnswer = "The decision model returned an unusable answer; check the selected model";

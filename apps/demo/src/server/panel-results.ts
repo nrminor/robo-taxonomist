@@ -56,6 +56,21 @@ const lookup = Effect.fn("PanelResults.lookup")(function* ({
 
 type LookupFailure = Effect.Error<ReturnType<typeof lookup>>;
 
+const makePanelResults = Effect.gen(function* () {
+  const cache = yield* Cache.makeWith(lookup, {
+    capacity: 3,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+  });
+
+  const classify = (panelId: PanelId, refresh = false, hints: ReadonlyArray<TaxonomyHint> = []) => {
+    const key = { panelId, hints: Array.copy(hints) };
+
+    return refresh ? Cache.refresh(cache, key) : Cache.get(cache, key);
+  };
+
+  return { classify };
+});
+
 /**
  * Cache successful, schema-validated results by panel and ordered hints per layer instance.
  * Native refresh keeps an old success readable while running; failed refreshes evict only that entry.
@@ -72,23 +87,7 @@ export class PanelResults extends Context.Service<
   }
 >()("@robo-taxonomist/demo/PanelResults") {
   /** Build the cache using the caller-supplied decision model, including live adapters. */
-  static readonly layerNoDeps = Layer.effect(
-    PanelResults,
-    Effect.gen(function* () {
-      const cache = yield* Cache.makeWith(lookup, {
-        capacity: 3,
-        timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
-      });
-
-      return PanelResults.of({
-        classify: (panelId, refresh = false, hints = []) => {
-          const key = { panelId, hints: Array.copy(hints) };
-
-          return refresh ? Cache.refresh(cache, key) : Cache.get(cache, key);
-        },
-      });
-    }),
-  );
+  static readonly layerNoDeps = Layer.effect(PanelResults, makePanelResults);
   /** Self-contained teaching-fixture layer; does not make provider requests. */
   static readonly layer = PanelResults.layerNoDeps.pipe(Layer.provide(FixtureModel));
 }
@@ -96,7 +95,7 @@ export class PanelResults extends Context.Service<
 /** Classify through PanelResults; refresh forces a fresh lookup for the selected panel and hints. */
 export const classifyPanel = Effect.fn("classifyPanel")(function* (
   panelId: PanelId,
-  refresh = false,
+  refresh: boolean = false,
   hints?: ReadonlyArray<TaxonomyHint>,
 ) {
   const results = yield* PanelResults;
