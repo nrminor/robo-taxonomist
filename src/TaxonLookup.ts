@@ -74,16 +74,12 @@ export class TaxonLookup extends Context.Service<
   TaxonLookup,
   {
     readonly source: TaxonSource;
+    /** Resolve an identifier in the configured taxonomy view. */
     readonly byId: (id: TaxonId) => Effect.Effect<IdLookup, Errors.TaxonIdQueryError>;
+    /** Find candidates with an exact recorded scientific name or synonym. */
     readonly byName: (name: TaxonName) => Effect.Effect<readonly NameHit[], Errors.TaxonQueryError>;
   }
 >()("robo-taxonomist/TaxonLookup") {
-  /** Resolve an identifier in the configured taxonomy view. */
-  static byId = (id: TaxonId) => TaxonLookup.use((lookup) => lookup.byId(id));
-
-  /** Find candidates with an exact recorded scientific name or synonym. */
-  static byName = (name: TaxonName) => TaxonLookup.use((lookup) => lookup.byName(name));
-
   /** Find exact scientific names or synonyms recorded for an ID in a fixed view. */
   static checkName = Effect.fn("TaxonLookup.checkName")(function* (id: TaxonId, name: TaxonName) {
     const lookup = yield* TaxonLookup;
@@ -121,7 +117,8 @@ export class TaxonLookup extends Context.Service<
     id: TaxonId,
     rank: TaxonomicRank,
   ) {
-    const result = yield* TaxonLookup.byId(id);
+    const lookup = yield* TaxonLookup;
+    const result = yield* lookup.byId(id);
     const entry = entryFromLookup(result);
 
     return Option.flatMap(entry, (recorded) => taxonAtRank(recorded, rank));

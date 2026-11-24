@@ -144,7 +144,11 @@ const ncbiComparison = Taxonomy.sameGenus(ncbiRecord, specimen);
 
 const ncbiMembership = Taxonomy.recordBelongsTo(ncbiRecord, ncbiTarget);
 
-const lookup = TaxonLookup.byId(ncbiId);
+const lookup = Effect.gen(function* () {
+  const taxonomy = yield* TaxonLookup;
+
+  return yield* taxonomy.byId(ncbiId);
+});
 
 const identity = Taxonomy.sameTaxon(name, name, { policy });
 

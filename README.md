@@ -476,9 +476,11 @@ const oakId = NcbiTaxonId.make({ id: "38942" });
 const oakName = TaxonName.make("Quercus robur");
 
 const inspectOak = Effect.gen(function* () {
+  const lookup = yield* TaxonLookup;
+
   // lookup by taxid. The result is tagged Found, Merged, Deleted, or NotFound and can
   // be matched on exhaustively
-  const result = yield* TaxonLookup.byId(oakId);
+  const result = yield* lookup.byId(oakId);
   const reportId = IdLookup.match(result, {
     Found: ({ entry }) => Effect.log("Current taxon", entry.taxon),
     Merged: ({ requested, entry }) => Effect.log("Merged ID", requested, entry.taxon.taxonId),
@@ -488,7 +490,7 @@ const inspectOak = Effect.gen(function* () {
   yield* reportId;
 
   // lookup by name is also supported
-  const candidates = yield* TaxonLookup.byName(oakName);
+  const candidates = yield* lookup.byName(oakName);
   yield* Effect.log("Name candidates", candidates);
 
   // lookup within the taxonomic hierarchy is also supported

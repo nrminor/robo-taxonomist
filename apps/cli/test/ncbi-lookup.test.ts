@@ -89,7 +89,10 @@ it.effect("retains the requested identifier and resolves the canonical taxon aft
   Effect.gen(function* () {
     const directory = yield* writeDump({ ...files, "merged.dmp": row("8", "3") });
     const id = ncbiId("8");
-    const result = yield* TaxonLookup.byId(id).pipe(Effect.provide(lookup(directory)));
+
+    const result = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(id)).pipe(
+      Effect.provide(lookup(directory)),
+    );
 
     expect(IdLookup.guards.Merged(result)).toBe(true);
     expect(result).toMatchObject({
@@ -105,9 +108,9 @@ it.effect("distinguishes a recorded deletion from an unknown ID", () =>
     const deleted = ncbiId("9");
     const unknown = ncbiId("10");
 
-    const results = yield* Effect.all([TaxonLookup.byId(deleted), TaxonLookup.byId(unknown)]).pipe(
-      Effect.provide(lookup(directory)),
-    );
+    const results = yield* TaxonLookup.use((taxonomy) =>
+      Effect.all([taxonomy.byId(deleted), taxonomy.byId(unknown)]),
+    ).pipe(Effect.provide(lookup(directory)));
 
     expect(results).toEqual([
       IdLookup.cases.Deleted.make({ requested: deleted }),
@@ -129,10 +132,9 @@ it.effect("finds recorded scientific synonyms but not common names", () =>
     const synonym = TaxonName.make("Quercus pedunculata");
     const common = TaxonName.make("English oak");
 
-    const results = yield* Effect.all([
-      TaxonLookup.byName(synonym),
-      TaxonLookup.byName(common),
-    ]).pipe(Effect.provide(lookup(directory)));
+    const results = yield* TaxonLookup.use((taxonomy) =>
+      Effect.all([taxonomy.byName(synonym), taxonomy.byName(common)]),
+    ).pipe(Effect.provide(lookup(directory)));
 
     expect(results).toMatchObject([
       [{ taxon: { scientificName: "Quercus robur" }, matchedName: synonym, nameClass: "synonym" }],
@@ -150,7 +152,7 @@ it.effect("rejects a cyclic parent graph before publishing the lookup", () =>
 
     const id = ncbiId("1");
 
-    const failure = yield* TaxonLookup.byId(id).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(id)).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
@@ -166,7 +168,7 @@ it.effect("rejects a recorded merge with no current destination instead of repor
     const directory = yield* writeDump({ ...files, "merged.dmp": row("8", "30") });
     const id = ncbiId("8");
 
-    const failure = yield* TaxonLookup.byId(id).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(id)).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
@@ -181,7 +183,7 @@ it.effect("rejects two different destinations for one retired ID", () =>
   Effect.gen(function* () {
     const directory = yield* writeDump({ ...files, "merged.dmp": row("8", "2") + row("8", "3") });
 
-    const failure = yield* TaxonLookup.byId(ncbiId("8")).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(ncbiId("8"))).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
@@ -197,7 +199,7 @@ it.effect("rejects a current ID that is also recorded as deleted", () =>
     const directory = yield* writeDump({ ...files, "delnodes.dmp": row("3") });
     const id = ncbiId("3");
 
-    const failure = yield* TaxonLookup.byId(id).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(id)).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
@@ -220,7 +222,7 @@ it.effect("rejects competing scientific names for one current ID", () =>
 
     const id = ncbiId("3");
 
-    const failure = yield* TaxonLookup.byId(id).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(id)).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
@@ -240,7 +242,7 @@ it.effect("rejects a duplicate current identifier instead of overwriting its nod
 
     const id = ncbiId("3");
 
-    const failure = yield* TaxonLookup.byId(id).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(id)).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
@@ -258,7 +260,7 @@ it.effect("rejects a name for a missing node even when it is not a scientific na
       "names.dmp": files["names.dmp"] + row("99", "English oak", "", "common name"),
     });
 
-    const failure = yield* TaxonLookup.byId(ncbiId("3")).pipe(
+    const failure = yield* TaxonLookup.use((taxonomy) => taxonomy.byId(ncbiId("3"))).pipe(
       Effect.provide(lookup(directory)),
       Effect.flip,
     );
