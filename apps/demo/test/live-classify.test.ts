@@ -1,4 +1,5 @@
 // @vitest-environment node
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import { vi } from "vitest";
 import {
@@ -17,7 +18,7 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { Decision, DecisionModel } from "effect/ai";
+import { AiError, Decision, DecisionModel } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import { TaxonMatchJudgment, TaxonName, Taxonomy } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
@@ -95,12 +96,10 @@ it.effect.each([
 
   return Effect.gen(function* () {
     const error = yield* DecisionModel.decide(definition, { input: null }).pipe(Effect.flip);
-    expect(error).toMatchObject({
-      _tag: "AiError",
-      module: "ClefModel",
-      method: "decide",
-      reason: { _tag: "InvalidRequestError", description },
-    });
+    assert(AiError.isAiError(error));
+    expect(error).toMatchObject({ module: "ClefModel", method: "decide" });
+    expect(error.reason).toBeInstanceOf(AiError.InvalidRequestError);
+    expect(error.reason).toMatchObject({ description });
     expect(execute).not.toHaveBeenCalled();
   }).pipe(
     Effect.provide(
@@ -149,10 +148,9 @@ it.effect.each([false, true])(
         expect(result.cause.reasons.map((reason) => reason._tag)).toEqual(
           interrupted ? ["Fail", "Interrupt"] : ["Fail"],
         );
-        expect(Option.getOrThrow(Cause.findErrorOption(result.cause))).toMatchObject({
-          _tag: "AiError",
-          reason: { _tag: "NetworkError" },
-        });
+        const error = Option.getOrThrow(Cause.findErrorOption(result.cause));
+        assert(AiError.isAiError(error));
+        expect(error.reason).toBeInstanceOf(AiError.NetworkError);
 
         for (const reason of result.cause.reasons) {
           expect(Context.getOrUndefined(Cause.reasonAnnotations(reason), RequestId)).toBe(

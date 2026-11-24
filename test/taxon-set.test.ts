@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import {
   Array,
@@ -14,13 +15,23 @@ import {
   Predicate,
   Record,
   Result,
+  Schema,
   String,
 } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/ai";
-import { AcceptancePolicy, TaxonName, TaxonSet } from "../src/index.ts";
+import {
+  AcceptancePolicy,
+  Errors,
+  TaxonName,
+  TaxonSet,
+  TaxonSetRelationJudgment,
+} from "../src/index.ts";
+import { Difference, Union, taxonSetSchema } from "../src/schemas.ts";
 import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
+const relationCases = TaxonSetRelationJudgment.cases;
 
 function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
   const question = Option.getOrThrow(Record.get(decisions, "relation"));
@@ -33,7 +44,7 @@ function relationQuestion(decisions: Readonly<Record<string, Decision.Any>>) {
 it("constructs an empty set from an empty collection", () => {
   const first = TaxonSet.unionAll([]);
   const second = TaxonSet.unionAll([]);
-  expect(first).toEqual({ _tag: "Empty" });
+  expect(first).toSatisfy(taxonSetSchema.guards.Empty);
   expect(second).not.toBe(first);
 });
 
@@ -54,9 +65,8 @@ it("constructs one union retaining operand order, repetitions and supplied subtr
   const nested = TaxonSet.union(oak, beech);
   const none = TaxonSet.empty();
   const result = TaxonSet.unionAll([nested, oak, none, oak]);
-  expect(result).toEqual({ _tag: "Union", operands: [nested, oak, none, oak] });
-
-  if (!Predicate.isTagged(result, "Union")) throw new Error("Expected union");
+  assert(result instanceof Union);
+  expect(result.operands).toHaveLength(4);
   expect(result.operands[0]).toBe(nested);
   expect(result.operands[1]).toBe(oak);
   expect(result.operands[2]).toBe(none);
@@ -98,7 +108,8 @@ it("consumes an iterable once while retaining repeated occurrences", () => {
 
   const result = TaxonSet.unionAll(inputs);
   expect(iterations).toBe(1);
-  expect(result).toEqual({ _tag: "Union", operands: [oak, beech, oak] });
+  assert(result instanceof Union);
+  expect(result.operands).toEqual([oak, beech, oak]);
 });
 
 it("serializes ten thousand flat targets without creating a deeply nested expression", () => {
@@ -122,11 +133,10 @@ it("preserves syntax with fresh parents and shared readonly children", () => {
   const beech = TaxonSet.of(TaxonName.make("Fagus"));
   const first = TaxonSet.union(oak, beech);
   const second = TaxonSet.union(oak, beech);
-  expect(first).toEqual({ _tag: "Union", operands: [oak, beech] });
   expect(first).not.toBe(second);
 
-  if (!Predicate.isTagged(first, "Union") || !Predicate.isTagged(second, "Union"))
-    throw new Error("Expected unions");
+  assert(first instanceof Union);
+  assert(second instanceof Union);
   expect(first.operands).not.toBe(second.operands);
   expect(first.operands[0]).toBe(oak);
   expect(first.operands[1]).toBe(beech);
@@ -140,7 +150,7 @@ it("preserves syntax with fresh parents and shared readonly children", () => {
 
 it("preserves literal Empty and derived syntax without normalization", () => {
   const none = TaxonSet.empty();
-  expect(none).toEqual({ _tag: "Empty" });
+  expect(none).toSatisfy(taxonSetSchema.guards.Empty);
   expect(TaxonSet.empty()).not.toBe(none);
   const a = TaxonSet.of(TaxonName.make("A"));
   const b = TaxonSet.of(TaxonName.make("B"));
@@ -158,22 +168,33 @@ it("preserves literal Empty and derived syntax without normalization", () => {
   expect(intersection.operands).not.toBe(another.operands);
   expect(intersection).not.toBe(another);
   const complement = TaxonSet.complement(a, b);
-  expect(complement).toEqual({ _tag: "Difference", left: b, right: a });
-
-  if (!Predicate.isTagged(complement, "Difference")) throw new Error("Expected difference");
+  assert(complement instanceof Difference);
   expect(complement.left).toBe(b);
   expect(complement.right).toBe(a);
   const symmetric = TaxonSet.symmetricDifference(a, b);
-  expect(symmetric).toEqual({
-    _tag: "Union",
-    operands: [
-      { _tag: "Difference", left: a, right: b },
-      { _tag: "Difference", left: b, right: a },
-    ],
-  });
-  expect(TaxonSet.difference(a, a)).toEqual({ _tag: "Difference", left: a, right: a });
-  const nested = TaxonSet.union(TaxonSet.union(a, b), a);
-  expect(nested).toEqual({ _tag: "Union", operands: [{ _tag: "Union", operands: [a, b] }, a] });
+  assert(symmetric instanceof Union);
+  expect(symmetric.operands).toHaveLength(2);
+  const [leftOnly, rightOnly] = symmetric.operands;
+  assert(leftOnly instanceof Difference);
+  assert(rightOnly instanceof Difference);
+  expect(leftOnly.left).toBe(a);
+  expect(leftOnly.right).toBe(b);
+  expect(rightOnly.left).toBe(b);
+  expect(rightOnly.right).toBe(a);
+
+  const selfDifference = TaxonSet.difference(a, a);
+  assert(selfDifference instanceof Difference);
+  expect(selfDifference.left).toBe(a);
+  expect(selfDifference.right).toBe(a);
+
+  const inner = TaxonSet.union(a, b);
+  const nested = TaxonSet.union(inner, a);
+  assert(nested instanceof Union);
+  assert(inner instanceof Union);
+  expect(inner.operands).toEqual([a, b]);
+  expect(nested.operands).toHaveLength(2);
+  expect(nested.operands[0]).toBe(inner);
+  expect(nested.operands[1]).toBe(a);
 });
 
 const operations = [
@@ -256,12 +277,14 @@ it.effect.each(operations)(
 
     return Effect.gen(function* () {
       const result = yield* operation(left, right);
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInSet",
+
+      const expected = relationCases.MultipleTaxaInSet.make({
         relation,
         side: "right",
         taxon: right,
       });
+
+      expect(result).toEqual(expected);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -308,14 +331,16 @@ it.effect(
 
     return Effect.gen(function* () {
       const result = yield* TaxonSet.overlaps(left, birch);
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInSet",
+
+      const expected = relationCases.MultipleTaxaInSet.make({
         relation: "overlap",
         side: "left",
         taxon: beech,
       });
 
-      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+      expect(result).toEqual(expected);
+
+      if (!TaxonSetRelationJudgment.guards.MultipleTaxaInSet(result))
         throw new Error("Expected clarification");
       expect(result.taxon).toBe(beech);
     }).pipe(Effect.provide(layer));
@@ -351,10 +376,7 @@ it.effect.each([
     for (const [index, [relation, operation]] of operations.entries()) {
       const comparison = yield* operation(left, right);
       const expectedTag = Array.get(expected, index).pipe(Option.getOrThrow);
-      expect(comparison).toEqual({
-        _tag: expectedTag,
-        relation,
-      });
+      expect(comparison).toEqual(relationCases[expectedTag].make({ relation }));
     }
   }).pipe(
     Effect.provide(
@@ -373,14 +395,14 @@ it.effect.each([
   ["No", "equal", { equal: 0.35, properSuperset: 0.3, partialOverlap: 0.3, undetermined: 0.05 }],
 ] as const)(
   "accepts grouped subset support for %s despite a different selected label",
-  ([_tag, label, probabilities]) =>
+  ([expectedTag, label, probabilities]) =>
     Effect.gen(function* () {
       const subset = yield* TaxonSet.isSubsetOf(
         TaxonSet.of(TaxonName.make("A")),
         TaxonSet.of(TaxonName.make("B")),
       );
 
-      expect(subset).toEqual({ _tag, relation: "subset" });
+      expect(subset).toEqual(relationCases[expectedTag].make({ relation: "subset" }));
     }).pipe(
       Effect.provide(
         relationLayer(
@@ -400,7 +422,7 @@ it.effect("keeps a grouped probability tie unresolved", () =>
       TaxonSet.of(TaxonName.make("B")),
     );
 
-    expect(subset).toEqual({ _tag: "Undetermined", relation: "subset" });
+    expect(subset).toEqual(relationCases.Undetermined.make({ relation: "subset" }));
   }).pipe(
     Effect.provide(
       relationLayer(
@@ -476,14 +498,16 @@ it.effect(
 
     return Effect.gen(function* () {
       const result = yield* TaxonSet.overlaps(left, right);
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInSet",
+
+      const expected = relationCases.MultipleTaxaInSet.make({
         relation: "overlap",
         side: "right",
         taxon: duplicate,
       });
 
-      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+      expect(result).toEqual(expected);
+
+      if (!TaxonSetRelationJudgment.guards.MultipleTaxaInSet(result))
         throw new Error("Expected clarification");
       expect(result.taxon).toBe(duplicate);
       expect(result.taxon).not.toBe(a);
@@ -544,10 +568,7 @@ it.effect("keeps a shared DAG compact with bounded source-name reads", () => {
 
   return Effect.gen(function* () {
     const equivalence = yield* TaxonSet.equivalent(expression, expression);
-    expect(equivalence).toEqual({
-      _tag: "Yes",
-      relation: "equivalent",
-    });
+    expect(equivalence).toEqual(relationCases.Yes.make({ relation: "equivalent" }));
     expect(MutableRef.get(leafReads)).toBeLessThanOrEqual(64);
   }).pipe(Effect.provide(layer));
 });
@@ -609,14 +630,12 @@ it.effect.each([
     );
 
     if (scenario === "cycle") {
-      expect(error).toMatchObject({
-        _tag: "AiError",
-        module: "TaxonSetGraph",
-        method: "compile",
-        reason: { _tag: "InvalidUserInputError" },
-      });
+      assert(AiError.isAiError(error));
+      expect(error).toMatchObject({ module: "TaxonSetGraph", method: "compile" });
+      expect(error.reason).toBeInstanceOf(AiError.InvalidUserInputError);
     } else {
-      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+      assert(error instanceof Errors.InvalidInput);
+      expect(error.cause).toSatisfy(Schema.isSchemaError);
     }
   }).pipe(Effect.provide(layer));
 });
@@ -647,32 +666,30 @@ it.effect("accepts an Effect-rescaled set answer despite zero confidence", () =>
       policy: AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 }),
     });
 
-    expect(subset).toEqual({ _tag: "Yes", relation: "subset" });
+    expect(subset).toEqual(relationCases.Yes.make({ relation: "subset" }));
   }).pipe(Effect.provide(layer));
 });
 
 for (const [relation, operation, yesTag, noTag, yesLabel, noLabel] of operations) {
   it.effect.each([
-    [yesLabel, { _tag: yesTag, relation }],
-    [noLabel, { _tag: noTag, relation }],
-    ["undetermined", { _tag: "Undetermined", relation }],
+    [yesLabel, relationCases[yesTag].make({ relation })],
+    [noLabel, relationCases[noTag].make({ relation })],
+    ["undetermined", relationCases.Undetermined.make({ relation })],
     [
       "multipleLeft0",
-      {
-        _tag: "MultipleTaxaInSet",
+      relationCases.MultipleTaxaInSet.make({
         relation,
         side: "left",
         taxon: TaxonSet.of(TaxonName.make("A")),
-      },
+      }),
     ],
     [
       "multipleRight0",
-      {
-        _tag: "MultipleTaxaInSet",
+      relationCases.MultipleTaxaInSet.make({
         relation,
         side: "right",
         taxon: TaxonSet.of(TaxonName.make("B")),
-      },
+      }),
     ],
   ] as const)(`maps ${relation} selected fixture %s to its original side`, ([label, expected]) =>
     Effect.gen(function* () {
@@ -757,14 +774,16 @@ it.effect(
 
     return Effect.gen(function* () {
       const result = yield* TaxonSet.isSubsetOf(left, right);
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInSet",
+
+      const expected = relationCases.MultipleTaxaInSet.make({
         relation: "subset",
         side: "right",
         taxon: a,
       });
 
-      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+      expect(result).toEqual(expected);
+
+      if (!TaxonSetRelationJudgment.guards.MultipleTaxaInSet(result))
         throw new Error("Expected clarification");
       expect(result.taxon).toBe(a);
       expect(calls).toBe(1);
@@ -783,44 +802,23 @@ it.effect("uses only the listed literal Empty shortcuts, without certifying othe
 
   return Effect.gen(function* () {
     const emptySubset = yield* TaxonSet.isSubsetOf(empty, problematic);
-    expect(emptySubset).toEqual({
-      _tag: "Yes",
-      relation: "subset",
-    });
+    expect(emptySubset).toEqual(relationCases.Yes.make({ relation: "subset" }));
     const properSubset = yield* TaxonSet.isProperSubsetOf(problematic, empty);
-    expect(properSubset).toEqual({
-      _tag: "No",
-      relation: "proper-subset",
-    });
+    expect(properSubset).toEqual(relationCases.No.make({ relation: "proper-subset" }));
     const emptyEquivalence = yield* TaxonSet.equivalent(empty, empty);
-    expect(emptyEquivalence).toEqual({
-      _tag: "Yes",
-      relation: "equivalent",
-    });
+    expect(emptyEquivalence).toEqual(relationCases.Yes.make({ relation: "equivalent" }));
     const leftEmptyOverlap = yield* TaxonSet.overlaps(empty, problematic);
-    expect(leftEmptyOverlap).toEqual({
-      _tag: "No",
-      relation: "overlap",
-    });
+    expect(leftEmptyOverlap).toEqual(relationCases.No.make({ relation: "overlap" }));
     const rightEmptyOverlap = yield* TaxonSet.overlaps(problematic, empty);
-    expect(rightEmptyOverlap).toEqual({
-      _tag: "No",
-      relation: "overlap",
-    });
+    expect(rightEmptyOverlap).toEqual(relationCases.No.make({ relation: "overlap" }));
     const leftEmptyDisjoint = yield* TaxonSet.disjoint(empty, problematic);
-    expect(leftEmptyDisjoint).toEqual({
-      _tag: "Yes",
-      relation: "disjoint",
-    });
+    expect(leftEmptyDisjoint).toEqual(relationCases.Yes.make({ relation: "disjoint" }));
     const rightEmptyDisjoint = yield* TaxonSet.disjoint(problematic, empty);
-    expect(rightEmptyDisjoint).toEqual({
-      _tag: "Yes",
-      relation: "disjoint",
-    });
+    expect(rightEmptyDisjoint).toEqual(relationCases.Yes.make({ relation: "disjoint" }));
     const untyped: unknown = {};
     // @ts-expect-error Shortcut facts do not validate the unused right operand.
     const untypedSubset = yield* TaxonSet.isSubsetOf(empty, untyped);
-    expect(untypedSubset).toEqual({ _tag: "Yes", relation: "subset" });
+    expect(untypedSubset).toEqual(relationCases.Yes.make({ relation: "subset" }));
   }).pipe(Effect.provide(layer));
 });
 
@@ -858,29 +856,17 @@ it.effect("does not invent emptiness or inhabitation from nonliteral syntax", ()
 
   return Effect.gen(function* () {
     const subset = yield* TaxonSet.isSubsetOf(nonliteralEmpty, empty);
-    expect(subset).toEqual({
-      _tag: "Yes",
-      relation: "subset",
-    });
+    expect(subset).toEqual(relationCases.Yes.make({ relation: "subset" }));
     const leftEquivalence = yield* TaxonSet.equivalent(empty, a);
-    expect(leftEquivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
+    expect(leftEquivalence).toEqual(relationCases.Yes.make({ relation: "equivalent" }));
     const rightEquivalence = yield* TaxonSet.equivalent(a, empty);
-    expect(rightEquivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
+    expect(rightEquivalence).toEqual(relationCases.Yes.make({ relation: "equivalent" }));
     const properSubset = yield* TaxonSet.isProperSubsetOf(empty, nonliteralEmpty);
-    expect(properSubset).toEqual({
-      _tag: "Yes",
-      relation: "proper-subset",
-    });
+    expect(properSubset).toEqual(relationCases.Yes.make({ relation: "proper-subset" }));
     const overlap = yield* TaxonSet.overlaps(zeroNames, zeroNames);
-    expect(overlap).toEqual({
-      _tag: "Yes",
-      relation: "overlap",
-    });
+    expect(overlap).toEqual(relationCases.Yes.make({ relation: "overlap" }));
     const disjoint = yield* TaxonSet.disjoint(nonliteralEmpty, nonliteralEmpty);
-    expect(disjoint).toEqual({
-      _tag: "No",
-      relation: "disjoint",
-    });
+    expect(disjoint).toEqual(relationCases.No.make({ relation: "disjoint" }));
     expect(seen).toHaveLength(6);
     expect(seen[4]).toEqual({
       nodes: [{ _tag: "Union", operands: [1, 1] }, { _tag: "Empty" }],
@@ -954,7 +940,7 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
           ),
         );
 
-        expect(comparison).toEqual({ _tag: expectedTag, relation });
+        expect(comparison).toEqual(relationCases[expectedTag].make({ relation }));
       }),
   );
   it.effect(`accepts ${relation} exact support and margin boundary`, () =>
@@ -975,7 +961,8 @@ for (const [relation, operation, yesTag, , yesLabel, noLabel] of operations) {
         ),
       );
 
-      expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation, side: "right", taxon: b });
+      const expected = relationCases.MultipleTaxaInSet.make({ relation, side: "right", taxon: b });
+      expect(result).toEqual(expected);
     }),
   );
 }
@@ -1058,7 +1045,8 @@ it.effect.each(operations)(
         operation(malformed, TaxonSet.of(TaxonName.make("A"))),
       );
 
-      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+      assert(error instanceof Errors.InvalidInput);
+      expect(error.cause).toSatisfy(Schema.isSchemaError);
       expect(calls).toBe(0);
     }).pipe(Effect.provide(layer));
   },
@@ -1111,7 +1099,8 @@ it.effect.each(operations)("rejects a missing answer for %s", ([_relation, opera
     );
 
     const error = yield* Effect.flip(operation(a, a).pipe(Effect.provide(layer)));
-    expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
+    assert(AiError.isAiError(error));
+    expect(error.reason).toBeInstanceOf(AiError.InvalidOutputError);
   }),
 );
 
@@ -1196,7 +1185,7 @@ it.effect("maps a single overlap observation to disjoint without another classif
 
   return Effect.gen(function* () {
     const disjoint = yield* TaxonSet.disjoint(set, set);
-    expect(disjoint).toEqual({ _tag: "No", relation: "disjoint" });
+    expect(disjoint).toEqual(relationCases.No.make({ relation: "disjoint" }));
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1230,7 +1219,7 @@ it.effect("asks overlap directly with one complete-expression classification", (
 
   return Effect.gen(function* () {
     const overlap = yield* TaxonSet.overlaps(set, set);
-    expect(overlap).toEqual({ _tag: "No", relation: "overlap" });
+    expect(overlap).toEqual(relationCases.No.make({ relation: "overlap" }));
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1263,7 +1252,7 @@ it.effect("asks organism-set equivalence directly even for the same expression",
 
   return Effect.gen(function* () {
     const equivalence = yield* TaxonSet.equivalent(set, set);
-    expect(equivalence).toEqual({ _tag: "Yes", relation: "equivalent" });
+    expect(equivalence).toEqual(relationCases.Yes.make({ relation: "equivalent" }));
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1300,7 +1289,7 @@ it.effect("asks proper subset directly, including unequal organism sets", () => 
       TaxonSet.of(TaxonName.make("A")),
     );
 
-    expect(properSubset).toEqual({ _tag: "No", relation: "proper-subset" });
+    expect(properSubset).toEqual(relationCases.No.make({ relation: "proper-subset" }));
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1354,7 +1343,7 @@ it.effect(
 
     return Effect.gen(function* () {
       const subset = yield* TaxonSet.isSubsetOf(left, right);
-      expect(subset).toEqual({ _tag: "Yes", relation: "subset" });
+      expect(subset).toEqual(relationCases.Yes.make({ relation: "subset" }));
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },

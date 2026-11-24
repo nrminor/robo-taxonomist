@@ -18,7 +18,7 @@ import {
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestConsole } from "effect/testing";
-import { TaxonName } from "robo-taxonomist";
+import { TaxonMatchJudgment, TaxonName } from "robo-taxonomist";
 import { cli } from "../src/cli.ts";
 import * as Documents from "../src/documents.ts";
 import * as TestJson from "./Json.ts";
@@ -316,22 +316,25 @@ it.effect.each([
     probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 1, undetermined: 0 },
     judgment: "NotMatched",
     support: 1,
+    expectedJudgment: TaxonMatchJudgment.cases.NotMatched.make({ support: 1 }),
   },
   {
     choice: "undetermined",
     probabilities: { sameTaxon: 0, withinTaxon: 0, noMatch: 0, undetermined: 1 },
     judgment: "Undetermined",
     support: undefined,
+    expectedJudgment: TaxonMatchJudgment.cases.Undetermined.make({}),
   },
   {
     choice: "sameTaxon",
     probabilities: { sameTaxon: 0.49, withinTaxon: 0.49, noMatch: 0.01, undetermined: 0.01 },
     judgment: "Undetermined",
     support: undefined,
+    expectedJudgment: TaxonMatchJudgment.cases.Undetermined.make({}),
   },
 ])(
   "retains successful unranked $judgment outcomes and their complete answers",
-  ({ choice, probabilities, judgment, support }) =>
+  ({ choice, probabilities, judgment, support, expectedJudgment }) =>
     Effect.gen(function* () {
       const args = [
         "classify",
@@ -373,8 +376,7 @@ it.effect.each([
                 {
                   record: "A17",
                   taxon: expectedTaxon,
-                  judgment:
-                    support === undefined ? { _tag: judgment } : { _tag: judgment, support },
+                  judgment: expectedJudgment,
                   answer: { label: choice, probabilities, confidence: 0.75 },
                 },
               ],
@@ -468,9 +470,9 @@ it.effect(
       const first = Array.get(result.records, 0).pipe(Option.getOrThrow);
       const second = Array.get(result.records, 1).pipe(Option.getOrThrow);
       expect(first.taxa.map((match) => match.judgment)).toEqual([
-        { _tag: "WithinTaxon", support: 0.5 },
-        { _tag: "WithinTaxon", support: 0.5 },
-        { _tag: "NotMatched", support: 1 },
+        TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.5 }),
+        TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.5 }),
+        TaxonMatchJudgment.cases.NotMatched.make({ support: 1 }),
       ]);
       expect(first.ranking).toEqual(first.taxa.slice(0, 2));
       expect(second).toEqual(first);

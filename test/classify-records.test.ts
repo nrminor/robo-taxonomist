@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import {
   Array,
@@ -15,8 +16,10 @@ import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
   CollectionExecution,
+  Errors,
   RecordLabel,
   TaxonId,
+  TaxonMatchJudgment,
   TaxonName,
   TaxonSet,
   Taxonomy,
@@ -67,7 +70,7 @@ it.effect("passes direct hints once in the shared classification input", () => {
     expect(row.taxa).toHaveLength(1);
     const match = Array.head(row.taxa).pipe(Option.getOrThrow);
     expect(row.record).toBe(record);
-    expect(match.judgment).toEqual({ _tag: "Undetermined" });
+    expect(match.judgment).toSatisfy(TaxonMatchJudgment.guards.Undetermined);
   }).pipe(Effect.provide(layer));
 });
 
@@ -144,9 +147,9 @@ it.effect.each(["binary", "collection"] as const)(
       expect(first.pipe((match) => match.record.sampleId)).toBe("sample-17");
       expect(first.record.sequenceAbundance).toBe(8);
       expect(row.taxa.map((match) => match.judgment)).toEqual([
-        { _tag: "WithinTaxon", support: 0.96 },
-        { _tag: "SameTaxon", support: 0.94 },
-        { _tag: "NotMatched", support: 0.96 },
+        TaxonMatchJudgment.cases.WithinTaxon.make({ support: 0.96 }),
+        TaxonMatchJudgment.cases.SameTaxon.make({ support: 0.94 }),
+        TaxonMatchJudgment.cases.NotMatched.make({ support: 0.96 }),
       ]);
       expect(row.ranking.map((match) => match.taxon.record.scientificName)).toEqual([
         "Saccharomyces",
@@ -190,11 +193,11 @@ it.effect("separates negative evidence from uncertainty and preserves rounded an
     const result = yield* Taxonomy.classifyRecords(records, panel);
     const matches = result.records.flatMap((row) => row.taxa);
     expect(matches.map((match) => match.judgment)).toEqual([
-      { _tag: "NotMatched", support: 0.85 },
-      { _tag: "Undetermined" },
-      { _tag: "Undetermined" },
-      { _tag: "NotMatched", support: 0.5 },
-      { _tag: "SameTaxon", support: 0.7 },
+      TaxonMatchJudgment.cases.NotMatched.make({ support: 0.85 }),
+      TaxonMatchJudgment.cases.Undetermined.make({}),
+      TaxonMatchJudgment.cases.Undetermined.make({}),
+      TaxonMatchJudgment.cases.NotMatched.make({ support: 0.5 }),
+      TaxonMatchJudgment.cases.SameTaxon.make({ support: 0.7 }),
     ]);
     expect(result.records.map((row) => row.ranking.length)).toEqual([0, 0, 0, 0, 1]);
     const nonleader = Array.get(matches, 2).pipe(Option.getOrThrow);
@@ -230,7 +233,7 @@ it.effect("leaves split positive answers unaccepted and retains the model's scor
 
     const row = Array.head(result.records).pipe(Option.getOrThrow);
     const match = Array.head(row.taxa).pipe(Option.getOrThrow);
-    expect(match.judgment).toEqual({ _tag: "Undetermined" });
+    expect(match.judgment).toSatisfy(TaxonMatchJudgment.guards.Undetermined);
     expect(match.answer).toEqual(reported);
     expect(match).not.toHaveProperty("support");
     expect(row.ranking).toEqual([]);
@@ -269,7 +272,7 @@ it.effect.each([
 
       const row = Array.head(result.records).pipe(Option.getOrThrow);
       const match = Array.head(row.taxa).pipe(Option.getOrThrow);
-      expect(match.judgment).toEqual({ _tag: "Undetermined" });
+      expect(match.judgment).toSatisfy(TaxonMatchJudgment.guards.Undetermined);
       expect(match.answer).toEqual({
         label: "withinTaxon",
         probabilities: supplied.probabilities,
@@ -317,7 +320,9 @@ it.effect.each([
       );
 
       const row = Array.head(result.records).pipe(Option.getOrThrow);
-      expect(row.taxa.map((match) => match.judgment)).toEqual([{ _tag: "Undetermined" }]);
+      expect(row.taxa.map((match) => match.judgment)).toEqual([
+        TaxonMatchJudgment.cases.Undetermined.make({}),
+      ]);
       expect(row.taxa.map((match) => match.answer.label)).toEqual([label]);
       expect(row.ranking).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -325,9 +330,9 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["inclusive boundaries", 0.6, 0.2, { _tag: "SameTaxon", support: 0.6 }],
-  ["insufficient support", 0.6000000000000001, 0.2, { _tag: "Undetermined" }],
-  ["insufficient margin", 0.6, 0.2000000000000003, { _tag: "Undetermined" }],
+  ["inclusive boundaries", 0.6, 0.2, TaxonMatchJudgment.cases.SameTaxon.make({ support: 0.6 })],
+  ["insufficient support", 0.6000000000000001, 0.2, TaxonMatchJudgment.cases.Undetermined.make({})],
+  ["insufficient margin", 0.6, 0.2000000000000003, TaxonMatchJudgment.cases.Undetermined.make({})],
 ] as const)(
   "applies the caller's policy to classification: %s",
   ([_case, minimumSupport, minimumMargin, expected]) => {
@@ -579,8 +584,8 @@ it.effect(
         expect(last.ranking[index]).toBe(match);
       }
 
-      expect(firstMatch.judgment._tag).toBe("WithinTaxon");
-      expect(lastMatch.judgment._tag).toBe("NotMatched");
+      expect(firstMatch.judgment).toSatisfy(TaxonMatchJudgment.guards.WithinTaxon);
+      expect(lastMatch.judgment).toSatisfy(TaxonMatchJudgment.guards.NotMatched);
       expect(firstMatch).not.toBe(lastMatch);
     }).pipe(Effect.provide(layer));
   },
@@ -888,7 +893,8 @@ it.effect("fails when a requested taxon answer is missing", () => {
       Taxonomy.classifyRecords([RecordLabel.make("subject")], panel),
     );
 
-    expect(failure).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
+    assert(AiError.isAiError(failure));
+    expect(failure.reason).toBeInstanceOf(AiError.InvalidOutputError);
   }).pipe(Effect.provide(layer));
 });
 
@@ -908,12 +914,12 @@ it.effect("rejects malformed records and cyclic or nonnominal panels before tran
       Taxonomy.classifyRecords([RecordLabel.make("subject")], cyclic),
     );
 
+    assert(AiError.isAiError(cycleFailure));
     expect(cycleFailure).toMatchObject({
-      _tag: "AiError",
       module: "TaxonSetGraph",
       method: "compile",
-      reason: { _tag: "InvalidUserInputError" },
     });
+    expect(cycleFailure.reason).toBeInstanceOf(AiError.InvalidUserInputError);
 
     const invalid = [
       // @ts-expect-error Untyped input lacks an identifying description.
@@ -926,7 +932,8 @@ it.effect("rejects malformed records and cyclic or nonnominal panels before tran
 
     for (const operation of invalid) {
       const failure = yield* Effect.flip(operation);
-      expect(failure).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+      assert(failure instanceof Errors.InvalidInput);
+      expect(failure.cause).toSatisfy(Schema.isSchemaError);
     }
   }).pipe(Effect.provide(layer));
 });

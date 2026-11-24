@@ -1,7 +1,19 @@
 import { expect, it } from "@effect/vitest";
 import { Array, Data, Effect, Layer, Option, Predicate, Record, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
-import { Errors, RecordLabel, TaxonId, TaxonName, TaxonSet, Taxonomy } from "../src/index.ts";
+import {
+  Errors,
+  RecordLabel,
+  TaxonContainmentJudgment,
+  TaxonId,
+  TaxonIdentityJudgment,
+  TaxonMatchJudgment,
+  TaxonMembershipJudgment,
+  TaxonName,
+  TaxonSet,
+  TaxonSetRelationJudgment,
+  Taxonomy,
+} from "../src/index.ts";
 import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
@@ -128,7 +140,13 @@ it.effect.each(["identity", "containment"] as const)(
           : Taxonomy.taxonWithin(left, right);
 
       const result = yield* comparison;
-      expect(result).toEqual({ _tag: operation === "identity" ? "SameTaxon" : "Contained" });
+
+      const expected =
+        operation === "identity"
+          ? TaxonIdentityJudgment.cases.SameTaxon.make({})
+          : TaxonContainmentJudgment.cases.Contained.make({});
+
+      expect(result).toEqual(expected);
       expect(calls).toBe(1);
       expect(left.sampleId).toBe("private-target-metadata");
     }).pipe(Effect.provide(layer));
@@ -162,7 +180,7 @@ it.effect(
 
       for (const failure of failures) {
         const error = yield* failure;
-        expect(error._tag).toBe("InvalidInput");
+        expect(error).toBeInstanceOf(Errors.InvalidInput);
         expect(Schema.isSchemaError(error.cause)).toBe(true);
 
         if (!Schema.isSchemaError(error.cause)) throw new Error("Expected a retained schema error");
@@ -198,9 +216,7 @@ it.effect("accepts a structured direct membership target without leaking metadat
 
   return Effect.gen(function* () {
     const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("Oak specimen"), target);
-    expect(result).toEqual({
-      _tag: "Member",
-    });
+    expect(result).toEqual(TaxonMembershipJudgment.cases.Member.make({}));
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -222,9 +238,9 @@ it.effect("identifies the original ID-only target node without fabricating a nam
 
   return Effect.gen(function* () {
     const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), target);
-    expect(result).toEqual({ _tag: "MultipleTaxaInTarget", target });
+    expect(result).toEqual(TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({ target }));
 
-    if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+    if (!TaxonMembershipJudgment.guards.MultipleTaxaInTarget(result))
       throw new Error("Expected target clarification");
     expect(result.target).toBe(target);
     expect(result.target.record).toBe(record);
@@ -248,9 +264,11 @@ it.effect(
 
     return Effect.gen(function* () {
       const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("specimen"), target);
-      expect(result).toEqual({ _tag: "MultipleTaxaInTarget", target: second });
+      const expected = TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({ target: second });
 
-      if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+      expect(result).toEqual(expected);
+
+      if (!TaxonMembershipJudgment.guards.MultipleTaxaInTarget(result))
         throw new Error("Expected target clarification");
       expect(result.target).toBe(second);
       expect(result.target.record).toBe(second.record);
@@ -270,9 +288,16 @@ it.effect.each(["left", "right"] as const)(
         side === "left" ? TaxonSet.equivalent(left, right) : TaxonSet.equivalent(right, left);
 
       const result = yield* comparison;
-      expect(result).toEqual({ _tag: "MultipleTaxaInSet", relation: "equivalent", side, taxon });
 
-      if (!Predicate.isTagged(result, "MultipleTaxaInSet"))
+      const expected = TaxonSetRelationJudgment.cases.MultipleTaxaInSet.make({
+        relation: "equivalent",
+        side,
+        taxon,
+      });
+
+      expect(result).toEqual(expected);
+
+      if (!TaxonSetRelationJudgment.guards.MultipleTaxaInSet(result))
         throw new Error("Expected set clarification");
       expect(result.taxon).toBe(taxon);
     }).pipe(Effect.provide(modelLayer(side === "left" ? "multipleLeft0" : "multipleRight0")));
@@ -378,7 +403,7 @@ it.effect(
         }
 
         for (const match of matches) {
-          expect(match.judgment).toEqual({ _tag: "Undetermined" });
+          expect(match.judgment).toEqual(TaxonMatchJudgment.cases.Undetermined.make({}));
           expect(match.answer.probabilities).toEqual({
             sameTaxon: 0,
             withinTaxon: 0,

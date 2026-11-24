@@ -27,9 +27,9 @@ import {
   Taxonomy,
   TaxonomyHint,
   TaxonSet,
-  type TaxonIdentityJudgment,
-  type TaxonContainmentJudgment,
-  type TaxonMembershipJudgment,
+  TaxonIdentityJudgment,
+  TaxonContainmentJudgment,
+  TaxonMembershipJudgment,
 } from "../src/index.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
@@ -67,7 +67,7 @@ it.effect("supplies direct hints to identity comparisons without changing uncert
       hints: [TaxonomyHint.make("A contextual prior")],
     });
 
-    expect(result._tag).toBe("Undetermined");
+    expect(result).toSatisfy(TaxonIdentityJudgment.guards.Undetermined);
   }).pipe(Effect.provide(layer));
 });
 
@@ -123,7 +123,7 @@ it.effect("retains non-containment when the kind of non-containment is uncertain
       TaxonName.make("Quercus"),
     );
 
-    expect(containment).toEqual({ _tag: "NotContained" });
+    expect(containment).toSatisfy(TaxonContainmentJudgment.guards.NotContained);
   }).pipe(Effect.provide(layer));
 });
 
@@ -172,7 +172,7 @@ it.effect.each(["left", "right"] as const)(
 
     return Effect.gen(function* () {
       const identity = yield* Taxonomy.sameTaxon(left, right);
-      expect(identity).toEqual({ _tag: "MultipleTaxa", side });
+      expect(identity).toEqual(TaxonIdentityJudgment.cases.MultipleTaxa.make({ side }));
     }).pipe(Effect.provide(layer));
   },
 );
@@ -217,24 +217,24 @@ it.effect("asks one identity question with quoted names and null state", () => {
   return Effect.gen(function* () {
     const name = TaxonName.make('Oak\n"A"');
     const identity = yield* Taxonomy.sameTaxon(name, name);
-    expect(identity).toEqual({ _tag: "SameTaxon" });
+    expect(identity).toSatisfy(TaxonIdentityJudgment.guards.SameTaxon);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
 
 it.effect.each([
-  ["equal", { _tag: "Contained" }],
-  ["properSubset", { _tag: "Contained" }],
-  ["properSuperset", { _tag: "PartlyContained" }],
-  ["partialOverlap", { _tag: "PartlyContained" }],
-  ["disjoint", { _tag: "Disjoint" }],
-  ["bothEmpty", { _tag: "Contained" }],
-  ["leftEmpty", { _tag: "Contained" }],
-  ["rightEmpty", { _tag: "Disjoint" }],
-  ["multipleLeft", { _tag: "MultipleTaxa", side: "left" }],
-  ["multipleRight", { _tag: "MultipleTaxa", side: "right" }],
-  ["multipleBoth", { _tag: "MultipleTaxa", side: "both" }],
-  ["undetermined", { _tag: "Undetermined" }],
+  ["equal", TaxonContainmentJudgment.cases.Contained.make({})],
+  ["properSubset", TaxonContainmentJudgment.cases.Contained.make({})],
+  ["properSuperset", TaxonContainmentJudgment.cases.PartlyContained.make({})],
+  ["partialOverlap", TaxonContainmentJudgment.cases.PartlyContained.make({})],
+  ["disjoint", TaxonContainmentJudgment.cases.Disjoint.make({})],
+  ["bothEmpty", TaxonContainmentJudgment.cases.Contained.make({})],
+  ["leftEmpty", TaxonContainmentJudgment.cases.Contained.make({})],
+  ["rightEmpty", TaxonContainmentJudgment.cases.Disjoint.make({})],
+  ["multipleLeft", TaxonContainmentJudgment.cases.MultipleTaxa.make({ side: "left" })],
+  ["multipleRight", TaxonContainmentJudgment.cases.MultipleTaxa.make({ side: "right" })],
+  ["multipleBoth", TaxonContainmentJudgment.cases.MultipleTaxa.make({ side: "both" })],
+  ["undetermined", TaxonContainmentJudgment.cases.Undetermined.make({})],
 ] as const)("maps containment fixture %s to its original side", ([label, expected]) =>
   Effect.gen(function* () {
     const containment = yield* Taxonomy.taxonWithin(
@@ -265,7 +265,7 @@ it.effect("uses projected containment support instead of a nonleading fine selec
       policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
     });
 
-    expect(containment).toEqual({ _tag: "Contained" });
+    expect(containment).toSatisfy(TaxonContainmentJudgment.guards.Contained);
   }).pipe(
     Effect.provide(
       scalarLayer(
@@ -308,13 +308,13 @@ it.effect.each([
     minimumMargin: 0,
     expected: "Undetermined",
   },
-])("$behavior", ({ label, probabilities, minimumSupport, minimumMargin, expected }) =>
+] as const)("$behavior", ({ label, probabilities, minimumSupport, minimumMargin, expected }) =>
   Effect.gen(function* () {
     const containment = yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"), {
       policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
     });
 
-    expect(containment).toEqual({ _tag: expected });
+    expect(containment).toSatisfy(TaxonContainmentJudgment.guards[expected]);
   }).pipe(
     Effect.provide(
       scalarLayer(
@@ -338,7 +338,7 @@ it.effect.each([
       policy: AcceptancePolicy.make({ minimumSupport, minimumMargin }),
     });
 
-    expect(containment).toEqual({ _tag: tag });
+    expect(containment).toSatisfy(TaxonContainmentJudgment.guards[tag]);
   }).pipe(
     Effect.provide(
       scalarLayer(
@@ -357,12 +357,14 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["notMember", { _tag: "NotMember" }],
-  ["mixed", { _tag: "MixedMembership" }],
-  ["undetermined", { _tag: "Undetermined" }],
+  ["notMember", TaxonMembershipJudgment.cases.NotMember.make({})],
+  ["mixed", TaxonMembershipJudgment.cases.MixedMembership.make({})],
+  ["undetermined", TaxonMembershipJudgment.cases.Undetermined.make({})],
   [
     "multipleTarget0",
-    { _tag: "MultipleTaxaInTarget", target: TaxonSet.of(TaxonName.make("A and B")) },
+    TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({
+      target: TaxonSet.of(TaxonName.make("A and B")),
+    }),
   ],
 ] as const)("maps whole-record membership fixture %s", ([label, expected]) =>
   Effect.gen(function* () {
@@ -474,13 +476,10 @@ it.effect(
 
     return Effect.gen(function* () {
       const result = yield* Taxonomy.recordBelongsTo(RecordLabel.make("record"), target);
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInTarget",
-        target: duplicate,
-      });
 
-      if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+      if (!TaxonMembershipJudgment.guards.MultipleTaxaInTarget(result))
         throw new Error("Expected clarification");
+
       expect(result.target).toBe(duplicate);
       expect(result.target).not.toBe(a);
     }).pipe(Effect.provide(layer));
@@ -498,7 +497,7 @@ it.effect(
     return Effect.gen(function* () {
       // @ts-expect-error Literal Empty does not certify an untyped record.
       const membership = yield* Taxonomy.recordBelongsTo({}, TaxonSet.empty());
-      expect(membership).toEqual({ _tag: "NotMember" });
+      expect(membership).toSatisfy(TaxonMembershipJudgment.guards.NotMember);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -539,9 +538,7 @@ it.effect("a nonliteral zero-name target still asks membership with valid base c
 
   return Effect.gen(function* () {
     const membership = yield* Taxonomy.recordBelongsTo(RecordLabel.make("A"), target);
-    expect(membership).toEqual({
-      _tag: "NotMember",
-    });
+    expect(membership).toSatisfy(TaxonMembershipJudgment.guards.NotMember);
   }).pipe(Effect.provide(layer));
 });
 
@@ -579,7 +576,7 @@ it.effect.each([
         },
       );
 
-      expect(membership).toEqual({ _tag: tag });
+      expect(membership).toSatisfy(TaxonMembershipJudgment.guards[tag]);
     }).pipe(
       Effect.provide(
         scalarLayer(
@@ -607,7 +604,7 @@ it.effect("includes a later target clarification in singleton membership's margi
       policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }),
     });
 
-    expect(membership).toEqual({ _tag: "Undetermined" });
+    expect(membership).toSatisfy(TaxonMembershipJudgment.guards.Undetermined);
   }).pipe(
     Effect.provide(
       scalarLayer(
@@ -783,11 +780,9 @@ it.effect(
     return Effect.gen(function* () {
       const policy = AcceptancePolicy.make({ minimumSupport: 0.65, minimumMargin: 0.3 });
       const identity = yield* Taxonomy.sameTaxon(nameA, nameB, { policy });
-      expect(identity).toEqual({ _tag: "SameTaxon" });
+      expect(identity).toSatisfy(TaxonIdentityJudgment.guards.SameTaxon);
       const membership = yield* Taxonomy.recordBelongsTo(recordA, nameB, { policy });
-      expect(membership).toEqual({
-        _tag: "MixedMembership",
-      });
+      expect(membership).toSatisfy(TaxonMembershipJudgment.guards.MixedMembership);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -1010,9 +1005,7 @@ it.effect("provides shared target once and record facts once in singleton member
 
   return Effect.gen(function* () {
     const membership = yield* Taxonomy.recordBelongsTo(record, TaxonName.make("Quercus"));
-    expect(membership).toEqual({
-      _tag: "Member",
-    });
+    expect(membership).toSatisfy(TaxonMembershipJudgment.guards.Member);
     expect(calls).toBe(1);
   }).pipe(Effect.provide(layer));
 });
@@ -1030,9 +1023,9 @@ const scalarLayer = (key: string, answer: DecisionModel.ProviderClassifyAnswer) 
   );
 
 it.effect.each([
-  ["different", { _tag: "DifferentTaxa" }],
-  ["multipleBoth", { _tag: "MultipleTaxa", side: "both" }],
-  ["undetermined", { _tag: "Undetermined" }],
+  ["different", TaxonIdentityJudgment.cases.DifferentTaxa.make({})],
+  ["multipleBoth", TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "both" })],
+  ["undetermined", TaxonIdentityJudgment.cases.Undetermined.make({})],
 ] as const)("maps the selected identity fixture %s", ([label, expected]) =>
   Effect.gen(function* () {
     const identity = yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"));
@@ -1108,7 +1101,7 @@ it.effect.each([
       }),
     );
 
-    expect(identity).toEqual({ _tag: "Undetermined" });
+    expect(identity).toSatisfy(TaxonIdentityJudgment.guards.Undetermined);
   }).pipe(
     Effect.provide(
       scalarLayer(
@@ -1138,7 +1131,7 @@ it.effect("accepts inclusive support and decimal margin for a selected diagnosis
       policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.2 }),
     });
 
-    expect(identity).toEqual({ _tag: "MultipleTaxa", side: "right" });
+    expect(identity).toEqual(TaxonIdentityJudgment.cases.MultipleTaxa.make({ side: "right" }));
   }).pipe(
     Effect.provide(
       scalarLayer(
@@ -1200,8 +1193,6 @@ it.effect("asks the direct containment question with original left = inner", () 
 
   return Effect.gen(function* () {
     const containment = yield* Taxonomy.taxonWithin(TaxonName.make("A"), TaxonName.make("B"));
-    expect(containment).toEqual({
-      _tag: "Contained",
-    });
+    expect(containment).toSatisfy(TaxonContainmentJudgment.guards.Contained);
   }).pipe(Effect.provide(layer));
 });

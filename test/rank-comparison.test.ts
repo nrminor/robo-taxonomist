@@ -1,8 +1,11 @@
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import { Array, Data, Effect, Layer, Option, Predicate, Record, Schema } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import {
   AcceptancePolicy,
+  Errors,
+  RankComparisonJudgment,
   RecordLabel,
   TaxonId,
   TaxonomicRecord,
@@ -11,6 +14,8 @@ import {
 } from "../src/index.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
+const rankCases = RankComparisonJudgment.cases;
 
 it.effect("reports matching taxa without guessing whether they are one or several", () => {
   const layer = Layer.effect(
@@ -46,7 +51,7 @@ it.effect("reports matching taxa without guessing whether they are one or severa
       RecordLabel.make("Right assignment"),
     );
 
-    expect(comparison).toEqual({ _tag: "SameTaxaAtRank", rank: "species" });
+    expect(comparison).toEqual(rankCases.SameTaxaAtRank.make({ rank: "species" }));
   }).pipe(Effect.provide(layer));
 });
 
@@ -115,7 +120,7 @@ it.effect("compares the original record descriptions at the requested rank", () 
   return Effect.gen(function* () {
     const result = yield* Taxonomy.sameTaxonAtRank(first, second, "species");
 
-    expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "species" });
+    expect(result).toEqual(rankCases.SameTaxonAtRank.make({ rank: "species" }));
   }).pipe(Effect.provide(modelLayer));
 });
 
@@ -193,10 +198,7 @@ it.effect(
 
     return Effect.gen(function* () {
       const comparison = yield* Taxonomy.sameGenus(first, second);
-      expect(comparison).toEqual({
-        _tag: "Undetermined",
-        rank: "genus",
-      });
+      expect(comparison).toEqual(rankCases.Undetermined.make({ rank: "genus" }));
       expect(first).toEqual(original);
       expect(first.taxonId).toBe(original.taxonId);
       expect(second).toEqual({ scientificName: "Quercus petraea" });
@@ -234,7 +236,8 @@ it.effect("validates the original rank and operands before provider transport", 
 
     for (const request of invalidRequests) {
       const error = yield* Effect.flip(request);
-      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+      assert(error instanceof Errors.InvalidInput);
+      expect(error.cause).toSatisfy(Schema.isSchemaError);
     }
 
     expect(calls).toBe(0);
@@ -342,7 +345,7 @@ it.effect.each([
       policy: AcceptancePolicy.make({ minimumSupport: 0.8, minimumMargin: 0 }),
     });
 
-    expect(comparison).toEqual({ _tag: "SameTaxaAtRank", rank: "species" });
+    expect(comparison).toEqual(rankCases.SameTaxaAtRank.make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -362,14 +365,14 @@ it.effect.each([
   { label: "properSuperset", expected: "RightTaxaWithinLeftAtRank" },
   { label: "partialOverlap", expected: "PartlySharedTaxaAtRank" },
   { label: "disjoint", expected: "NoSharedTaxaAtRank" },
-])("maps unit support for $label to $expected", ({ label, expected }) =>
+] as const)("maps unit support for $label to $expected", ({ label, expected }) =>
   Effect.gen(function* () {
     const comparison = yield* Taxonomy.sameSpecies(
       RecordLabel.make("Left assignment"),
       RecordLabel.make("Right assignment"),
     );
 
-    expect(comparison).toEqual({ _tag: expected, rank: "species" });
+    expect(comparison).toEqual(rankCases[expected].make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -431,7 +434,7 @@ it.effect.each([
     policy: AcceptancePolicy.make({ minimumSupport: 0.5, minimumMargin: 0.3 }),
     expected: "SameTaxaAtRank",
   },
-])("$behavior", ({ label, probabilities, policy, expected }) =>
+] as const)("$behavior", ({ label, probabilities, policy, expected }) =>
   Effect.gen(function* () {
     const comparison = yield* Taxonomy.sameSpecies(
       RecordLabel.make("Left assignment"),
@@ -439,7 +442,7 @@ it.effect.each([
       { policy },
     );
 
-    expect(comparison).toEqual({ _tag: expected, rank: "species" });
+    expect(comparison).toEqual(rankCases[expected].make({ rank: "species" }));
   }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
@@ -451,7 +454,7 @@ it.effect("abstains when the leading group has less than half the support", () =
       "species",
     );
 
-    expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
+    expect(result).toEqual(rankCases.Undetermined.make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -472,7 +475,7 @@ it.effect("abstains rather than breaking a tied distribution", () =>
       "species",
     );
 
-    expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
+    expect(result).toEqual(rankCases.Undetermined.make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -495,7 +498,7 @@ it.effect("species convenience forwards a caller's minimum-margin requirement", 
       { policy },
     );
 
-    expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
+    expect(result).toEqual(rankCases.Undetermined.make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -516,17 +519,14 @@ it.effect.each([
   { rank: "order", compare: Taxonomy.sameOrder },
   { rank: "family", compare: Taxonomy.sameFamily },
   { rank: "genus", compare: Taxonomy.sameGenus },
-])("forwards policy at the $rank convenience's requested rank", ({ rank, compare }) =>
+] as const)("forwards policy at the $rank convenience's requested rank", ({ rank, compare }) =>
   Effect.gen(function* () {
     const defaultComparison = yield* compare(
       RecordLabel.make("Voucher A17"),
       RecordLabel.make("Voucher B42"),
     );
 
-    expect(defaultComparison).toEqual({
-      _tag: "NoSharedTaxaAtRank",
-      rank,
-    });
+    expect(defaultComparison).toEqual(rankCases.NoSharedTaxaAtRank.make({ rank }));
 
     const result = yield* compare(
       RecordLabel.make("Voucher A17"),
@@ -536,7 +536,7 @@ it.effect.each([
       },
     );
 
-    expect(result).toEqual({ _tag: "Undetermined", rank });
+    expect(result).toEqual(rankCases.Undetermined.make({ rank }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -574,14 +574,14 @@ it.effect.each([
     probabilities: { equalSingle: 0.94, disjoint: 0.03, undetermined: 0.03 },
     expected: "SameTaxonAtRank",
   },
-])("$behavior", ({ label, probabilities, expected }) =>
+] as const)("$behavior", ({ label, probabilities, expected }) =>
   Effect.gen(function* () {
     const result = yield* Taxonomy.sameSpecies(
       RecordLabel.make("Quercus robur"),
       RecordLabel.make("Quercus robur"),
     );
 
-    expect(result).toEqual({ _tag: expected, rank: "species" });
+    expect(result).toEqual(rankCases[expected].make({ rank: "species" }));
   }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
@@ -596,7 +596,7 @@ it.effect.each([
     probabilities: { equalSingle: 0.36, disjoint: 0.37, undetermined: 0.27 },
     expected: "NoSharedTaxaAtRank",
   },
-])(
+] as const)(
   "zero thresholds use the unique distribution leader, not the selected label %j",
   ({ label, probabilities, expected }) =>
     Effect.gen(function* () {
@@ -608,7 +608,7 @@ it.effect.each([
         { policy },
       );
 
-      expect(result).toEqual({ _tag: expected, rank: "species" });
+      expect(result).toEqual(rankCases[expected].make({ rank: "species" }));
     }).pipe(Effect.provide(classificationLayer(Classify({ label, probabilities })))),
 );
 
@@ -627,7 +627,7 @@ it.effect.each([
         { policy },
       );
 
-      expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "species" });
+      expect(result).toEqual(rankCases.SameTaxonAtRank.make({ rank: "species" }));
     }).pipe(
       Effect.provide(
         classificationLayer(
@@ -661,7 +661,7 @@ it.effect.each([
       { policy },
     );
 
-    expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
+    expect(result).toEqual(rankCases.Undetermined.make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -681,7 +681,7 @@ it.effect("does not use provider-defined confidence as an acceptance gate", () =
       RecordLabel.make("Voucher B42"),
     );
 
-    expect(result).toEqual({ _tag: "SameTaxonAtRank", rank: "species" });
+    expect(result).toEqual(rankCases.SameTaxonAtRank.make({ rank: "species" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -753,7 +753,7 @@ it.effect("passes all supplied metadata to the model without adding missing fiel
   return Effect.gen(function* () {
     const result = yield* Taxonomy.sameFamily(first, second);
 
-    expect(result).toEqual({ _tag: "Undetermined", rank: "family" });
+    expect(result).toEqual(rankCases.Undetermined.make({ rank: "family" }));
   }).pipe(Effect.provide(modelLayer));
 });
 
@@ -784,14 +784,16 @@ it.effect("keeps invalid provider output in the error channel", () =>
       Taxonomy.sameSpecies(RecordLabel.make("Voucher A17"), RecordLabel.make("Voucher B42")),
     );
 
-    expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
+    assert(AiError.isAiError(error));
+    expect(error.reason).toBeInstanceOf(AiError.InvalidOutputError);
   }).pipe(
     Effect.provide(
-      classificationLayer({
-        _tag: "Classify",
-        label: "equalSingle",
-        probabilities: { equalSingle: 0.9, disjoint: 0.9, undetermined: 0 },
-      }),
+      classificationLayer(
+        Classify({
+          label: "equalSingle",
+          probabilities: { equalSingle: 0.9, disjoint: 0.9, undetermined: 0 },
+        }),
+      ),
     ),
   ),
 );
@@ -803,7 +805,7 @@ it.effect("reports a left-side diagnosis even when the other record is unidentif
       RecordLabel.make("Unidentified voucher A17"),
     );
 
-    expect(result).toEqual({ _tag: "MultipleTaxaAtRank", rank: "species", side: "left" });
+    expect(result).toEqual(rankCases.MultipleTaxaAtRank.make({ rank: "species", side: "left" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -826,14 +828,14 @@ it.effect("reports a left-side diagnosis even when the other record is unidentif
 it.effect.each([
   { label: "multipleRight", side: "right" },
   { label: "multipleBoth", side: "both" },
-])("maps an accepted $label diagnosis to $side at the requested rank", ({ label, side }) =>
+] as const)("maps an accepted $label diagnosis to $side at the requested rank", ({ label, side }) =>
   Effect.gen(function* () {
     const result = yield* Taxonomy.sameGenus(
       RecordLabel.make("Voucher A17"),
       RecordLabel.make("Voucher B42"),
     );
 
-    expect(result).toEqual({ _tag: "MultipleTaxaAtRank", rank: "genus", side });
+    expect(result).toEqual(rankCases.MultipleTaxaAtRank.make({ rank: "genus", side }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -849,7 +851,7 @@ it.effect.each([
 it.effect.each([
   {
     behavior: "does not combine support for different diagnosis sides",
-    expected: { _tag: "Undetermined", rank: "species" },
+    expected: rankCases.Undetermined.make({ rank: "species" }),
     label: "multipleLeft",
     probabilities: {
       equalSingle: 0,
@@ -862,7 +864,7 @@ it.effect.each([
   },
   {
     behavior: "abstains when diagnosis choices tie",
-    expected: { _tag: "Undetermined", rank: "species" },
+    expected: rankCases.Undetermined.make({ rank: "species" }),
     label: "multipleLeft",
     probabilities: {
       equalSingle: 0,
@@ -875,7 +877,7 @@ it.effect.each([
   },
   {
     behavior: "uses leading diagnosis support despite a selected uncertainty label",
-    expected: { _tag: "MultipleTaxaAtRank", rank: "species", side: "left" },
+    expected: rankCases.MultipleTaxaAtRank.make({ rank: "species", side: "left" }),
     label: "undetermined",
     probabilities: {
       equalSingle: 0,
@@ -888,7 +890,7 @@ it.effect.each([
   },
   {
     behavior: "abstains when a same-taxon selection ties a diagnosis",
-    expected: { _tag: "Undetermined", rank: "species" },
+    expected: rankCases.Undetermined.make({ rank: "species" }),
     label: "equalSingle",
     probabilities: {
       equalSingle: 0.5,
@@ -920,7 +922,7 @@ it.effect("uses the leading diagnosis side even when another side was selected",
       { policy },
     );
 
-    expect(result).toEqual({ _tag: "MultipleTaxaAtRank", rank: "species", side: "both" });
+    expect(result).toEqual(rankCases.MultipleTaxaAtRank.make({ rank: "species", side: "both" }));
   }).pipe(
     Effect.provide(
       classificationLayer(
@@ -955,7 +957,7 @@ it.effect.each([
         { policy },
       );
 
-      expect(result).toEqual({ _tag: "Undetermined", rank: "species" });
+      expect(result).toEqual(rankCases.Undetermined.make({ rank: "species" }));
     }).pipe(
       Effect.provide(
         classificationLayer(

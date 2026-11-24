@@ -16,6 +16,7 @@ import { DecisionModel } from "effect/ai";
 import {
   RecordLabel,
   TaxonId,
+  TaxonMembershipJudgment,
   TaxonomicRecord,
   TaxonName,
   Taxonomy,
@@ -75,7 +76,9 @@ it.effect.prop(
       const expected = {
         fields: record.fields,
         names: [firstName, secondName],
-        result: { _tag: "MultipleTaxaInTarget", target: TaxonSet.of(selected) },
+        result: TaxonMembershipJudgment.cases.MultipleTaxaInTarget.make({
+          target: TaxonSet.of(selected),
+        }),
       };
 
       const observed = yield* observeMembershipRecordEncoding(
@@ -323,7 +326,7 @@ const observeMembershipRecordEncoding = Effect.fnUntraced(function* (
     Effect.provide(layer),
   );
 
-  if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+  if (!TaxonMembershipJudgment.guards.MultipleTaxaInTarget(result))
     throw new Error("Expected clarification");
   expect(result.target).toBe(label === "multipleTarget0" ? first : second);
 

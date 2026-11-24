@@ -4,6 +4,7 @@ import { DecisionModel } from "effect/ai";
 import {
   Errors,
   IdLookup,
+  RankComparisonJudgment,
   TaxonId,
   TaxonLookup,
   TaxonName,
@@ -45,7 +46,7 @@ it.effect("compares two ID-backed records at a recorded rank without a model req
   return Effect.gen(function* () {
     const judgment = yield* Taxonomy.sameGenus({ taxonId: species.taxonId }, species);
 
-    expect(judgment).toEqual({ _tag: "SameTaxonAtRank", rank: "genus" });
+    expect(judgment).toEqual(RankComparisonJudgment.cases.SameTaxonAtRank.make({ rank: "genus" }));
   }).pipe(Effect.provide([lookup, model]));
 });
 
@@ -167,6 +168,6 @@ it.effect("keeps a completed mismatch distinct from an unresolved identifier", (
 
     const missing = TaxonId.make({ taxonomy: "fixture", id: "missing" });
     const unresolved = yield* TaxonLookup.requireName(missing, name, onNoMatch).pipe(Effect.flip);
-    expect(unresolved).toEqual({ _tag: "NotFound", requested: missing });
+    expect(unresolved).toEqual(IdLookup.cases.NotFound.make({ requested: missing }));
   }).pipe(Effect.provide(lookup)),
 );

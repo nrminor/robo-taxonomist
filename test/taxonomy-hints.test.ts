@@ -14,7 +14,10 @@ import {
 import { DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
+  Errors,
   RecordLabel,
+  CollectionMembershipJudgment,
+  TaxonMembershipJudgment,
   TaxonName,
   TaxonSet,
   Taxonomy,
@@ -292,7 +295,7 @@ it.effect("carries hints through successive quantifier windows", () => {
       execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
     });
 
-    expect(result._tag).toBe("Yes");
+    expect(result).toSatisfy(CollectionMembershipJudgment.guards.Yes);
     expect(seen).toHaveLength(2);
 
     for (const state of seen) expect(state).toMatchObject({ hints: ["prior"] });
@@ -483,24 +486,24 @@ it.effect("validates hints before transport while preserving literal shortcuts",
         TaxonomyHints.snapshot(hints),
       );
 
-      expect(invalidSnapshot).toMatchObject({ _tag: "InvalidInput" });
+      expect(invalidSnapshot).toBeInstanceOf(Errors.InvalidInput);
 
       const invalidClassification = yield* Effect.flip(
         // @ts-expect-error Verify an untyped caller's malformed hints.
         Taxonomy.classifyRecords([subject], target, { hints }),
       );
 
-      expect(invalidClassification).toMatchObject({ _tag: "InvalidInput" });
+      expect(invalidClassification).toBeInstanceOf(Errors.InvalidInput);
 
       const invalidComparison = yield* Effect.flip(
         // @ts-expect-error Verify the scalar request path too.
         Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), { hints }),
       );
 
-      expect(invalidComparison).toMatchObject({ _tag: "InvalidInput" });
+      expect(invalidComparison).toBeInstanceOf(Errors.InvalidInput);
       // @ts-expect-error Literal shortcuts do not need hint validation or a model.
       const empty = yield* Taxonomy.recordBelongsTo(subject, TaxonSet.empty(), { hints });
-      expect(empty._tag).toBe("NotMember");
+      expect(empty).toSatisfy(TaxonMembershipJudgment.guards.NotMember);
       // @ts-expect-error Empty classification does not consume hints.
       const noRecords = yield* Taxonomy.classifyRecords([], target, { hints });
       expect(noRecords.records).toEqual([]);

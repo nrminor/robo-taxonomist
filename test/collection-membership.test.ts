@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import {
   Array,
@@ -17,14 +18,18 @@ import {
 import { AiError, Decision, DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
+  CollectionMembershipJudgment,
   AcceptancePolicy,
+  Errors,
   RecordLabel,
   TaxonomicRecord,
   TaxonName,
   Taxonomy,
   TaxonSet,
-  type CollectionMembershipJudgment,
+  TaxonMembershipJudgment,
 } from "../src/index.ts";
+
+const membershipCases = CollectionMembershipJudgment.cases;
 
 const namedTargetState = Schema.Struct({
   nodes: Schema.Tuple([
@@ -207,7 +212,7 @@ it.effect(
         execution: CollectionExecution.make({ batchSize: 2, concurrency: 1 }),
       });
 
-      expect(membership).toEqual({ _tag: "No", quantifier: "all" });
+      expect(membership).toEqual(membershipCases.No.make({ quantifier: "all" }));
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -270,7 +275,7 @@ it.effect.each([
         TaxonName.make("Quercus"),
       );
 
-      expect(membership).toEqual({ _tag: tag, quantifier });
+      expect(membership).toEqual(membershipCases[tag].make({ quantifier }));
     }).pipe(Effect.provide(layer));
   },
 );
@@ -301,7 +306,7 @@ it.effect("snapshots original record occurrences before consuming later quantifi
       execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
     });
 
-    expect(membership).toEqual({ _tag: "Yes", quantifier: "all" });
+    expect(membership).toEqual(membershipCases.Yes.make({ quantifier: "all" }));
     expect(facts).toEqual([
       expect.stringContaining('Record label: "first"'),
       expect.stringContaining('Record label: "original second"'),
@@ -338,7 +343,7 @@ it.effect("keeps fine membership unresolved when only grouped non-membership is 
     const record = RecordLabel.make("Pooled subjects");
     const target = TaxonName.make("Quercus");
     const membership = yield* Taxonomy.recordBelongsTo(record, target);
-    expect(membership).toEqual({ _tag: "Undetermined" });
+    expect(membership).toSatisfy(TaxonMembershipJudgment.guards.Undetermined);
     const partition = yield* Taxonomy.partitionRecordsByMembership([record], target);
     expect(partition.Undetermined).toEqual([record]);
   }).pipe(Effect.provide(layer));
@@ -436,7 +441,7 @@ it.effect(
         { execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }) },
       );
 
-      expect(membership).toEqual({ _tag: "Yes", quantifier: "any" });
+      expect(membership).toEqual(membershipCases.Yes.make({ quantifier: "any" }));
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -479,7 +484,8 @@ for (const [quantifier, operation] of quantifiers) {
           }),
         );
 
-        expect(error).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } });
+        assert(AiError.isAiError(error));
+        expect(error.reason).toBeInstanceOf(AiError.InvalidOutputError);
         expect(calls).toBe(1);
       }).pipe(Effect.provide(layer));
     },
@@ -495,21 +501,15 @@ it.effect.each(quantifiers)(
     );
 
     return Effect.gen(function* () {
+      const withoutRecords = membershipCases[quantifier === "any" ? "No" : "Yes"];
+      const withoutTarget = membershipCases[quantifier === "none" ? "Yes" : "No"];
+
       const emptyRecords = yield* operation([], target);
-      expect(emptyRecords).toEqual({
-        _tag: quantifier === "any" ? "No" : "Yes",
-        quantifier,
-      });
+      expect(emptyRecords).toEqual(withoutRecords.make({ quantifier }));
       const emptyRecordsAndTarget = yield* operation([], TaxonSet.empty());
-      expect(emptyRecordsAndTarget).toEqual({
-        _tag: quantifier === "any" ? "No" : "Yes",
-        quantifier,
-      });
+      expect(emptyRecordsAndTarget).toEqual(withoutRecords.make({ quantifier }));
       const emptyTarget = yield* operation(records, TaxonSet.empty());
-      expect(emptyTarget).toEqual({
-        _tag: quantifier === "none" ? "Yes" : "No",
-        quantifier,
-      });
+      expect(emptyTarget).toEqual(withoutTarget.make({ quantifier }));
     }).pipe(Effect.provide(layer));
   },
 );
@@ -768,7 +768,10 @@ it.effect.each(quantifiers)(
       expect(calls).toBe(2);
       yield* Deferred.succeed(releaseFirst, undefined);
       const result: CollectionMembershipJudgment = yield* Fiber.join(fiber);
-      expect(result).toEqual({ _tag: quantifier === "any" ? "Yes" : "No", quantifier });
+
+      const expectedCase = membershipCases[quantifier === "any" ? "Yes" : "No"];
+
+      expect(result).toEqual(expectedCase.make({ quantifier }));
       expect(calls).toBe(2);
     }),
 );
@@ -793,7 +796,7 @@ it.effect.each(quantifiers)(
         execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
       });
 
-      expect(membership).toEqual({ _tag: "Undetermined", quantifier });
+      expect(membership).toEqual(membershipCases.Undetermined.make({ quantifier }));
       expect(calls).toBe(4);
     }).pipe(Effect.provide(layer));
   },
@@ -994,10 +997,11 @@ for (const [kind, operation] of operations) {
           Effect.flip,
         );
 
-        expect(error).toMatchObject({
-          _tag: "AiError",
-          reason: { _tag: mode === "failure" ? "UnknownError" : "InvalidOutputError" },
-        });
+        const expectedReason =
+          mode === "failure" ? AiError.UnknownError : AiError.InvalidOutputError;
+
+        assert(AiError.isAiError(error));
+        expect(error.reason).toBeInstanceOf(expectedReason);
 
         if (mode === "failure") expect(error).toBe(failure);
         expect(succeeded).toBe(false);
@@ -1185,7 +1189,7 @@ for (const [quantifier, operation] of quantifiers) {
       label: "undetermined",
       probabilities: { member: 0.9, notMember: 0, mixed: 0, undetermined: 0.1, multipleTarget0: 0 },
       options: {},
-      tag: quantifier === "none" ? "No" : "Yes",
+      expectedCase: membershipCases[quantifier === "none" ? "No" : "Yes"],
     },
     {
       behavior: "includes clarification in the pooled non-membership margin",
@@ -1198,7 +1202,7 @@ for (const [quantifier, operation] of quantifiers) {
         multipleTarget0: 0.4,
       },
       options: { policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }) },
-      tag: "Undetermined",
+      expectedCase: membershipCases.Undetermined,
     },
     {
       behavior: "includes uncertainty in the pooled non-membership margin",
@@ -1211,12 +1215,12 @@ for (const [quantifier, operation] of quantifiers) {
         multipleTarget0: 0,
       },
       options: { policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }) },
-      tag: "Undetermined",
+      expectedCase: membershipCases.Undetermined,
     },
-  ])(`${quantifier} $behavior`, ({ label, probabilities, options, tag }) =>
+  ])(`${quantifier} $behavior`, ({ label, probabilities, options, expectedCase }) =>
     Effect.gen(function* () {
       const result = yield* operation([RecordLabel.make("subject")], TaxonName.make("A"), options);
-      expect(result).toEqual({ _tag: tag, quantifier });
+      expect(result).toEqual(expectedCase.make({ quantifier }));
     }).pipe(
       Effect.provide(
         Layer.effect(
@@ -1262,7 +1266,7 @@ it.effect("keeps a quantified membership and later clarification tie unresolved"
       policy: AcceptancePolicy.make({ minimumSupport: 0, minimumMargin: 0 }),
     });
 
-    expect(result).toEqual({ _tag: "Undetermined", quantifier: "any" });
+    expect(result).toEqual(membershipCases.Undetermined.make({ quantifier: "any" }));
   }).pipe(Effect.provide(layer));
 });
 
@@ -1299,9 +1303,11 @@ it.effect("retains the original late clarification leader at quantified policy b
       policy: AcceptancePolicy.make({ minimumSupport: 0.6, minimumMargin: 0.3 }),
     });
 
-    expect(result).toEqual({ _tag: "MultipleTaxaInTarget", quantifier: "any", target: b });
+    const expected = membershipCases.MultipleTaxaInTarget.make({ quantifier: "any", target: b });
 
-    if (!Predicate.isTagged(result, "MultipleTaxaInTarget"))
+    expect(result).toEqual(expected);
+
+    if (!CollectionMembershipJudgment.guards.MultipleTaxaInTarget(result))
       throw new Error("Expected clarification");
     expect(result.target).toBe(b);
   }).pipe(Effect.provide(layer));
@@ -1328,11 +1334,12 @@ it.effect.each(quantifiers)(
         execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
       });
 
-      expect(result).toEqual({
-        _tag: "MultipleTaxaInTarget",
+      const expected = membershipCases.MultipleTaxaInTarget.make({
         quantifier,
         target: TaxonSet.of(target),
       });
+
+      expect(result).toEqual(expected);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(layer));
   },
@@ -1378,7 +1385,9 @@ it.effect.each(quantifiers)(
         execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
       });
 
-      expect(membership).toEqual({ _tag: quantifier === "any" ? "Yes" : "No", quantifier });
+      const expectedCase = membershipCases[quantifier === "any" ? "Yes" : "No"];
+
+      expect(membership).toEqual(expectedCase.make({ quantifier }));
       expect(calls).toBe(2);
     }).pipe(Effect.provide(layer));
   },
@@ -1621,10 +1630,7 @@ it.effect("does not turn nonliteral empty expressions into collection shortcuts"
     const partition = yield* Taxonomy.partitionRecordsByMembership([records[0]], expression);
     expect(partition.Undetermined).toEqual([records[0]]);
     const membership = yield* Taxonomy.anyRecordBelongsTo([records[0]], expression);
-    expect(membership).toEqual({
-      _tag: "Undetermined",
-      quantifier: "any",
-    });
+    expect(membership).toEqual(membershipCases.Undetermined.make({ quantifier: "any" }));
     expect(calls).toBe(2);
   }).pipe(Effect.provide(layer));
 });
@@ -1653,7 +1659,8 @@ it.effect("rejects invalid original records/targets before transporting their ba
 
     for (const operation of invalidRecords) {
       const error = yield* Effect.flip(operation);
-      expect(error).toMatchObject({ _tag: "InvalidInput", cause: { _tag: "SchemaError" } });
+      assert(error instanceof Errors.InvalidInput);
+      expect(error.cause).toSatisfy(Schema.isSchemaError);
     }
   }).pipe(Effect.provide(layer));
 });
@@ -1673,12 +1680,9 @@ it.effect("reports a cyclic target from graph compilation before transport", () 
       Taxonomy.anyRecordBelongsTo([RecordLabel.make("subject")], cyclic),
     );
 
-    expect(error).toMatchObject({
-      _tag: "AiError",
-      module: "TaxonSetGraph",
-      method: "compile",
-      reason: { _tag: "InvalidUserInputError" },
-    });
+    assert(AiError.isAiError(error));
+    expect(error).toMatchObject({ module: "TaxonSetGraph", method: "compile" });
+    expect(error.reason).toBeInstanceOf(AiError.InvalidUserInputError);
   }).pipe(Effect.provide(layer));
 });
 
@@ -1688,16 +1692,16 @@ it.each([0, -1, 1.5, Infinity, NaN])("rejects invalid collection execution bound
 });
 
 it.effect.each([
-  ["all", ["member", "member"], { _tag: "Yes", quantifier: "all" }],
-  ["all", ["member", "notMember"], { _tag: "No", quantifier: "all" }],
-  ["all", ["member", "mixed"], { _tag: "No", quantifier: "all" }],
-  ["all", ["undetermined", "member"], { _tag: "Undetermined", quantifier: "all" }],
-  ["any", ["notMember", "mixed"], { _tag: "No", quantifier: "any" }],
-  ["any", ["undetermined", "member"], { _tag: "Yes", quantifier: "any" }],
-  ["any", ["mixed", "undetermined"], { _tag: "Undetermined", quantifier: "any" }],
-  ["none", ["mixed", "notMember"], { _tag: "Yes", quantifier: "none" }],
-  ["none", ["undetermined", "member"], { _tag: "No", quantifier: "none" }],
-  ["none", ["undetermined", "mixed"], { _tag: "Undetermined", quantifier: "none" }],
+  ["all", ["member", "member"], membershipCases.Yes.make({ quantifier: "all" })],
+  ["all", ["member", "notMember"], membershipCases.No.make({ quantifier: "all" })],
+  ["all", ["member", "mixed"], membershipCases.No.make({ quantifier: "all" })],
+  ["all", ["undetermined", "member"], membershipCases.Undetermined.make({ quantifier: "all" })],
+  ["any", ["notMember", "mixed"], membershipCases.No.make({ quantifier: "any" })],
+  ["any", ["undetermined", "member"], membershipCases.Yes.make({ quantifier: "any" })],
+  ["any", ["mixed", "undetermined"], membershipCases.Undetermined.make({ quantifier: "any" })],
+  ["none", ["mixed", "notMember"], membershipCases.Yes.make({ quantifier: "none" })],
+  ["none", ["undetermined", "member"], membershipCases.No.make({ quantifier: "none" })],
+  ["none", ["undetermined", "mixed"], membershipCases.Undetermined.make({ quantifier: "none" })],
 ] as const)("maps %s whole-record fixture %s", ([quantifier, labels, expected]) => {
   const [, operation] = Array.findFirst(quantifiers, ([kind]) => kind === quantifier).pipe(
     Option.getOrThrow,
@@ -1722,12 +1726,12 @@ for (const [quantifier, operation] of quantifiers) {
     [
       "decisive before diagnosis",
       ["undetermined", decisive, "multipleTarget0"],
-      { _tag: quantifier === "any" ? "Yes" : "No", quantifier },
+      membershipCases[quantifier === "any" ? "Yes" : "No"].make({ quantifier }),
     ],
     [
       "diagnosis before decisive",
       ["undetermined", "multipleTarget0", decisive],
-      { _tag: "MultipleTaxaInTarget", quantifier, target: TaxonSet.of(target) },
+      membershipCases.MultipleTaxaInTarget.make({ quantifier, target: TaxonSet.of(target) }),
     ],
   ] as const)(`scans ${quantifier} in record order: %s`, ([_case, labels, expected]) =>
     Effect.gen(function* () {

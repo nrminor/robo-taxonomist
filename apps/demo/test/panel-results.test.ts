@@ -274,12 +274,13 @@ it.effect("excludes split support from abundance while retaining an accepted rel
     expect(row.matches.map((match) => match.targetId)).toEqual(
       panel.targets.map((target) => target.id),
     );
+    expect(splitMatch.judgment).toSatisfy(TaxonMatchJudgment.guards.Undetermined);
     expect(splitMatch).toMatchObject({
-      judgment: { _tag: "Undetermined" },
       answer: { label: "sameTaxon", probabilities: split, confidence: 0.7 },
     });
+    expect(strongMatch.judgment).toSatisfy(TaxonMatchJudgment.guards.WithinTaxon);
     expect(strongMatch).toMatchObject({
-      judgment: { _tag: "WithinTaxon", support: 0.96 },
+      judgment: { support: 0.96 },
       answer: { label: "withinTaxon", probabilities: strong, confidence: 0.8 },
     });
     const findings = Display.replaceDisplayed(undefined, response).findings;
