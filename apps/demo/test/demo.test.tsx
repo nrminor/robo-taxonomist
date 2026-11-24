@@ -2,8 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render as renderBrowser } from "vitest-browser-react";
 import { page } from "vitest/browser";
 import { StrictMode } from "react";
-import { Effect, Layer, Schema } from "effect";
-import { FetchHttpClient } from "effect/http";
+import { Deferred, Effect, Layer, Schema } from "effect";
+import { FetchHttpClient, type HttpClient } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { RegistryProvider } from "@effect/atom-react";
 import { Demo } from "../src/components/demo.tsx";
@@ -11,23 +11,28 @@ import { PanelResponse, ClassificationFailure, PublicModelReason } from "../src/
 import { type PanelId } from "../src/lib/catalog.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { browserRuntime } from "../src/client/panel-atoms.ts";
-import { initialBroadReplyThenFetch, observeFetch, waitForRequestAbort } from "./fixture-fetch.ts";
+import {
+  initialBroadReplyThenFetch,
+  makeControlledFetchLayer,
+  observeFetch,
+  waitForRequestAbort,
+} from "./fixture-fetch.ts";
 
 afterEach(() => cleanup());
 
-const renderHttpDemo = (fetch: typeof globalThis.fetch) => {
-  const layer = FetchHttpClient.layer.pipe(
-    Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
-  );
-
-  return renderBrowser(
+const renderDemoWithClient = (layer: Layer.Layer<HttpClient.HttpClient>) =>
+  renderBrowser(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
         <Demo />
       </RegistryProvider>
     </StrictMode>,
   );
-};
+
+const renderHttpDemo = (fetch: typeof FetchHttpClient.Fetch.Service) =>
+  renderDemoWithClient(
+    FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
+  );
 
 // The caller's fetch double counts interactive requests, not the initial POST.
 const renderDemo = async (
@@ -40,13 +45,13 @@ const renderDemo = async (
   return view;
 };
 
-const replyFor = (panelId: PanelId) =>
-  Effect.runPromise(
-    classifyPanel(panelId).pipe(
-      Effect.provide(PanelResults.layer),
-      Effect.flatMap(Schema.encodeEffect(Schema.toCodecJson(PanelResponse))),
-    ),
+const makePanelReply = (panelId: PanelId) =>
+  classifyPanel(panelId).pipe(
+    Effect.provide(PanelResults.layer),
+    Effect.flatMap(Schema.encodeEffect(Schema.toCodecJson(PanelResponse))),
   );
+
+const replyFor = (panelId: PanelId) => Effect.runPromise(makePanelReply(panelId));
 
 it("presents native panel choices beside a records-first workspace", async () => {
   const interactiveFetch = vi.fn(() => Promise.reject(new Error("Unexpected browser request")));
@@ -373,44 +378,49 @@ it("shows optional provider confidence separately from match support", async () 
     .toBeVisible();
 });
 
-it("ignores superseded HTTP replies when Broad groups is selected again before the initial reply arrives", async () => {
-  const initial = Promise.withResolvers<Response>();
-  const first = Promise.withResolvers<Response>();
-  const latest = Promise.withResolvers<Response>();
-  const initialRequest = observeFetch(() => initial.promise);
-  const firstSelection = observeFetch(() => first.promise);
-  const latestSelection = observeFetch(() => latest.promise);
+it("ignores superseded HTTP replies when Broad groups is selected again before the initial reply arrives", ({
+  signal,
+}) => {
+  const scenario = Effect.gen(function* () {
+    const transport = yield* makeControlledFetchLayer();
+    const view = yield* Effect.promise(() => renderDemoWithClient(transport.layer));
+    const initial = yield* transport.next;
+    const afterMount = yield* transport.pendingRequests;
+    expect(afterMount).toBe(0);
 
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockImplementationOnce(initialRequest.fetch)
-    .mockImplementationOnce(firstSelection.fetch)
-    .mockImplementationOnce(latestSelection.fetch);
+    const focusedPanel = view.getByRole("radio", { name: "Families, genera and species" });
+    yield* Effect.promise(() => focusedPanel.click());
+    const firstSelection = yield* transport.next;
+    yield* initial.aborted;
+    const afterFirstSelection = yield* transport.pendingRequests;
+    expect(afterFirstSelection).toBe(0);
 
-  await renderHttpDemo(fetch);
-  const [, initialInit] = await initialRequest.started;
-  expect(fetch).toHaveBeenCalledTimes(1);
+    const broadPanel = view.getByRole("radio", { name: "Broad groups" });
+    yield* Effect.promise(() => broadPanel.click());
+    const latestSelection = yield* transport.next;
+    yield* firstSelection.aborted;
+    const afterLatestSelection = yield* transport.pendingRequests;
+    expect(afterLatestSelection).toBe(0);
 
-  await page.getByRole("radio", { name: "Families, genera and species" }).click();
-  const [, firstInit] = await firstSelection.started;
-  await waitForRequestAbort(initialInit?.signal);
-  expect(fetch).toHaveBeenCalledTimes(2);
-  await page.getByRole("radio", { name: "Broad groups" }).click();
-  await latestSelection.started;
-  await waitForRequestAbort(firstInit?.signal);
-  expect(fetch).toHaveBeenCalledTimes(3);
-  const broad = await replyFor("broad");
-  latest.resolve(Response.json(broad));
-  await expect.element(page.getByText("22 of 24 records match a target.")).toBeVisible();
+    const broad = yield* makePanelReply("broad");
+    yield* Deferred.succeed(latestSelection.reply, Response.json(broad));
+    yield* Effect.promise(() =>
+      expect.element(view.getByText("22 of 24 records match a target.")).toBeVisible(),
+    );
 
-  const focused = await replyFor("focused");
-  first.resolve(Response.json(focused));
-  initial.resolve(Response.json(broad));
-  await expect.element(page.getByRole("region", { name: "Broad groups" })).toBeVisible();
-  await expect
-    .element(page.getByRole("region", { name: "Families, genera and species" }))
-    .not.toBeInTheDocument();
-  await expect.element(page.getByText(/Matches changed/)).not.toBeInTheDocument();
+    const focused = yield* makePanelReply("focused");
+    yield* Deferred.succeed(firstSelection.reply, Response.json(focused));
+    yield* Deferred.succeed(initial.reply, Response.json(broad));
+    yield* Effect.promise(async () => {
+      await expect.element(view.getByRole("region", { name: "Broad groups" })).toBeVisible();
+      await expect
+        .element(view.getByRole("region", { name: "Families, genera and species" }))
+        .not.toBeInTheDocument();
+      await expect.element(view.getByText(/Matches changed/)).not.toBeInTheDocument();
+    });
+  }).pipe(Effect.scoped);
+
+  return Effect.runPromise(scenario, { signal });
 });
 
 it("keeps the displayed matches and their comparison after failure, then compares the retry with that display", async () => {
