@@ -14,6 +14,7 @@ import {
   Exit,
   Layer,
   ManagedRuntime,
+  Match,
   Option,
   Record,
   Redacted,
@@ -51,6 +52,18 @@ const clefRequest = Schema.Struct({
     }),
   ),
 });
+
+const noMatchAnswer = {
+  type: "choice",
+  choice: "noMatch",
+  probabilities: {
+    sameTaxon: 0.01,
+    withinTaxon: 0.01,
+    noMatch: 0.95,
+    undetermined: 0.03,
+  },
+  confidence: 0.8,
+};
 
 const accountId = "0123456789abcdef0123456789abcdef";
 
@@ -299,17 +312,9 @@ it("classifies through the live HTTP contract in serial bounded batches and shar
         expect(criterionNames).toEqual(["sameTaxon", "withinTaxon", "noMatch", "undetermined"]);
       }
 
-      const answers = Record.map(questions, () => ({
-        type: "choice",
-        choice: "noMatch",
-        probabilities: {
-          sameTaxon: 0.01,
-          withinTaxon: 0.01,
-          noMatch: 0.95,
-          undetermined: 0.03,
-        },
-        confidence: 0.8,
-      }));
+      const questionIds = Record.keys(questions);
+      const reversedIds = Array.reverse(questionIds);
+      const answers = Record.fromIterableWith(reversedIds, (id) => [id, noMatchAnswer]);
 
       return Response.json({
         success: true,
@@ -609,29 +614,11 @@ it("aborts the actual transport when the final HTTP waiter cancels", async () =>
   }
 });
 
-it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
+it.each(["invalid JSON", "missing answers", "unexpected answer"] as const)(
   "rejects an invalid Clef success: %s",
   async (kind) => {
-    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      if (kind === "invalid JSON") return new Response("SECRET not JSON", { status: 200 });
-      const request = Schema.decodeUnknownSync(clefRequest)(await new Request(input, init).json());
-
-      const answers =
-        kind === "missing answers"
-          ? {}
-          : Record.map(request.questions, () => ({
-              type: "choice",
-              choice: "noMatch",
-              confidence: 0.8,
-              probabilities: {
-                sameTaxon: 0.5,
-                withinTaxon: 0.5,
-                noMatch: 0.5,
-                undetermined: 0.5,
-              },
-            }));
-
-      return Response.json({
+    const reply = (answers: Schema.JsonObject) =>
+      Response.json({
         success: true,
         result: {
           model: "clef",
@@ -639,7 +626,23 @@ it.each(["invalid JSON", "missing answers", "invalid probabilities"])(
           answers,
         },
       });
-    });
+
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) =>
+      Match.value(kind).pipe(
+        Match.when("invalid JSON", () => new Response("SECRET not JSON", { status: 200 })),
+        Match.when("missing answers", () => reply({})),
+        Match.when("unexpected answer", async () => {
+          const body: unknown = await new Request(input, init).json();
+          const request = Schema.decodeUnknownSync(clefRequest)(body);
+          const questionIds = Record.keys(request.questions);
+          const returnedIds = Array.append(questionIds, "unexpected");
+          const answers = Record.fromIterableWith(returnedIds, (id) => [id, noMatchAnswer]);
+
+          return reply(answers);
+        }),
+        Match.exhaustive,
+      ),
+    );
 
     const runtime = configuredRuntime(fetch);
 

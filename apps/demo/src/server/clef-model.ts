@@ -1,16 +1,24 @@
 import "server-only";
 import {
+  Array,
   Cause,
   Clock,
   Context,
   Data,
   Effect,
+  Equal,
+  Function,
+  HashMap,
+  HashSet,
   Layer,
   Match,
   Option,
+  Predicate,
+  Record,
   Redacted,
   Result,
   Schema,
+  SchemaTransformation,
 } from "effect";
 import { AiError, DecisionModel, type Decision } from "effect/ai";
 import {
@@ -26,24 +34,72 @@ const probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 
 
 const tokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-const classifyQuestionSchema = Schema.Struct({
+const questionFields = {
   instructions: Schema.String,
   criteria: Schema.Record(Schema.String, Schema.String),
+};
+
+const ProviderQuestion = Schema.TaggedStruct("Classify", questionFields);
+
+const ClefQuestionWire = Schema.Struct({
+  type: Schema.Literal("choice"),
+  instructions: questionFields.instructions,
+  criteria: questionFields.criteria,
 });
+
+const ClefQuestion = ClefQuestionWire.pipe(
+  Schema.decodeTo(
+    ProviderQuestion,
+    SchemaTransformation.transform({
+      decode: ({ instructions, criteria }) => ProviderQuestion.make({ instructions, criteria }),
+      encode: ({ instructions, criteria }) =>
+        ClefQuestionWire.make({ type: "choice", instructions, criteria }),
+    }),
+  ),
+);
+
+const ClefRequest = Schema.Struct({
+  model: Schema.Literal("clef"),
+  state: Schema.Json,
+  questions: Schema.Record(Schema.String, ClefQuestion),
+});
+
+const encodeClefRequest = Schema.encodeUnknownEffect(ClefRequest);
+
+const isInvalidQuestion = Predicate.not(Schema.is(ProviderQuestion));
+
+const probabilities = Schema.Record(Schema.String, probability);
+
+const ClefChoice = Schema.Struct({
+  type: Schema.Literal("choice"),
+  choice: Schema.String,
+  probabilities,
+  confidence: probability,
+});
+
+const ClassifyAnswer = Schema.TaggedStruct("Classify", {
+  label: Schema.String,
+  probabilities,
+  confidence: probability,
+});
+
+const ClefAnswer = ClefChoice.pipe(
+  Schema.decodeTo(
+    ClassifyAnswer,
+    SchemaTransformation.transform({
+      decode: ({ choice, probabilities, confidence }) =>
+        ClassifyAnswer.make({ label: choice, probabilities, confidence }),
+      encode: ({ label, probabilities, confidence }) =>
+        ClefChoice.make({ type: "choice", choice: label, probabilities, confidence }),
+    }),
+  ),
+);
 
 const responseSchema = Schema.Struct({
   success: Schema.Literal(true),
   result: Schema.Struct({
     model: Schema.String,
-    answers: Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        type: Schema.Literal("choice"),
-        choice: Schema.String,
-        probabilities: Schema.Record(Schema.String, probability),
-        confidence: probability,
-      }),
-    ),
+    answers: Schema.Unknown,
     usage: Schema.Struct({
       input_tokens: tokenCount,
       output_tokens: tokenCount,
@@ -51,9 +107,9 @@ const responseSchema = Schema.Struct({
   }),
 });
 
-const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
-
 const Decisions = Data.taggedEnum<Decision.Any>();
+
+const isUnsupportedDecision = Predicate.not(Decisions.$is("Classify"));
 
 /** Original request-construction failure, retained only on the internal Effect cause. */
 export class ClefRequestCause extends Context.Service<
@@ -173,52 +229,36 @@ const buildClefModel = (options: ClefOptions) =>
       DecisionModel.ProviderResponse,
       AiError.AiError
     > {
-      const entries = Object.entries(decisions);
+      const requestedIds = HashSet.fromIterable(Record.keys(decisions));
+      const questionCount = HashSet.size(requestedIds);
 
-      if (entries.length === 0 || entries.length > 64) {
-        return yield* AiError.make({
-          module: "ClefModel",
-          method: "decide",
-          reason: new AiError.InvalidRequestError({
-            description: "Clef requires between 1 and 64 questions",
-          }),
-        });
+      if (questionCount === 0 || questionCount > 64) {
+        return yield* invalidRequest("Clef requires between 1 and 64 questions");
       }
 
-      const questions: Record<
-        string,
-        {
-          readonly type: "choice";
-          readonly instructions: string;
-          readonly criteria: Readonly<Record<string, string>>;
-        }
-      > = Object.create(null);
+      const requestBody = yield* encodeClefRequest({
+        model: "clef",
+        state,
+        questions: decisions,
+      }).pipe(
+        Effect.catch((error) => {
+          const firstInvalid = Array.findFirst(Record.values(decisions), isInvalidQuestion);
+          const unsupported = Option.filter(firstInvalid, isUnsupportedDecision);
 
-      for (const [key, decision] of entries) {
-        if (!Decisions.$is("Classify")(decision)) {
-          return yield* AiError.make({
-            module: "ClefModel",
-            method: "decide",
-            reason: new AiError.InvalidRequestError({
-              description: "This Clef adapter supports only Classify decisions",
-            }),
+          return Option.match(unsupported, {
+            onNone: () =>
+              Effect.fail(error).pipe(
+                mapInvalidRequest("This Clef adapter requires string instructions and criteria"),
+              ),
+            onSome: () =>
+              Effect.fail(invalidRequest("This Clef adapter supports only Classify decisions")),
           });
-        }
-
-        const question = yield* Schema.decodeUnknownEffect(classifyQuestionSchema)(decision).pipe(
-          mapInvalidRequest("This Clef adapter requires string instructions and criteria"),
-        );
-
-        questions[key] = {
-          type: "choice",
-          instructions: question.instructions,
-          criteria: question.criteria,
-        };
-      }
+        }),
+      );
 
       const request = yield* HttpClientRequest.post(url).pipe(
         HttpClientRequest.bearerToken(options.apiToken),
-        HttpClientRequest.bodyJson({ model: "clef", state, questions }),
+        HttpClientRequest.bodyJson(requestBody),
         mapInvalidRequest("Could not encode the Clef request as JSON"),
       );
 
@@ -244,15 +284,29 @@ const buildClefModel = (options: ClefOptions) =>
         Effect.mapError(invalidOutput),
       );
 
-      const answers: Record<string, DecisionModel.ProviderClassifyAnswer> = Object.create(null);
+      const candidate = Option.liftPredicate(decoded.result.answers, Predicate.isReadonlyObject);
+      const wire = yield* Effect.fromOption(candidate, invalidOutput);
+      const wireEntries = Record.toEntries(wire);
 
-      for (const [key, answer] of Object.entries(decoded.result.answers)) {
-        answers[key] = Classify({
-          label: answer.choice,
-          probabilities: answer.probabilities,
-          confidence: answer.confidence,
-        });
-      }
+      const answerEntries = yield* Effect.forEach(wireEntries, ([id, value]) =>
+        Schema.decodeUnknownEffect(ClefAnswer)(value).pipe(
+          Effect.mapBoth({
+            onSuccess: (answer) => [id, answer] as const,
+            onFailure: invalidOutput,
+          }),
+        ),
+      );
+
+      const received = HashMap.fromIterable(answerEntries);
+      const receivedIds = HashSet.fromIterable(HashMap.keys(received));
+
+      const complete = yield* Effect.filterOrFail(
+        Effect.succeed(received),
+        () => Equal.equals(requestedIds, receivedIds),
+        invalidOutput,
+      );
+
+      const answers = Record.fromIterableWith(HashMap.entries(complete), Function.identity);
 
       return {
         answers,
@@ -268,8 +322,9 @@ const buildClefModel = (options: ClefOptions) =>
 
 /**
  * Live Cloudflare Clef adapter requiring an HTTP client and server-side credentials.
- * Accepts 1–64 Classify decisions per call; validates response shape, [0, 1] probabilities and
- * nonnegative integer token counts. Response decoding alone does not enforce probability normalization.
+ * Accepts 1–64 Classify decisions per call. The reply must answer every submitted
+ * decision and no others. Probabilities must be in [0, 1] and token counts must
+ * be nonnegative integers. The decision model checks probability normalization.
  */
 export const clefModelLayer = (
   options: ClefOptions,
