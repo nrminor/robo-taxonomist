@@ -1,14 +1,25 @@
 // @vitest-environment node
 import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
-import { Data, Deferred, Effect, Exit, Layer, ManagedRuntime, Record, Schema, Scope } from "effect";
+import {
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  ManagedRuntime,
+  Record,
+  Ref,
+  Schema,
+  Scope,
+} from "effect";
 import { AiError, DecisionModel } from "effect/ai";
 import { Errors } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
 import { POST } from "../src/app/api/classify/route.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
-import { FixtureModel } from "../src/server/fixture-model.ts";
+import { expectCount, observedFixture } from "./fixture-decision.ts";
 import * as TestJson from "./Json.ts";
 
 vi.mock("server-only", () => ({}));
@@ -118,29 +129,11 @@ it.effect("preserves the provider error until the HTTP boundary", () =>
   }),
 );
 
-const observedFixture = (before: () => Effect.Effect<void, AiError.AiError>) =>
-  Layer.effect(
-    DecisionModel.DecisionModel,
-    Effect.gen(function* () {
-      const fixture = yield* DecisionModel.DecisionModel;
-
-      return DecisionModel.DecisionModel.of({
-        ...fixture,
-        decide: (definition, options) =>
-          before().pipe(Effect.andThen(fixture.decide(definition, options))),
-      });
-    }),
-  ).pipe(Layer.provide(FixtureModel));
-
 it.effect("refreshes through the same POST contract without disturbing other cached panels", () =>
   Effect.gen(function* () {
-    let calls = 0;
+    const calls = yield* Ref.make(0);
 
-    const model = observedFixture(() =>
-      Effect.sync(() => {
-        calls++;
-      }),
-    );
+    const model = observedFixture(Ref.update(calls, (count) => count + 1));
 
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
@@ -171,20 +164,20 @@ it.effect("refreshes through the same POST contract without disturbing other cac
       });
 
     const broad = yield* post("broad");
-    expect(calls).toBe(4);
+    yield* expectCount(calls, 4);
     const unchanged = yield* post("broad", false);
     expect(unchanged).toEqual(broad);
-    expect(calls).toBe(4);
+    yield* expectCount(calls, 4);
     const focused = yield* post("focused");
-    expect(calls).toBe(8);
+    yield* expectCount(calls, 8);
     const refreshed = yield* post("broad", true);
     expect(refreshed).toEqual(broad);
-    expect(calls).toBe(12);
+    yield* expectCount(calls, 12);
     const cachedBroad = yield* post("broad");
     expect(cachedBroad).toEqual(broad);
     const cachedFocused = yield* post("focused");
     expect(cachedFocused).toEqual(focused);
-    expect(calls).toBe(12);
+    yield* expectCount(calls, 12);
 
     // Each explicit refresh requests new work; ordinary reads still coalesce separately.
     const repeated = yield* Effect.all([post("broad", true), post("broad", true)], {
@@ -192,31 +185,29 @@ it.effect("refreshes through the same POST contract without disturbing other cac
     });
 
     expect(repeated).toEqual([broad, broad]);
-    expect(calls).toBe(20);
+    yield* expectCount(calls, 20);
     const focusedAfterRefreshes = yield* post("focused");
     expect(focusedAfterRefreshes).toEqual(focused);
-    expect(calls).toBe(20);
+    yield* expectCount(calls, 20);
   }),
 );
 
 it.effect("returns a safe 503 for a failed refresh and performs fresh work on retry", () =>
   Effect.gen(function* () {
-    let calls = 0;
+    const calls = yield* Ref.make(0);
+    const failNext = yield* Ref.make(false);
 
-    const model = observedFixture(() =>
-      Effect.suspend(() => {
-        calls++;
+    const original = new AiError.AiError({
+      module: "SECRET fixture",
+      method: "decide",
+      reason: new AiError.RateLimitError({ metadata: { body: "SECRET body" } }),
+    });
 
-        return calls === 5
-          ? Effect.fail(
-              new AiError.AiError({
-                module: "SECRET fixture",
-                method: "decide",
-                reason: new AiError.RateLimitError({ metadata: { body: "SECRET body" } }),
-              }),
-            )
-          : Effect.void;
-      }),
+    const model = observedFixture(
+      Ref.update(calls, (count) => count + 1).pipe(
+        Effect.andThen(Ref.getAndSet(failNext, false)),
+        Effect.flatMap((armed) => (armed ? Effect.fail(original) : Effect.void)),
+      ),
     );
 
     const runtime = yield* Effect.acquireRelease(
@@ -242,7 +233,8 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
 
     const initial = yield* post();
     expect(initial.status).toBe(200);
-    expect(calls).toBe(4);
+    yield* expectCount(calls, 4);
+    yield* Ref.set(failNext, true);
     const failed = yield* post(true);
     expect(failed.status).toBe(503);
     expect(failed.headers.get("Cache-Control")).toBe("no-store");
@@ -260,29 +252,25 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
         retryable: true,
       }),
     );
-    expect(calls).toBe(5);
+    yield* expectCount(calls, 5);
     const retried = yield* post();
     expect(retried.status).toBe(200);
     const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
     const value = yield* Effect.promise(() => retried.json());
     const reply = yield* decodeResponse(value);
     expect(reply.rows).toHaveLength(24);
-    expect(calls).toBe(9);
+    yield* expectCount(calls, 9);
     const cached = yield* post();
     expect(cached.status).toBe(200);
-    expect(calls).toBe(9);
+    yield* expectCount(calls, 9);
   }),
 );
 
 it.effect("rejects nonboolean refresh values with a safe 400 before any inference", () =>
   Effect.gen(function* () {
-    let calls = 0;
+    const calls = yield* Ref.make(0);
 
-    const model = observedFixture(() =>
-      Effect.sync(() => {
-        calls++;
-      }),
-    );
+    const model = observedFixture(Ref.update(calls, (count) => count + 1));
 
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
@@ -314,20 +302,16 @@ it.effect("rejects nonboolean refresh values with a safe 400 before any inferenc
       );
 
       expect(failure).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
-      expect(calls).toBe(0);
+      yield* expectCount(calls, 0);
     }
   }),
 );
 
 it.effect("rejects malformed hints without exposing their contents or starting inference", () =>
   Effect.gen(function* () {
-    let calls = 0;
+    const calls = yield* Ref.make(0);
 
-    const model = observedFixture(() =>
-      Effect.sync(() => {
-        calls++;
-      }),
-    );
+    const model = observedFixture(Ref.update(calls, (count) => count + 1));
 
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
@@ -352,7 +336,7 @@ it.effect("rejects malformed hints without exposing their contents or starting i
       const document = yield* TestJson.decode(wire);
       const expected = yield* TestJson.decode('{"_tag":"InvalidHints"}');
       expect(document).toEqual(expected);
-      expect(calls).toBe(0);
+      yield* expectCount(calls, 0);
     }
   }),
 );
@@ -463,33 +447,16 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
-    let calls = 0;
-    let interruptions = 0;
+    const calls = yield* Ref.make(0);
+    const interruptions = yield* Ref.make(0);
 
-    const model = Layer.effect(
-      DecisionModel.DecisionModel,
-      Effect.gen(function* () {
-        const fixture = yield* DecisionModel.DecisionModel;
-
-        return DecisionModel.DecisionModel.of({
-          ...fixture,
-          decide: (definition, options) =>
-            Effect.gen(function* () {
-              calls++;
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
-
-              return yield* fixture.decide(definition, options);
-            }).pipe(
-              Effect.onInterrupt(() =>
-                Effect.sync(() => {
-                  interruptions++;
-                }),
-              ),
-            ),
-        });
-      }),
-    ).pipe(Layer.provide(FixtureModel));
+    const model = observedFixture(
+      Ref.update(calls, (count) => count + 1).pipe(
+        Effect.andThen(Deferred.succeed(started, undefined)),
+        Effect.andThen(Deferred.await(release)),
+      ),
+      Ref.update(interruptions, (count) => count + 1),
+    );
 
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(PanelResults.layerNoDeps.pipe(Layer.provide(model)))),
@@ -530,14 +497,14 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     );
 
     yield* Effect.promise(() => runtime.runPromise(Effect.yieldNow));
-    expect(calls).toBe(1);
+    yield* expectCount(calls, 1);
     yield* Scope.close(clientScope, Exit.void);
     const response = yield* Effect.promise(() => cancelled);
     expect(response.status).toBe(499);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const body = yield* Effect.promise(() => response.text());
     expect(body).toBe("");
-    expect(interruptions).toBe(0);
+    yield* expectCount(interruptions, 0);
     yield* Deferred.succeed(release, undefined);
     const remainingResponse = yield* Effect.promise(() => remaining);
     expect(remainingResponse.status).toBe(200);
@@ -547,8 +514,8 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     const reply = yield* decodeResponse(value);
     expect(reply.rows).toHaveLength(24);
     // Both HTTP waiters share the four provider batches for this panel.
-    expect(calls).toBe(4);
-    expect(interruptions).toBe(0);
+    yield* expectCount(calls, 4);
+    yield* expectCount(interruptions, 0);
   }),
 );
 
