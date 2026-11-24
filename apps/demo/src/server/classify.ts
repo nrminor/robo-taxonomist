@@ -1,7 +1,8 @@
 import "server-only";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Schema } from "effect";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpServerRequest } from "effect/http";
 import { ClassificationFailure, ClassifyRequest, PanelResponse } from "../lib/contract.ts";
+import { retainCauseAs } from "../lib/failure-diagnostic.ts";
 import { publicCauseFailure } from "../lib/failures.ts";
 import { classifyPanel, PanelResults } from "./panel-results.ts";
 import { ConfiguredPanelResults } from "./configured-model.ts";
@@ -24,28 +25,30 @@ const failureStatus = (failure: ClassificationFailure): number =>
     InternalFailure: () => 500,
   });
 
-const classifyRequest = Effect.fn("classifyRequest")(function* (request: Request) {
-  const json = yield* Effect.tryPromise({
-    try: (): Promise<unknown> => request.json(),
-    catch: () => ClassificationFailure.cases.InvalidPanel.make({}),
-  });
+const decodeEnvelope = Schema.decodeUnknownEffect(requestEnvelope, {
+  onExcessProperty: "error",
+});
 
-  yield* Schema.decodeUnknownEffect(requestEnvelope, {
-    onExcessProperty: "error",
-  })(json).pipe(Effect.mapError(() => ClassificationFailure.cases.InvalidPanel.make({})));
+// Decode the parsed value strictly: the JSON codec treats null optional fields as absent.
+const readEnvelope = HttpServerRequest.HttpServerRequest.pipe(
+  Effect.flatMap((request) => request.json),
+  Effect.flatMap(decodeEnvelope),
+  retainCauseAs(() => ClassificationFailure.cases.InvalidPanel.make({})),
+);
 
-  const input = yield* Schema.decodeUnknownEffect(ClassifyRequest)(json).pipe(
-    Effect.mapError(() => ClassificationFailure.cases.InvalidHints.make({})),
+/** Classify the current HTTP request while preserving distinct envelope and hint failures. */
+export const classifyRequest = Effect.gen(function* () {
+  const envelope = yield* readEnvelope;
+
+  const input = yield* Schema.decodeUnknownEffect(ClassifyRequest)(envelope).pipe(
+    retainCauseAs(() => ClassificationFailure.cases.InvalidHints.make({})),
   );
 
   return yield* classifyPanel(input.panelId, input.refresh, input.hints);
-});
+}).pipe(Effect.withSpan("classifyRequest"));
 
 const toHttpResponse = (
-  exit: Exit.Exit<
-    PanelResponse,
-    Effect.Error<ReturnType<typeof classifyRequest>> | ClassificationFailure
-  >,
+  exit: Exit.Exit<PanelResponse, Effect.Error<typeof classifyRequest> | ClassificationFailure>,
 ): Response =>
   Exit.match(exit, {
     onSuccess: (value) =>
@@ -72,10 +75,18 @@ const toHttpResponse = (
 export const makeHandlers = (
   runtime: ManagedRuntime.ManagedRuntime<PanelResults, ClassificationFailure>,
 ) => ({
-  classifyHttp: async (request: Request): Promise<Response> =>
-    toHttpResponse(
-      await runtime.runPromiseExit(classifyRequest(request), { signal: request.signal }),
-    ),
+  classifyHttp: async (request: Request): Promise<Response> => {
+    const program = classifyRequest.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(request),
+      ),
+    );
+
+    const exit = await runtime.runPromiseExit(program, { signal: request.signal });
+
+    return toHttpResponse(exit);
+  },
 });
 
 const runtime = ManagedRuntime.make(

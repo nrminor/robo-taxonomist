@@ -8,6 +8,7 @@ import {
   ClassifyRequest,
   PanelResponse,
 } from "../lib/contract.ts";
+import { retainCauseAs } from "../lib/failure-diagnostic.ts";
 
 /** Server failures plus local transport/decoding failures, whose causes are not server response fields. */
 export const RequestFailure = Schema.TaggedUnion({
@@ -27,7 +28,7 @@ const encodeRequest = (request: typeof ClassifyRequest.Type) =>
   HttpClientRequest.schemaBodyJson(ClassifyRequest)(
     HttpClientRequest.post("/api/classify"),
     request,
-  ).pipe(Effect.mapError(() => RequestFailure.cases.InternalFailure.make({})));
+  ).pipe(retainCauseAs(() => RequestFailure.cases.InternalFailure.make({})));
 
 const readSuccess = (response: HttpClientResponse.HttpClientResponse, panelId: PanelId) =>
   HttpClientResponse.schemaBodyJson(PanelResponse)(response).pipe(

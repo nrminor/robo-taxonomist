@@ -1,32 +1,42 @@
 // @vitest-environment node
+import assert from "node:assert/strict";
 import { expect, it } from "@effect/vitest";
 import { afterAll, vi } from "vitest";
 import {
+  Cause,
+  Context,
   Data,
   Deferred,
   Effect,
   Exit,
   Layer,
   ManagedRuntime,
+  Option,
   Record,
+  Redacted,
   Ref,
   Schema,
   Scope,
 } from "effect";
 import { AiError, DecisionModel } from "effect/ai";
+import { HttpClientRequest, HttpClientResponse, HttpServerRequest } from "effect/http";
 import { Errors } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
+import { FailureDiagnostic } from "../src/lib/failure-diagnostic.ts";
 import { POST } from "../src/app/api/classify/route.ts";
-import { makeHandlers } from "../src/server/classify.ts";
+import { classifyRequest, makeHandlers } from "../src/server/classify.ts";
 import { classifyPanel, PanelResults } from "../src/server/panel-results.ts";
 import { expectCount, observedFixture } from "./fixture-decision.ts";
 import * as TestJson from "./Json.ts";
 
-vi.mock("server-only", () => ({}));
-
 vi.stubEnv("DEMO_MODEL", "fixture");
 
 afterAll(() => vi.unstubAllEnvs());
+
+const decodePanelReply = HttpClientResponse.schemaBodyJson(PanelResponse);
+
+const readPanelReply = (request: Request, response: Response) =>
+  decodePanelReply(HttpClientResponse.fromWeb(HttpClientRequest.fromWeb(request), response));
 
 it.effect("treats invalid server catalog input as a safe internal failure", () =>
   Effect.gen(function* () {
@@ -146,21 +156,13 @@ it.effect("refreshes through the same POST contract without disturbing other cac
       Effect.gen(function* () {
         const body = yield* TestJson.encode({ panelId, refresh });
 
-        const response = yield* Effect.promise(() =>
-          handlers.classifyHttp(
-            new Request("http://localhost/api/classify", {
-              method: "POST",
-              body,
-            }),
-          ),
-        );
+        const request = new Request("http://localhost/api/classify", { method: "POST", body });
+        const response = yield* Effect.promise(() => handlers.classifyHttp(request));
 
         expect(response.status).toBe(200);
         expect(response.headers.get("Cache-Control")).toBe("no-store");
-        const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
-        const value = yield* Effect.promise(() => response.json());
 
-        return yield* decodeResponse(value);
+        return yield* readPanelReply(request, response);
       });
 
     const broad = yield* post("broad");
@@ -219,48 +221,38 @@ it.effect("returns a safe 503 for a failed refresh and performs fresh work on re
 
     const post = (refresh?: boolean) =>
       TestJson.encode({ panelId: "broad", refresh }).pipe(
-        Effect.flatMap((body) =>
-          Effect.promise(() =>
-            handlers.classifyHttp(
-              new Request("http://localhost/api/classify", {
-                method: "POST",
-                body,
-              }),
-            ),
-          ),
-        ),
+        Effect.flatMap((body) => {
+          const request = new Request("http://localhost/api/classify", { method: "POST", body });
+
+          return Effect.promise(() => handlers.classifyHttp(request)).pipe(
+            Effect.map((response) => ({ request, response })),
+          );
+        }),
       );
 
-    const initial = yield* post();
+    const { response: initial } = yield* post();
     expect(initial.status).toBe(200);
     yield* expectCount(calls, 4);
     yield* Ref.set(failNext, true);
-    const failed = yield* post(true);
+    const { response: failed } = yield* post(true);
     expect(failed.status).toBe(503);
     expect(failed.headers.get("Cache-Control")).toBe("no-store");
     const wire = yield* Effect.promise(() => failed.text());
     expect(wire).not.toContain("SECRET");
     const document = yield* TestJson.decode(wire);
 
-    const failure = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(ClassificationFailure))(
-      document,
+    const expected = yield* TestJson.decode(
+      '{"_tag":"ModelFailure","reason":{"_tag":"RateLimitError"},"retryable":true}',
     );
 
-    expect(failure).toEqual(
-      ClassificationFailure.cases.ModelFailure.make({
-        reason: PublicModelReason.cases.RateLimitError.make({}),
-        retryable: true,
-      }),
-    );
+    expect(document).toEqual(expected);
     yield* expectCount(calls, 5);
-    const retried = yield* post();
+    const { request: retryRequest, response: retried } = yield* post();
     expect(retried.status).toBe(200);
-    const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
-    const value = yield* Effect.promise(() => retried.json());
-    const reply = yield* decodeResponse(value);
+    const reply = yield* readPanelReply(retryRequest, retried);
     expect(reply.rows).toHaveLength(24);
     yield* expectCount(calls, 9);
-    const cached = yield* post();
+    const { response: cached } = yield* post();
     expect(cached.status).toBe(200);
     yield* expectCount(calls, 9);
   }),
@@ -341,6 +333,35 @@ it.effect("rejects malformed hints without exposing their contents or starting i
   }),
 );
 
+it.effect("keeps the rejected hint cause on the internal classification failure", () =>
+  Effect.gen(function* () {
+    const request = new Request("http://localhost/api/classify", {
+      method: "POST",
+      body: '{"panelId":"broad","hints":["SECRET",1]}',
+    });
+
+    const exit = yield* classifyRequest.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(request),
+      ),
+      Effect.provideService(PanelResults, {
+        classify: () => Effect.die("Invalid hints must not start classification"),
+      }),
+      Effect.exit,
+    );
+
+    assert(Exit.isFailure(exit));
+    const failure = Option.getOrThrow(Cause.findErrorOption(exit.cause));
+    expect(failure).toSatisfy(ClassificationFailure.guards.InvalidHints);
+
+    const diagnostic = Context.getOrUndefined(Cause.annotations(exit.cause), FailureDiagnostic);
+    assert(diagnostic !== undefined);
+    const original = Option.getOrThrow(Cause.findErrorOption(Redacted.value(diagnostic)));
+    expect(Schema.isSchemaError(original)).toBe(true);
+  }),
+);
+
 it.effect("passes exact hint text through HTTP to every Broad batch", () =>
   Effect.gen(function* () {
     const states: DecisionModel.ProviderOptions["state"][] = [];
@@ -375,19 +396,15 @@ it.effect("passes exact hint text through HTTP to every Broad batch", () =>
       hints: ["  contextual note  "],
     });
 
-    const response = yield* Effect.promise(() =>
-      makeHandlers(runtime).classifyHttp(
-        new Request("http://localhost/api/classify", {
-          method: "POST",
-          body: requestBody,
-        }),
-      ),
-    );
+    const request = new Request("http://localhost/api/classify", {
+      method: "POST",
+      body: requestBody,
+    });
+
+    const response = yield* Effect.promise(() => makeHandlers(runtime).classifyHttp(request));
 
     expect(response.status).toBe(200);
-    const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
-    const value = yield* Effect.promise(() => response.json());
-    const reply = yield* decodeResponse(value);
+    const reply = yield* readPanelReply(request, response);
     expect(reply.rows).toHaveLength(24);
     expect(reply.rows.every((row) => row.matches.length === 6)).toBe(true);
     expect(states).toHaveLength(4);
@@ -488,13 +505,13 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
 
     yield* Deferred.await(started);
 
-    const remaining = handlers.classifyHttp(
-      new Request("http://localhost/api/classify", {
-        method: "POST",
-        body: requestBody,
-        signal: remainingSignal,
-      }),
-    );
+    const remainingRequest = new Request("http://localhost/api/classify", {
+      method: "POST",
+      body: requestBody,
+      signal: remainingSignal,
+    });
+
+    const remaining = handlers.classifyHttp(remainingRequest);
 
     yield* Effect.promise(() => runtime.runPromise(Effect.yieldNow));
     yield* expectCount(calls, 1);
@@ -509,9 +526,7 @@ it.effect("cancels one HTTP waiter without cancelling another request for the sa
     const remainingResponse = yield* Effect.promise(() => remaining);
     expect(remainingResponse.status).toBe(200);
     expect(remainingResponse.headers.get("Cache-Control")).toBe("no-store");
-    const decodeResponse = Schema.decodeUnknownEffect(Schema.toCodecJson(PanelResponse));
-    const value = yield* Effect.promise(() => remainingResponse.json());
-    const reply = yield* decodeResponse(value);
+    const reply = yield* readPanelReply(remainingRequest, remainingResponse);
     expect(reply.rows).toHaveLength(24);
     // Both HTTP waiters share the four provider batches for this panel.
     yield* expectCount(calls, 4);
@@ -541,12 +556,8 @@ it("returns only a safe 500 reply for a provider defect", async () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const wire = await response.text();
     expect(wire).not.toContain("SECRET");
-    const expected = ClassificationFailure.cases.InternalFailure.make({});
-    expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-        TestJson.decodeSync(wire),
-      ),
-    ).toEqual(expected);
+    const expected = TestJson.decodeSync('{"_tag":"InternalFailure"}');
+    expect(TestJson.decodeSync(wire)).toEqual(expected);
 
     const repeated = await handlers.classifyHttp(
       new Request("http://localhost/api/classify", {
@@ -556,9 +567,7 @@ it("returns only a safe 500 reply for a provider defect", async () => {
     );
 
     expect(repeated.status).toBe(500);
-    expect(
-      Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(await repeated.json()),
-    ).toEqual(expected);
+    expect(TestJson.decodeSync(await repeated.text())).toEqual(expected);
   } finally {
     await runtime.dispose();
   }
@@ -613,27 +622,28 @@ it("classifies the initial Broad groups panel through the POST wire contract", a
 
   expect(response.status).toBe(200);
   expect(response.headers.get("Cache-Control")).toBe("no-store");
-  const wire = await response.json();
+  const wire = TestJson.decodeSync(await response.text());
   const reply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(wire);
   expect(reply.panelId).toBe("broad");
   expect(reply.rows).toHaveLength(24);
   expect(() => Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(wire)).toThrow();
 });
 
-it("classifies the nested panel through the POST wire contract", async () => {
-  const response = await POST(
-    new Request("http://localhost/api/classify", {
+it.effect("classifies the nested panel through the POST wire contract", () =>
+  Effect.gen(function* () {
+    const request = new Request("http://localhost/api/classify", {
       method: "POST",
       body: TestJson.encodeSync({ panelId: "nested" }),
-    }),
-  );
+    });
 
-  expect(response.status).toBe(200);
-  expect(response.headers.get("Cache-Control")).toBe("no-store");
-  const reply = Schema.decodeUnknownSync(Schema.toCodecJson(PanelResponse))(await response.json());
-  expect(reply.panelId).toBe("nested");
-  expect(reply.rows).toHaveLength(24);
-});
+    const response = yield* Effect.promise(() => POST(request));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const reply = yield* readPanelReply(request, response);
+    expect(reply.panelId).toBe("nested");
+    expect(reply.rows).toHaveLength(24);
+  }),
+);
 
 it.each([
   TestJson.encodeSync({ panelId: "SECRET invalid panel" }),
@@ -641,6 +651,7 @@ it.each([
   TestJson.encodeSync({ panelId: "nested", records: [{ name: "SECRET record" }] }),
   TestJson.encodeSync({ panelId: "nested", provider: "SECRET provider" }),
   TestJson.encodeSync({ panelId: "nested", extra: "SECRET extra field" }),
+  TestJson.encodeSync({ panelId: "nested", extra: true, hints: ["SECRET", 1] }),
   TestJson.encodeSync({}),
   TestJson.encodeSync(null),
 ])("rejects invalid input with a safe 400 reply: %s", async (body) => {
@@ -652,9 +663,7 @@ it.each([
   expect(response.headers.get("Cache-Control")).toBe("no-store");
   const wire = await response.text();
   expect(wire).not.toContain("SECRET");
-  expect(
-    Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(TestJson.decodeSync(wire)),
-  ).toEqual(ClassificationFailure.cases.InvalidPanel.make({}));
+  expect(TestJson.decodeSync(wire)).toEqual(TestJson.decodeSync('{"_tag":"InvalidPanel"}'));
 });
 
 it("does not serialize an internal failure for an already cancelled request", async () => {

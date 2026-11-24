@@ -8,7 +8,17 @@ export default defineConfig({
     allowOnly: false,
     restoreMocks: true,
     projects: [
-      { test: { name: "node", environment: "node", include: ["test/**/*.test.ts"] } },
+      {
+        ssr: {
+          resolve: { conditions: ["react-server", "module", "node", "development|production"] },
+        },
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["test/**/*.test.ts"],
+          server: { deps: { inline: ["server-only"] } },
+        },
+      },
       {
         optimizeDeps: { include: ["react/jsx-dev-runtime", "effect/reactivity/AsyncResult"] },
         test: {

@@ -6,6 +6,7 @@ import {
   Array,
   Cause,
   Clock,
+  Config,
   ConfigProvider,
   Context,
   DateTime,
@@ -22,13 +23,12 @@ import { AiError, Decision, DecisionModel } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import { TaxonMatchJudgment, TaxonName, Taxonomy } from "robo-taxonomist";
 import { ClassificationFailure, PanelResponse, PublicModelReason } from "../src/lib/contract.ts";
+import { FailureDiagnostic } from "../src/lib/failure-diagnostic.ts";
 import { makeHandlers } from "../src/server/classify.ts";
 import { ConfiguredPanelResults } from "../src/server/configured-model.ts";
 import * as ClefModel from "../src/server/clef-model.ts";
 import { PanelResults } from "../src/server/panel-results.ts";
 import * as TestJson from "./Json.ts";
-
-vi.mock("server-only", () => ({}));
 
 const requestPanel = (panelId = "broad") =>
   new Request("http://localhost/api/classify", {
@@ -249,21 +249,27 @@ it.each(invalidConfigurations)(
       const response = await handlers.classifyHttp(requestPanel());
       expect(response.status).toBe(503);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
-      const expected = ClassificationFailure.cases.ConfigurationFailure.make({});
+      const expected = TestJson.decodeSync('{"_tag":"ConfigurationFailure"}');
       const wire = await response.text();
       expect(wire).not.toContain(token);
       expect(wire).not.toContain("SECRET");
-      expect(
-        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(
-          TestJson.decodeSync(wire),
-        ),
-      ).toEqual(expected);
+      expect(TestJson.decodeSync(wire)).toEqual(expected);
       const repeated = await handlers.classifyHttp(requestPanel());
       expect(repeated.status).toBe(503);
-      expect(
-        Schema.decodeUnknownSync(Schema.toCodecJson(ClassificationFailure))(await repeated.json()),
-      ).toEqual(expected);
+      expect(TestJson.decodeSync(await repeated.text())).toEqual(expected);
       expect(fetch).not.toHaveBeenCalled();
+
+      const startup = await runtime.runPromiseExit(Effect.void);
+      assert(Exit.isFailure(startup));
+
+      const diagnostic = Context.getOrUndefined(
+        Cause.annotations(startup.cause),
+        FailureDiagnostic,
+      );
+
+      assert(diagnostic !== undefined);
+      const original = Option.getOrThrow(Cause.findErrorOption(Redacted.value(diagnostic)));
+      expect(original).toBeInstanceOf(Config.ConfigError);
     } finally {
       await runtime.dispose();
     }
