@@ -19,6 +19,7 @@ export const RecordControls = () => {
   const choose = useAtomSet(recordSelectionAtom);
   const recordId = Option.getOrUndefined(selection)?.recordId;
   const record = records.find((entry) => entry.id === recordId);
+
   return (
     <>
       <section aria-labelledby="current-record-label">

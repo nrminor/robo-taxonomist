@@ -26,15 +26,19 @@ const classifyFixture = (panelId: PanelId) =>
 
 const renderDemo = async (interactiveFetch: typeof globalThis.fetch) => {
   const fetch = initialBroadReplyThenFetch(await classifyFixture("broad"), interactiveFetch);
+
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   const view = await render(
     <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
       <Demo />
     </RegistryProvider>,
   );
+
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+
   return view;
 };
 
@@ -119,6 +123,7 @@ it("preserves row identity and an open native disclosure for repeated examples, 
   await summary.click();
   const disclosure = summary.element().parentElement;
   await expect.element(disclosure).toHaveAttribute("open");
+
   for (const repeat of [1, 2]) {
     await view.getByRole("button", { name: "Inspect species example" }).click();
     expect(row.element(), `selection ${repeat} retains the row`).toBe(originalRow);
@@ -126,6 +131,7 @@ it("preserves row identity and an open native disclosure for repeated examples, 
     await expect.element(disclosure).toHaveAttribute("open");
     await expect.element(row).toHaveAttribute("aria-pressed", "true");
   }
+
   await view.getByRole("button", { name: "Inspect genus-only example" }).click();
   await expect
     .element(fungi.getByText("Answer probabilities").element().parentElement)
@@ -158,9 +164,11 @@ it("scrolls only the real record list for examples on mobile and supports native
   await page.viewport(390, 1000);
   const view = await renderDemo(unexpectedFetch());
   const scroller = view.getByLabelText("Sample records and selected-record matches").element();
+
   for (const { example, name } of examples) {
     const button = view.getByRole("button", { name: example });
     const row = view.getByRole("button", { name: new RegExp(`^${name}, `) });
+
     for (const repeat of [1, 2]) {
       scroller.scrollTop = name === "Saccharomyces cerevisiae" ? scroller.scrollHeight : 0;
       button.element().scrollIntoView({ block: "center", behavior: "instant" });
@@ -172,6 +180,7 @@ it("scrolls only the real record list for examples on mobile and supports native
           () => {
             const bounds = scroller.getBoundingClientRect();
             const record = row.element().getBoundingClientRect();
+
             return record.top >= bounds.top - 0.6 && record.bottom <= bounds.bottom + 0.6;
           },
           { message: `${example}, selection ${repeat} is inside the list viewport` },
@@ -180,6 +189,7 @@ it("scrolls only the real record list for examples on mobile and supports native
       expect(Math.abs(window.scrollY - pageY)).toBeLessThanOrEqual(0.6);
     }
   }
+
   const row = view.getByRole("button", { name: /^unclassified microorganism, / });
   row.element().focus({ preventScroll: true });
   await expect.element(row).toHaveFocus();
@@ -194,17 +204,21 @@ it("shows a focused genus record ruling out the species target after a real pane
     const request = Schema.decodeSync(Schema.fromJsonString(ClassifyRequest))(
       await new Response(init?.body).text(),
     );
+
     return Response.json(await classifyFixture(request.panelId));
   });
+
   const view = await renderDemo(interactiveFetch);
   await view.getByRole("radio", { name: "Families, genera and species" }).click();
   await expect
     .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
     .toBeVisible();
+
   const row = view.getByRole("button", {
     name: "Lactiplantibacillus, 3% of sample. No matches. Select record",
     exact: true,
   });
+
   await row.click();
   const inspector = view.getByRole("region", { name: "Lactiplantibacillus", exact: true });
   await expect

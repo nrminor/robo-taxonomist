@@ -60,16 +60,19 @@ export const predicateSupports = (requestedRelation: Relation, p: SetProbabiliti
         p.bothEmpty,
         p.leftEmpty,
       ]);
+
       const no = AcceptancePolicy.sumProbabilities([
         p.properSuperset,
         p.partialOverlap,
         p.disjoint,
         p.rightEmpty,
       ]);
+
       return { yes, no };
     }),
     Match.when("proper-subset", () => {
       const yes = AcceptancePolicy.sumProbabilities([p.properSubset, p.leftEmpty]);
+
       const no = AcceptancePolicy.sumProbabilities([
         p.equal,
         p.properSuperset,
@@ -78,10 +81,12 @@ export const predicateSupports = (requestedRelation: Relation, p: SetProbabiliti
         p.bothEmpty,
         p.rightEmpty,
       ]);
+
       return { yes, no };
     }),
     Match.when("equivalent", () => {
       const yes = AcceptancePolicy.sumProbabilities([p.equal, p.bothEmpty]);
+
       const no = AcceptancePolicy.sumProbabilities([
         p.properSubset,
         p.properSuperset,
@@ -90,6 +95,7 @@ export const predicateSupports = (requestedRelation: Relation, p: SetProbabiliti
         p.leftEmpty,
         p.rightEmpty,
       ]);
+
       return { yes, no };
     }),
     Match.when("overlap", () => {
@@ -99,12 +105,14 @@ export const predicateSupports = (requestedRelation: Relation, p: SetProbabiliti
         p.properSuperset,
         p.partialOverlap,
       ]);
+
       const no = AcceptancePolicy.sumProbabilities([
         p.disjoint,
         p.bothEmpty,
         p.leftEmpty,
         p.rightEmpty,
       ]);
+
       return { yes, no };
     }),
     Match.when("disjoint", () => {
@@ -114,12 +122,14 @@ export const predicateSupports = (requestedRelation: Relation, p: SetProbabiliti
         p.leftEmpty,
         p.rightEmpty,
       ]);
+
       const no = AcceptancePolicy.sumProbabilities([
         p.equal,
         p.properSubset,
         p.properSuperset,
         p.partialOverlap,
       ]);
+
       return { yes, no };
     }),
     Match.exhaustive,

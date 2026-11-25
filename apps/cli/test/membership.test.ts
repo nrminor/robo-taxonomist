@@ -38,8 +38,10 @@ const invoke = (
   Effect.suspend(() => {
     let output = "";
     const decoder = new TextDecoder();
+
     return Effect.gen(function* () {
       const requests: (typeof wireRequest.Type)[] = [];
+
       const http = HttpClient.make((request) =>
         Effect.gen(function* () {
           const text = Match.value(request.body).pipe(
@@ -48,11 +50,15 @@ const invoke = (
               throw new Error("Expected a JSON provider request");
             }),
           );
+
           const payload = yield* Schema.decodeEffect(wireRequest)(text);
+
           const choices = Array.get(replies, requests.length).pipe(
             Option.getOrElse(() => ["member"]),
           );
+
           requests.push(payload);
+
           const answers = Record.fromEntries(
             choices.map((choice, index) => [
               `record${index}`,
@@ -71,7 +77,9 @@ const invoke = (
               },
             ]),
           );
+
           const body = yield* TestJson.encode({ model: "fixture-model", answers });
+
           return HttpClientResponse.fromWeb(
             request,
             new Response(body, {
@@ -80,11 +88,14 @@ const invoke = (
           );
         }).pipe(Effect.orDie),
       );
+
       const outcome = yield* Command.runWith(cli, { version: "test" })(args).pipe(
         Effect.result,
         Effect.provideService(HttpClient.HttpClient, http),
       );
+
       output += decoder.decode();
+
       return {
         outcome,
         requests,
@@ -122,6 +133,7 @@ it.effect("quotes delimiter-bearing membership TSV", () =>
       "--model",
       "custom/model",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.output).toBe(
       'judgment\trecord\tclarification_target\nMember\t"Voucher\tA17\n""sample"""\t\n',
@@ -135,6 +147,7 @@ it.effect("partitions a plain record file without requiring an encoding flag", (
     const directory = yield* fs.makeTempDirectoryScoped();
     const path = `${directory}/detections.txt`;
     yield* fs.writeFileString(path, "Voucher A17\n");
+
     const result = yield* invoke([
       "mem",
       "part",
@@ -144,6 +157,7 @@ it.effect("partitions a plain record file without requiring an encoding flag", (
       "--model",
       "custom/model",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([
       "judgment\trecord\tclarification_target",
@@ -157,13 +171,16 @@ it.effect("retains identifying fields and arbitrary metadata from structured rec
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
     const path = `${directory}/detections.json`;
+
     const record = {
       taxonId: { taxonomy: "ncbi", id: "123", revision: ["caller"] },
       abundance: 0.37,
       metadata: { sample: "A17", note: null },
     };
+
     const recordText = yield* TestJson.encode([record]);
     yield* fs.writeFileString(path, recordText);
+
     const result = yield* invoke([
       "membership",
       "partition",
@@ -175,11 +192,14 @@ it.effect("retains identifying fields and arbitrary metadata from structured rec
       "--format",
       "jsonl",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
+
     const expectedText = yield* TestJson.encode({
       record,
       judgment: Documents.MembershipJudgment.cases.Member.make({}),
     });
+
     expect(result.stdout).toEqual([expectedText]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -196,6 +216,7 @@ it.effect("asks the native all-records quantifier instead of returning membershi
       "--model",
       "custom/model",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["judgment\tquantifier\tclarification_target", "Yes\tall\t"]);
   }),
@@ -215,6 +236,7 @@ it.effect(
         "--model",
         "custom/model",
       ]);
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.stdout).toEqual(["judgment\tquantifier\tclarification_target", "Yes\tany\t"]);
     }),
@@ -232,6 +254,7 @@ it.effect("returns a successful native No when the none quantifier finds a membe
       "--model",
       "custom/model",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(["judgment\tquantifier\tclarification_target", "No\tnone\t"]);
   }),
@@ -258,6 +281,7 @@ it.effect(
         "1",
         "--no-header",
       ]);
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.stdout).toEqual(["Member\tA17\t", "Member\tB42\t"]);
       const questionIdsByRequest = result.requests.map(({ questions }) => Record.keys(questions));
@@ -288,12 +312,15 @@ it.effect("retains a quantifier clarification node in JSON after scanning the co
       ],
       [["undetermined"], ["multipleTarget0"]],
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     const expectedTarget = TaxonSet.of(TaxonName.make("Quercus"));
+
     const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
       quantifier: "all",
       target: expectedTarget,
     });
+
     const expectedText = yield* TestJson.encode(expected);
     expect(result.stdout).toEqual([expectedText]);
     expect(result.requests).toHaveLength(2);
@@ -314,6 +341,7 @@ it.effect.each([
       "custom/model",
       "--no-header",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([row]);
   }),
@@ -338,14 +366,19 @@ it.effect("preserves all five native buckets, duplicate records and within-bucke
       ],
       [["member", "notMember", "mixed", "undetermined", "multipleTarget0", "member"]],
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
+
     const wire = yield* Effect.forEach(result.stdout, (line) =>
       Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(line),
     );
+
     const expectedTarget = TaxonSet.of(TaxonName.make("Quercus"));
+
     const expectedClarification = Documents.MembershipJudgment.cases.MultipleTaxaInTarget.make({
       target: expectedTarget,
     });
+
     expect(wire).toEqual([
       { record: "A17", judgment: Documents.MembershipJudgment.cases.Member.make({}) },
       { record: "A17", judgment: Documents.MembershipJudgment.cases.Member.make({}) },
@@ -366,6 +399,7 @@ it.effect("uses literal-first then positional-file order without inspecting lite
     const second = `${directory}/second.jsonl`;
     yield* fs.writeFileString(first, "  A17  \nA17\n");
     yield* fs.writeFileString(second, '{"label":"B42","metadata":{"abundance":2}}\n');
+
     const result = yield* invoke(
       [
         "mem",
@@ -383,10 +417,13 @@ it.effect("uses literal-first then positional-file order without inspecting lite
       ],
       [["member", "member", "member", "member"]],
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
+
     const rows = yield* Effect.forEach(result.stdout, (line) =>
       Schema.decodeEffect(Schema.fromJsonString(Schema.Struct({ record: Schema.Json })))(line),
     );
+
     expect(rows.map((row) => row.record)).toEqual([
       first,
       "  A17  ",
@@ -412,6 +449,7 @@ it.effect.each([
       const directory = yield* fs.makeTempDirectoryScoped();
       const path = `${directory}/${file}`;
       yield* fs.writeFileString(path, contents);
+
       const result = yield* invoke([
         "mem",
         "part",
@@ -424,11 +462,14 @@ it.effect.each([
         "--format",
         "jsonl",
       ]);
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
+
       const expectedText = yield* TestJson.encode({
         record,
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       });
+
       expect(result.stdout).toEqual([expectedText]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -445,6 +486,7 @@ it.effect.each([
       const directory = yield* fs.makeTempDirectoryScoped();
       const path = `${directory}/records.${suffix}`;
       yield* fs.writeFileString(path, contents);
+
       const result = yield* invoke([
         "mem",
         "part",
@@ -456,6 +498,7 @@ it.effect.each([
         "--format",
         "jsonl",
       ]);
+
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.requests).toEqual([]);
@@ -480,6 +523,7 @@ it.effect.each([
       "--format",
       "json",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     const nativeText = yield* TestJson.encode(native);
     expect(result.stdout).toEqual([nativeText]);
@@ -501,6 +545,7 @@ it.effect.each([
       "custom/model",
       ...flags,
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.output).toBe(output);
     expect(result.requests).toEqual([]);
@@ -518,6 +563,7 @@ it.effect.each([
       const fs = yield* FileSystem.FileSystem;
       const directory = yield* fs.makeTempDirectoryScoped();
       const missing = `${directory}/missing.txt`;
+
       const result = yield* invoke([
         "mem",
         "part",
@@ -532,11 +578,14 @@ it.effect.each([
         "1",
         ...flags,
       ]);
+
       expect(Result.isFailure(result.outcome)).toBe(true);
+
       const expectedRow = {
         record: "A17",
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       };
+
       const expectedText = yield* TestJson.encode(expectedRow);
       expect(result.output).toBe(
         format === "jsonl" ? `${expectedText}\n` : `${prefix}Member\tA17\t\n`,
@@ -551,6 +600,7 @@ it.effect("reads all quantifier inputs before allowing a decisive early model an
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
     const missing = `${directory}/missing.txt`;
+
     const result = yield* invoke([
       "mem",
       "any",
@@ -564,6 +614,7 @@ it.effect("reads all quantifier inputs before allowing a decisive early model an
       "--batch-size",
       "1",
     ]);
+
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
     expect(result.requests).toEqual([]);
@@ -576,6 +627,7 @@ it.effect("quotes delimiter-bearing quantifier clarification text", () =>
       ["mem", "all", "--record", "A17", "--target", "Quercus\tFagus", "--model", "custom/model"],
       [["multipleTarget0"]],
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.output).toBe(
       'judgment\tquantifier\tclarification_target\nMultipleTaxaInTarget\tall\t"Quercus\tFagus"\n',
@@ -589,6 +641,7 @@ it.effect("retains an undetermined quantifier without clarification text in TSV"
       ["mem", "all", "--record", "A17", "--target", "Quercus", "--model", "custom/model"],
       [["undetermined"]],
     );
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.output).toBe("judgment\tquantifier\tclarification_target\nUndetermined\tall\t\n");
   }),
@@ -627,11 +680,14 @@ it.effect.each([
         [["member"]],
         text,
       );
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
+
       const expectedText = yield* TestJson.encode({
         record,
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       });
+
       expect(result.stdout).toEqual([expectedText]);
     }),
 );
@@ -655,6 +711,7 @@ it.effect.each([{ files: ["-", "-"] }, { files: ["-", "--targets-file", "-"] }])
         [["member"]],
         "A17\n",
       );
+
       expect(Result.isFailure(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([]);
       expect(result.requests).toEqual([]);
@@ -686,11 +743,14 @@ it.effect(
         ],
         [["member"], []],
       );
+
       expect(Result.isFailure(result.outcome)).toBe(true);
+
       const expectedRow = {
         record: "A17",
         judgment: Documents.MembershipJudgment.cases.Member.make({}),
       };
+
       const expectedText = yield* TestJson.encode(expectedRow);
       expect(result.stdout).toEqual([expectedText]);
       const stderr = yield* TestJson.encode(result.stderr);
@@ -706,6 +766,7 @@ it.effect("reports JSONL serialization limits as operational errors rather than 
       "null" +
       "}".repeat(20_000) +
       "}\n";
+
     const result = yield* invoke(
       [
         "mem",
@@ -721,6 +782,7 @@ it.effect("reports JSONL serialization limits as operational errors rather than 
       [],
       text,
     );
+
     expect(Result.isFailure(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([]);
     const stderr = yield* TestJson.encode(result.stderr);
@@ -767,6 +829,7 @@ it.effect.each([
         ],
         choices.map((choice) => [choice]),
       );
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
       const nativeText = yield* TestJson.encode(native);
       expect(result.stdout).toEqual([nativeText]);
@@ -797,12 +860,15 @@ it.effect(
         ],
         [["multipleTarget0"], ["member"]],
       );
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
       const expectedTarget = TaxonSet.of(TaxonName.make("Quercus"));
+
       const expected = Documents.QuantifierJudgment.cases.MultipleTaxaInTarget.make({
         quantifier: "any",
         target: expectedTarget,
       });
+
       const expectedText = yield* TestJson.encode(expected);
       expect(result.stdout).toEqual([expectedText]);
       expect(result.requests).toHaveLength(1);
@@ -834,6 +900,7 @@ it.effect(
         ],
         [["notMember"], ["member"], ["member"]],
       );
+
       expect(Result.isSuccess(result.outcome)).toBe(true);
       expect(result.stdout).toEqual([
         "judgment\trecord\tclarification_target",
@@ -857,11 +924,14 @@ it.effect("handles the empty target through the native primitive without a provi
       "--format",
       "jsonl",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
+
     const expectedRow = {
       record: "A17",
       judgment: Documents.MembershipJudgment.cases.NotMember.make({}),
     };
+
     const expectedText = yield* TestJson.encode(expectedRow);
     expect(result.stdout).toEqual([expectedText]);
     expect(result.requests).toEqual([]);
@@ -881,6 +951,7 @@ it.effect("retains a delimiter-bearing record and the complete native judgment i
       "--format",
       "jsonl",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual(['{"record":"Voucher\\tA17","judgment":{"_tag":"Member"}}']);
   }),
@@ -897,6 +968,7 @@ it.effect("checks one supplied record against a target with the native membershi
       "--model",
       "custom/model",
     ]);
+
     expect(Result.isSuccess(result.outcome)).toBe(true);
     expect(result.stdout).toEqual([
       "judgment\trecord\tclarification_target",

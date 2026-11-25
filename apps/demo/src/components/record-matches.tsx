@@ -20,9 +20,11 @@ export const RecordMatches = ({ findings }: { readonly findings: Display.PanelFi
     if (Option.isNone(selection) || selection.value.origin !== "example") return;
     const container = scroller.current;
     const button = selectedButton.current;
+
     if (!container || !button) return;
     const bounds = container.getBoundingClientRect();
     const rect = button.getBoundingClientRect();
+
     if (rect.top < bounds.top) container.scrollTop -= bounds.top - rect.top;
     else if (rect.bottom > bounds.bottom) container.scrollTop += rect.bottom - bounds.bottom;
   }, [selection]);
@@ -31,6 +33,7 @@ export const RecordMatches = ({ findings }: { readonly findings: Display.PanelFi
     selectedButton.current?.focus({ preventScroll: true });
     setSelection(Option.none());
   };
+
   return (
     <section aria-labelledby="check-records" className={styles.recordsSection}>
       <div className={styles.recordsHeading}>
@@ -61,8 +64,10 @@ export const RecordMatches = ({ findings }: { readonly findings: Display.PanelFi
                       style: { color: "var(--color-uncertain)" },
                     }
                   : { label: "No matches", style: { color: "var(--color-unmatched)" } };
+
             const active = record.id === selectedId;
             const share = Display.formatSampleShare(record.abundance);
+
             return (
               <li
                 key={record.id}

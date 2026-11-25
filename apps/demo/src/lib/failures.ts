@@ -1,12 +1,21 @@
-import { Cause, Duration, Match, Option, Schema } from "effect";
+import { Cause, Data, Duration, Match, Option, type Redacted, Schema } from "effect";
 import { AiError } from "effect/ai";
 import { ClassificationFailure, PublicModelReason } from "./contract.ts";
+
+/** An internal failure with the safe value to use at the HTTP or presentation boundary. */
+export class ClassificationFailureWithCause extends Data.TaggedError(
+  "ClassificationFailureWithCause",
+)<{
+  readonly failure: ClassificationFailure;
+  readonly cause: Redacted.Redacted<unknown>;
+}> {}
 
 const publicReason = Match.type<AiError.AiErrorReason>().pipe(
   Match.tagsExhaustive({
     RateLimitError: (reason) => {
       const millis =
         reason.retryAfter === undefined ? undefined : Duration.toMillis(reason.retryAfter);
+
       return PublicModelReason.cases.RateLimitError.make(
         millis !== undefined && Number.isFinite(millis) && millis >= 0
           ? { retryAfterMs: millis }
@@ -55,11 +64,18 @@ export const publicCauseFailure = (
 ): Option.Option<ClassificationFailure> => {
   if (Cause.hasDies(cause))
     return Option.some(ClassificationFailure.cases.InternalFailure.make({}));
+
   if (Cause.hasInterruptsOnly(cause)) return Option.none();
   const error = Cause.findErrorOption(cause);
+
   if (Option.isSome(error)) {
+    if (error.value instanceof ClassificationFailureWithCause)
+      return Option.some(error.value.failure);
+
     if (AiError.isAiError(error.value)) return Option.some(publicModelFailure(error.value));
+
     if (Schema.is(ClassificationFailure)(error.value)) return Option.some(error.value);
   }
+
   return Option.some(ClassificationFailure.cases.InternalFailure.make({}));
 };

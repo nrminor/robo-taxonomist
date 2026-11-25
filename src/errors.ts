@@ -86,11 +86,13 @@ export const TaxonQueryError = Schema.Union([
   TaxonRequestError,
   InvalidTaxonResponse,
 ]);
+
 /** The typed errors common to lookup queries. */
 export type TaxonQueryError = typeof TaxonQueryError.Type;
 
 /** Match query failures, including an ID outside the configured taxonomy view. */
 export const TaxonIdQueryError = Schema.Union([TaxonQueryError, TaxonSourceMismatch]);
+
 /** The typed errors of an ID lookup. */
 export type TaxonIdQueryError = typeof TaxonIdQueryError.Type;
 

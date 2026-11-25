@@ -79,6 +79,7 @@ export const accepts = (
   policy: AcceptancePolicy,
 ): boolean => {
   const margin = support - strongestAlternative;
+
   return (
     margin > 0 &&
     support >= policy.minimumSupport &&
@@ -120,6 +121,7 @@ export const select = <A>(
 
   for (let index = 1; index < candidates.length; index++) {
     const candidate = Array.getUnsafe(candidates, index);
+
     if (candidate.support > leading.support) {
       strongestAlternative = Math.max(strongestAlternative, leading.support);
       leading = candidate;

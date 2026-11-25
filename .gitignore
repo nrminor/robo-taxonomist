@@ -14,6 +14,23 @@
 !/vitest.config.ts
 !/LICENSE
 !/README.md
+!/AGENTS.md
+!/traits.ts
+!/.env.schema
+!/.agents/
+!/.agents/traits/
+!/.agents/traits/*.md
+
+!/tools/
+!/tools/clef/
+!/tools/clef/*.ts
+!/tools/clef/effect-rules.LICENSE
+!/tools/oxlint/
+!/tools/oxlint/anti-slop/
+!/tools/oxlint/anti-slop/**/
+!/tools/oxlint/anti-slop/**/*.ts
+!/tools/oxlint/anti-slop/**/LICENSE
+!/tools/oxlint/anti-slop/**/UPSTREAM.md
 
 !/src/
 !/src/**/
@@ -50,7 +67,7 @@
 !/apps/cli/README.md
 !/apps/cli/LICENSE
 !/apps/cli/tsconfig.json
-!/apps/cli/tsconfig.test.json
+!/apps/cli/test/tsconfig.json
 !/apps/cli/vitest.config.ts
 !/apps/cli/src/
 !/apps/cli/src/**/

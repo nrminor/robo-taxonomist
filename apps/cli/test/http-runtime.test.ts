@@ -36,6 +36,7 @@ const providerHttp = HttpClient.make((request) =>
         throw new Error("Expected a JSON provider request");
       }),
     );
+
     const decoded = yield* Schema.decodeEffect(providerRequest)(payload);
 
     expect(decoded.model).toBe("fixture-model");
@@ -59,15 +60,21 @@ const providerHttp = HttpClient.make((request) =>
         },
       },
     });
+
     const response = new Response(body, { headers: { "content-type": "application/json" } });
+
     return HttpClientResponse.fromWeb(request, response);
   }).pipe(Effect.orDie),
 );
+
 const configuration = ConfigProvider.layer(
   ConfigProvider.fromUnknown({ TYPESAFE_API_KEY: "fixture-key" }),
 );
+
 const transport = Layer.succeed(HttpClient.HttpClient, providerHttp);
+
 const provider = Model.modelLayer("fixture-model").pipe(Layer.provide([configuration, transport]));
+
 const options = Server.Options.make({
   host: "127.0.0.1",
   port: 0,
@@ -80,6 +87,7 @@ const options = Server.Options.make({
   batchSize: 16,
   concurrency: 1,
 });
+
 const running = Server.layer(options).pipe(Layer.provide(provider));
 
 it.effect.each([
@@ -101,9 +109,11 @@ it.effect.each([
       const baseUrl = HttpServer.formatAddress(server.address);
       const record = RecordLabel.make("Voucher A17");
       const records = Array.from({ length: test.records }, () => record);
+
       const taxon = Documents.SetDocument.cases.Taxon.make({
         record: Documents.RecordDocument.make({ scientificName: TaxonName.make("Quercus") }),
       });
+
       const target =
         test.targets === 1
           ? taxon
@@ -125,12 +135,14 @@ it.effect.each([
         const failure = yield* response.json;
 
         expect(response.status).toBe(413);
-        expect(failure).toEqual({
-          _tag: "CollectionLimit",
-          resource: test.resource,
-          maximum: test.maximum,
-          actual: test.actual,
-        });
+
+        const resource = yield* TestJson.encode(test.resource);
+
+        const expected = yield* TestJson.decode(
+          `{"_tag":"CollectionLimit","resource":${resource},"maximum":${test.maximum},"actual":${test.actual}}`,
+        );
+
+        expect(failure).toEqual(expected);
       }
     }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
   },
@@ -140,28 +152,34 @@ it.live("interrupts ongoing collection inference when the HTTP client disconnect
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const interrupted = yield* Deferred.make<void>();
+
     const pending = HttpClient.make(() =>
       Deferred.succeed(started, undefined).pipe(
         Effect.andThen(Effect.never),
         Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
       ),
     );
+
     const transport = Layer.succeed(HttpClient.HttpClient, pending);
+
     const provider = Model.modelLayer("fixture-model").pipe(
       Layer.provide([configuration, transport]),
     );
+
     const running = Server.layer(options).pipe(Layer.provide(provider));
 
     yield* Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
       const baseUrl = HttpServer.formatAddress(server.address);
       const client = yield* HttpApiClient.make(Api.api, { baseUrl });
+
       const request = client.classification.classify({
         payload: {
           records: [RecordLabel.make("Voucher A17")],
           panel: TaxonName.make("Quercus"),
         },
       });
+
       const fiber = yield* Effect.forkScoped(request);
       yield* Deferred.await(started);
 
@@ -174,6 +192,7 @@ it.live("interrupts ongoing collection inference when the HTTP client disconnect
           right: RecordLabel.make("A"),
         },
       });
+
       expect(stillServing).toBe(true);
     }).pipe(Effect.provide([running, FetchHttpClient.layer]));
   }).pipe(Effect.timeout("5 seconds")),
@@ -182,28 +201,37 @@ it.live("interrupts ongoing collection inference when the HTTP client disconnect
 it.live("returns a typed socket deadline and interrupts pending collection inference", () =>
   Effect.gen(function* () {
     const interrupted = yield* Deferred.make<void>();
+
     const pending = HttpClient.make(() =>
       Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
     );
+
     const transport = Layer.succeed(HttpClient.HttpClient, pending);
+
     const provider = Model.modelLayer("fixture-model").pipe(
       Layer.provide([configuration, transport]),
     );
+
     const bounded = Server.layer({ ...options, timeoutMs: 50 }).pipe(Layer.provide(provider));
 
     yield* Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
       const baseUrl = HttpServer.formatAddress(server.address);
       const endpoint = HttpClientRequest.post(`${baseUrl}/membership/partition`);
+
       const request = yield* HttpClientRequest.bodyJson(endpoint, {
         records: ["A"],
         target: "Quercus",
       });
+
       const response = yield* HttpClient.execute(request);
       const failure = yield* response.json;
 
       expect(response.status).toBe(504);
-      expect(failure).toEqual({ _tag: "RequestDeadline", timeoutMs: 50 });
+
+      const expected = yield* TestJson.decode('{"_tag":"RequestDeadline","timeoutMs":50}');
+
+      expect(failure).toEqual(expected);
       yield* Deferred.await(interrupted);
     }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
   }).pipe(Effect.timeout("5 seconds")),
@@ -214,11 +242,14 @@ it.effect("rejects deeply nested set expressions before the recursive endpoint s
     const server = yield* HttpServer.HttpServer;
     const baseUrl = HttpServer.formatAddress(server.address);
     const depth = 4096;
+
     const left =
       '{"_tag":"Difference","left":'.repeat(depth) +
       '{"_tag":"Empty"}' +
       ',"right":{"_tag":"Empty"}}'.repeat(depth);
+
     const body = `{"left":${left},"right":"Quercus"}`;
+
     const request = HttpClientRequest.post(`${baseUrl}/sets/union`).pipe(
       HttpClientRequest.bodyText(body, "application/json"),
     );
@@ -227,7 +258,10 @@ it.effect("rejects deeply nested set expressions before the recursive endpoint s
     const failure = yield* response.json;
 
     expect(response.status).toBe(400);
-    expect(failure).toEqual({ _tag: "RequestTooDeep", maxJsonDepth: 64 });
+
+    const expected = yield* TestJson.decode('{"_tag":"RequestTooDeep","maxJsonDepth":64}');
+
+    expect(failure).toEqual(expected);
   }).pipe(Effect.provide([running, FetchHttpClient.layer])),
 );
 
@@ -244,6 +278,7 @@ it.effect.each([
       const baseUrl = HttpServer.formatAddress(server.address);
       const metadata = "[".repeat(containers - 3) + "null" + "]".repeat(containers - 3);
       const body = `{"targets":[{"scientificName":"Quercus","metadata":${metadata}}]}`;
+
       const request = HttpClientRequest.post(`${baseUrl}/sets/create`).pipe(
         HttpClientRequest.bodyText(body, "Application/JSON; charset=utf-8"),
       );
@@ -251,9 +286,15 @@ it.effect.each([
       const response = yield* HttpClient.execute(request);
 
       expect(response.status).toBe(status);
+
       if (status === 400) {
         const failure = yield* response.json;
-        expect(failure).toEqual({ _tag: "RequestTooDeep", maxJsonDepth });
+
+        const expected = yield* TestJson.decode(
+          `{"_tag":"RequestTooDeep","maxJsonDepth":${maxJsonDepth}}`,
+        );
+
+        expect(failure).toEqual(expected);
       }
     }).pipe(
       Effect.provide([
@@ -278,9 +319,11 @@ it.effect("allows large flat inputs and ignores bracket characters inside JSON s
     const taxon = Documents.SetDocument.cases.Taxon.make({
       record: Documents.RecordDocument.make({ scientificName: target }),
     });
+
     const expected = Documents.SetDocument.cases.Union.make({
       operands: [taxon, taxon, ...targets.slice(2).map(() => taxon)],
     });
+
     expect(result).toEqual(expected);
   }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
 });
@@ -292,6 +335,7 @@ it.effect.each(["text/plain", "invalid"])(
       const server = yield* HttpServer.HttpServer;
       const baseUrl = HttpServer.formatAddress(server.address);
       const body = "[".repeat(100) + "null" + "]".repeat(100);
+
       const request = HttpClientRequest.post(`${baseUrl}/sets/create`).pipe(
         HttpClientRequest.bodyText(body, contentType),
       );
@@ -328,15 +372,19 @@ it.effect("serves generated OpenAPI and Scalar documents from the same running c
     const server = yield* HttpServer.HttpServer;
     const baseUrl = HttpServer.formatAddress(server.address);
     const specificationResponse = yield* HttpClient.get(`${baseUrl}/openapi.json`);
+
     const specificationSchema = Schema.Struct({
       paths: Schema.Record(Schema.String, Schema.Unknown),
     });
+
     const specification =
       yield* HttpClientResponse.schemaBodyJson(specificationSchema)(specificationResponse);
+
     const documentationResponse = yield* HttpClient.get(`${baseUrl}/docs`);
     const documentation = yield* documentationResponse.text;
 
     expect(specificationResponse.status).toBe(200);
+
     const expectedPaths = [
       "/compare/labels",
       "/compare/identity",
@@ -348,9 +396,11 @@ it.effect("serves generated OpenAPI and Scalar documents from the same running c
       "/sets/difference",
       "/sets/relation",
     ];
+
     for (const path of expectedPaths) {
       expect(Record.has(specification.paths, path), path).toBe(true);
     }
+
     expect(documentationResponse.status).toBe(200);
     expect(documentationResponse.headers["content-type"]).toContain("text/html");
     expect(documentation).toContain("/compare/identity");
@@ -361,6 +411,7 @@ it.effect("rejects malformed JSON over the actual socket without turning it into
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
     const baseUrl = HttpServer.formatAddress(server.address);
+
     const request = HttpClientRequest.post(`${baseUrl}/compare/labels`).pipe(
       HttpClientRequest.bodyText("{not JSON", "application/json"),
     );
@@ -377,9 +428,11 @@ it.effect(
     Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
       const baseUrl = HttpServer.formatAddress(server.address);
+
       const endpoint = HttpClientRequest.post(
         `${baseUrl}/compare/identity?model=request-model&apiKey=request-key`,
       );
+
       const request = yield* HttpClientRequest.bodyJson(endpoint, {
         left: "Quercus",
         right: "Fagus",
@@ -403,12 +456,15 @@ it.effect(
     return Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
       const baseUrl = HttpServer.formatAddress(server.address);
+
       const text = yield* TestJson.encode({
         left: "A".repeat(100),
         right: "B".repeat(100),
       });
+
       const bytes = new TextEncoder().encode(text);
       const body = Stream.make(bytes.subarray(0, 32), bytes.subarray(32));
+
       const request = HttpClientRequest.post(`${baseUrl}/compare/labels`).pipe(
         HttpClientRequest.bodyStream(body, { contentType: "application/json" }),
       );
@@ -417,7 +473,10 @@ it.effect(
       const failure = yield* response.json;
 
       expect(response.status).toBe(413);
-      expect(failure).toEqual({ _tag: "RequestTooLarge", maxBodyBytes: 64 });
+
+      const expected = yield* TestJson.decode('{"_tag":"RequestTooLarge","maxBodyBytes":64}');
+
+      expect(failure).toEqual(expected);
     }).pipe(Effect.provide([bounded, FetchHttpClient.layer]));
   },
 );

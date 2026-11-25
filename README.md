@@ -20,6 +20,14 @@ pnpm add robo-taxonomist
 
 This release supports Effect `^4.0.0`. With default settings, pnpm and other package managers will automatically install the right version of Effect if missing. If your application already uses Effect, make sure its version satisfies the library's peer requirement.
 
+## Repository checks
+
+Run `mise run bootstrap` and `mise run demo:browser:install` to prepare a checkout. Run `mise run check` before handoff: it builds and tests the project and runs Clef on changed source and tests. Use `mise run check:fast` between edits or `mise run check:offline` for the full credential-free suite.
+
+Clef sends selected changed files to Cloudflare. On macOS, configure its local credentials with `mise run demo:credentials:account` and `mise run demo:credentials:token`.
+
+Agents run `check_traits` on changed files before handoff through the standard Traits MCP server, not as part of the unattended checks. For local OpenCode setup, run `mise run traits:credentials:key`, `mise run traits:credentials:check`, and `mise run traits:connect`. No OpenAI key is needed in CI.
+
 Most operations in this library require internet access as well as access to a live decision model. Wire it up in an Effect `DecisionModel` layer, as demonstrated below.
 
 ## Example
@@ -468,9 +476,11 @@ const oakId = NcbiTaxonId.make({ id: "38942" });
 const oakName = TaxonName.make("Quercus robur");
 
 const inspectOak = Effect.gen(function* () {
+  const lookup = yield* TaxonLookup;
+
   // lookup by taxid. The result is tagged Found, Merged, Deleted, or NotFound and can
   // be matched on exhaustively
-  const result = yield* TaxonLookup.byId(oakId);
+  const result = yield* lookup.byId(oakId);
   const reportId = IdLookup.match(result, {
     Found: ({ entry }) => Effect.log("Current taxon", entry.taxon),
     Merged: ({ requested, entry }) => Effect.log("Merged ID", requested, entry.taxon.taxonId),
@@ -480,18 +490,20 @@ const inspectOak = Effect.gen(function* () {
   yield* reportId;
 
   // lookup by name is also supported
-  const candidates = yield* TaxonLookup.byName(oakName);
+  const candidates = yield* lookup.byName(oakName);
   yield* Effect.log("Name candidates", candidates);
 
   // lookup within the taxonomic hierarchy is also supported
-  const genus = yield* TaxonLookup.genusOf(oakId);
-  const nameMatches = yield* TaxonLookup.hasName(oakId, oakName);
+  const genus = yield* lookup.genusOf(oakId);
+  const nameMatches = yield* lookup.hasName(oakId, oakName);
 
   yield* Effect.log({ genus, nameMatches });
 });
 
 await Effect.runPromise(inspectOak.pipe(Effect.provide(LookupLive)));
 ```
+
+To use your own taxonomy source, build the service with `TaxonLookup.fromProvider({ source, byId, byName })` and provide it with `Layer.succeed(TaxonLookup, lookup)`. The library adds name checks and rank lookups to those two provider queries.
 
 The `NcbiDump` release property is optional; if you omit it, `robo-taxonomist` can't check to make sure a given taxid is being checked against the right dump release.
 
@@ -513,7 +525,7 @@ await Effect.runPromise(
 
 Let's say you want to provide the lookup at the application level but opt out of it in a particular scope. To force a model-only comparison, use `Effect.updateContext(Context.omit(TaxonLookup))` (with `Context` from `effect`). This hides the service for that comparison, leaving the loaded lookup for use elsewhere.
 
-You can also use the model first when you start with a free-text label. For example, use `classifyRecords` against a panel of known scientific names with taxon IDs. Once you've chosen a match that identifies the taxon, pass its target ID to `TaxonLookup.genusOf` and compare the returned genus ID with the one you're checking. If you only have the selected name, use `byName` to find candidates and resolve any ambiguity before choosing an ID. The model interprets the label; the taxonomy lookup tells you where a known taxon belongs.
+You can also use the model first when you start with a free-text label. For example, use `classifyRecords` against a panel of known scientific names with taxon IDs. Once you've chosen a match that identifies the taxon, yield `TaxonLookup` and pass the target ID to `lookup.genusOf`. Compare the returned genus ID with the one you're checking. If you only have the selected name, use `lookup.byName` to find candidates and resolve any ambiguity before choosing an ID. The model interprets the label; the taxonomy lookup tells you where a known taxon belongs.
 
 ## Choosing an acceptance policy
 

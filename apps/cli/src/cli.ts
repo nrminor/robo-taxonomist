@@ -51,6 +51,7 @@ const identity = Command.make(
   },
   Effect.fn("Cli.compareIdentity")(function* ({ left, right, format, noHeader }) {
     const result = yield* Taxonomy.sameTaxon(left, right);
+
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeComparison(result, noHeader),
@@ -94,6 +95,7 @@ const containment = Command.make(
   },
   Effect.fn("Cli.compareContainment")(function* ({ inner, outer, format, noHeader }) {
     const result = yield* Taxonomy.taxonWithin(inner, outer);
+
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeComparison(result, noHeader),
@@ -138,6 +140,7 @@ const rank = Command.make(
   },
   Effect.fn("Cli.compareRank")(function* ({ left, right, rank, format, noHeader }) {
     const result = yield* Taxonomy.sameTaxonAtRank(left, right, rank);
+
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeRank(result, noHeader),

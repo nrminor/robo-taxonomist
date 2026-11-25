@@ -22,17 +22,22 @@ export const HintsControl = ({
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [invalid, setInvalid] = useState(false);
+
   const apply = (animate: boolean) => {
     if (submitting) return;
     const parsed = Schema.decodeResult(Schema.Array(TaxonomyHint))(note === "" ? [] : [note]);
+
     if (Result.isFailure(parsed)) {
       setInvalid(true);
       input.current?.focus();
+
       return;
     }
+
     onApply(parsed.success, animate);
     setOpen(false);
   };
+
   return (
     <section aria-labelledby={`${id}-heading`} className={styles.control}>
       <Dialog.Root
@@ -42,6 +47,7 @@ export const HintsControl = ({
             setNote(hints.join("\n\n"));
             setInvalid(false);
           }
+
           setOpen(nextOpen);
         }}
       >

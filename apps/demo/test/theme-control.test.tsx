@@ -25,13 +25,16 @@ const renderDemo = async () => {
   const response = await Effect.runPromise(
     classifyPanel("broad").pipe(Effect.provide(PanelResults.layer)),
   );
+
   const fetch = initialBroadReplyThenFetch(
     Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response),
     () => Promise.reject(new Error("Unexpected interactive classification request")),
   );
+
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   return render(
     <ThemeProvider attribute="data-theme" storageKey="taxonomy-theme" defaultTheme="system">
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
@@ -124,24 +127,31 @@ it.each([
   "renders the document theme before hydration: system=$system, stored=$stored",
   async ({ system, stored, expected }) => {
     await systemTheme(system);
+
     if (stored === null) localStorage.removeItem("taxonomy-theme");
     else localStorage.setItem("taxonomy-theme", stored);
+
     const html = renderToString(
       <RootLayout>
         <style>{globalStyles}</style>
         <p>Document theme</p>
       </RootLayout>,
     );
+
     const view = await render(<iframe title="Theme initialization" srcDoc={html} />);
     const frame = view.getByTitle("Theme initialization").element();
+
     if (!(frame instanceof HTMLIFrameElement)) throw new Error("Expected the theme document frame");
     await expect.poll(() => frame.contentDocument?.body.textContent).toContain("Document theme");
+
     if (stored === "light" || stored === "dark") {
       await expect.poll(() => frame.contentDocument?.documentElement.dataset.theme).toBe(stored);
     }
+
     await expect
       .poll(() => {
         const body = frame.contentDocument?.body;
+
         return body ? getComputedStyle(body).backgroundColor : undefined;
       })
       .toBe(expected === "dark" ? "rgb(23, 27, 32)" : "rgb(255, 255, 255)");

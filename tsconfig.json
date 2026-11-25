@@ -101,8 +101,14 @@
           },
           {
             "include": [
-              "src/Taxonomy.ts",
-              "src/TaxonSet.ts",
+              "src/taxonomy/Classification.ts",
+              "src/taxonomy/Membership.ts",
+              "src/taxonomy/MembershipPartition.ts",
+              "src/taxonomy/MembershipQuantifiers.ts",
+              "src/taxonomy/RankComparison.ts",
+              "src/taxonomy/RankRequest.ts",
+              "src/taxonomy/ScalarJudgments.ts",
+              "src/TaxonSetRelations.ts",
               "src/TaxonSetGraph.ts",
               "src/TaxonLookupLayers/NcbiDump.ts",
               "src/errors.ts",
@@ -116,7 +122,8 @@
               "test/text-values.test.ts",
               "test/taxon-set.test.ts",
               "test/taxon-set.property.test.ts",
-              "test/taxon-judgments.property.test.ts",
+              "test/clef-review.test.ts",
+              "tools/clef/clef.ts",
               "**/apps/demo/**/*.ts",
               "**/apps/demo/**/*.tsx",
               "**/apps/cli/**/*.ts"

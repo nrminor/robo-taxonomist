@@ -12,11 +12,13 @@ const environment = { NO_COLOR: "1", TYPESAFE_API_KEY: "fixture-key" };
 
 const startServer = Effect.fn("ServerTest.startServer")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
   const command = ChildProcess.make(
     execPath,
     ["src/main.ts", "server", "--model", "fixture-model", "--port", "0"],
     { env: environment, extendEnv: false, stdin: "ignore" },
   );
+
   const child = yield* spawner.spawn(command);
   const stdout = yield* Ref.make("");
   const stderr = yield* Ref.make("");
@@ -26,6 +28,7 @@ const startServer = Effect.fn("ServerTest.startServer")(function* () {
     Stream.decodeText(),
     Stream.runForEach((chunk) => Ref.update(stdout, (text) => text + chunk)),
   );
+
   const readReadiness = child.stderr.pipe(
     Stream.decodeText(),
     Stream.splitLines,
@@ -77,11 +80,13 @@ it.live("fails cleanly when another server already occupies the requested port",
     const first = yield* startServer();
     const port = new URL(first.baseUrl).port;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
     const command = ChildProcess.make(
       execPath,
       ["src/main.ts", "server", "--model", "fixture-model", "--port", port],
       { env: environment, extendEnv: false, stdin: "ignore" },
     );
+
     const second = yield* spawner.spawn(command);
 
     const [stdout, stderr, exitCode] = yield* Effect.all(

@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Redacted, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as Atom from "effect/reactivity/Atom";
 import { initialPanelId, PanelId } from "../lib/catalog.ts";
@@ -8,6 +8,7 @@ import {
   ClassifyRequest,
   PanelResponse,
 } from "../lib/contract.ts";
+import { ClassificationFailureWithCause } from "../lib/failures.ts";
 
 /** Server failures plus local transport/decoding failures, whose causes are not server response fields. */
 export const RequestFailure = Schema.TaggedUnion({
@@ -15,9 +16,11 @@ export const RequestFailure = Schema.TaggedUnion({
   TransportFailure: { cause: Schema.Defect() },
   ResponseDecodingFailure: { cause: Schema.Defect() },
 });
+
 export type RequestFailure = typeof RequestFailure.Type;
 
 const transportFailure = (cause: unknown) => RequestFailure.cases.TransportFailure.make({ cause });
+
 const responseDecodingFailure = (cause: unknown) =>
   RequestFailure.cases.ResponseDecodingFailure.make({ cause });
 
@@ -25,7 +28,15 @@ const encodeRequest = (request: typeof ClassifyRequest.Type) =>
   HttpClientRequest.schemaBodyJson(ClassifyRequest)(
     HttpClientRequest.post("/api/classify"),
     request,
-  ).pipe(Effect.mapError(() => RequestFailure.cases.InternalFailure.make({})));
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ClassificationFailureWithCause({
+          failure: RequestFailure.cases.InternalFailure.make({}),
+          cause: Redacted.make(cause),
+        }),
+    ),
+  );
 
 const readSuccess = (response: HttpClientResponse.HttpClientResponse, panelId: PanelId) =>
   HttpClientResponse.schemaBodyJson(PanelResponse)(response).pipe(
@@ -48,6 +59,7 @@ const postClassification = Effect.fn("postClassification")(function* (
   const client = yield* HttpClient.HttpClient;
   const request = yield* encodeRequest(input);
   const response = yield* client.execute(request).pipe(Effect.mapError(transportFailure));
+
   return yield* HttpClientResponse.matchStatus(response, {
     "2xx": (response) => readSuccess(response, input.panelId),
     orElse: readFailure,
@@ -56,10 +68,12 @@ const postClassification = Effect.fn("postClassification")(function* (
 
 /** Shared atom runtime supplying browser Fetch for classification requests. */
 export const browserRuntime = Atom.runtime(FetchHttpClient.layer);
+
 /** Initial panel request with a server-renderable initial state and no idle retention. */
 export const initialQueryAtom = browserRuntime
   .atom(postClassification({ panelId: initialPanelId }))
   .pipe(Atom.setIdleTTL(0), Atom.withServerValueInitial);
+
 /** Run a selected-panel request, including explicit refresh, validating its response and panel identity. */
 export const selectPanelAtom = browserRuntime.fn(postClassification);
 

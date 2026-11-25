@@ -1,6 +1,7 @@
 import "server-only";
-import { Config, Effect, Layer, Match, Schema } from "effect";
+import { Config, Effect, Layer, Match, Redacted, Schema } from "effect";
 import { ClassificationFailure } from "../lib/contract.ts";
+import { ClassificationFailureWithCause } from "../lib/failures.ts";
 import { clefModelLayer } from "./clef-model.ts";
 import { PanelResults } from "./panel-results.ts";
 
@@ -24,6 +25,7 @@ export const ConfiguredPanelResults = Layer.unwrap(
     const mode = yield* Config.Literals(["fixture", "clef"], "DEMO_MODEL").pipe(
       Config.withDefault("fixture"),
     );
+
     return yield* Match.value(mode).pipe(
       Match.literalsExhaustive({
         fixture: () => Effect.succeed(PanelResults.layer),
@@ -35,5 +37,13 @@ export const ConfiguredPanelResults = Layer.unwrap(
           ),
       }),
     );
-  }).pipe(Effect.mapError(() => ClassificationFailure.cases.ConfigurationFailure.make({}))),
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ClassificationFailureWithCause({
+          failure: ClassificationFailure.cases.ConfigurationFailure.make({}),
+          cause: Redacted.make(cause),
+        }),
+    ),
+  ),
 );

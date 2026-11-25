@@ -1,9 +1,23 @@
 import { expect, it } from "@effect/vitest";
-import { Array, Data, Deferred, Effect, Fiber, Layer, Option, Record, Schema } from "effect";
+import {
+  Array,
+  Data,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+} from "effect";
 import { DecisionModel } from "effect/ai";
 import {
   CollectionExecution,
+  Errors,
   RecordLabel,
+  CollectionMembershipJudgment,
+  TaxonMembershipJudgment,
   TaxonName,
   TaxonSet,
   Taxonomy,
@@ -13,8 +27,11 @@ import {
 import * as TestJson from "./Json.ts";
 
 const { Classify } = Data.taggedEnum<DecisionModel.ProviderClassifyAnswer>();
+
 const subject = RecordLabel.make("subject");
+
 const target = TaxonSet.of(TaxonName.make("Fungi"));
+
 const other = TaxonSet.of(TaxonName.make("Plants"));
 
 it.effect("captures independent validated hints from the scope or an explicit collection", () =>
@@ -24,9 +41,11 @@ it.effect("captures independent validated hints from the scope or an explicit co
     const capture = TaxonomyHints.snapshot();
     const scoped = [TaxonomyHint.make("scoped")];
     const inherited = yield* capture.pipe(Effect.provideService(TaxonomyHints.Current, scoped));
+
     const inheritedUndefined = yield* TaxonomyHints.snapshot(undefined).pipe(
       Effect.provideService(TaxonomyHints.Current, scoped),
     );
+
     expect(inherited).not.toBe(scoped);
     expect(inheritedUndefined).toEqual(["scoped"]);
     scoped.push(TaxonomyHint.make("later"));
@@ -49,11 +68,13 @@ it.effect("captures independent validated hints from the scope or an explicit co
 
 it.effect("selects scoped, direct, empty and updated hints without leaking scopes", () => {
   const seen: DecisionModel.ProviderOptions["state"][] = [];
+
   const model = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state }) => {
         seen.push(state);
+
         return Effect.succeed({
           answers: {
             r0t0: Classify({
@@ -66,10 +87,12 @@ it.effect("selects scoped, direct, empty and updated hints without leaking scope
       },
     }),
   );
+
   const operation = Taxonomy.classifyRecords([subject], target);
   const source = [TaxonomyHint.make("outer")];
   const hintsLayer = TaxonomyHints.layer(source);
   source.push(TaxonomyHint.make("later"));
+
   return Effect.gen(function* () {
     yield* operation;
     yield* operation.pipe(Effect.provide(hintsLayer));
@@ -133,18 +156,22 @@ it.effect(
         yield* Effect.gen(function* () {
           const replaced = yield* TaxonomyHints.Current;
           expect(replaced).toEqual(["replacement"]);
+
           const appended = yield* TaxonomyHints.Current.pipe(
             TaxonomyHints.withAddedHints([added, added]),
           );
+
           expect(appended).toEqual(["replacement", "added", "added"]);
           const afterAppend = yield* TaxonomyHints.Current;
           expect(afterAppend).toBe(replaced);
         }).pipe(TaxonomyHints.withHints([replacement]));
         const afterReplacement = yield* TaxonomyHints.Current;
         expect(afterReplacement).toBe(before);
+
         const nativeAppend = yield* TaxonomyHints.Current.pipe(
           Effect.updateService(TaxonomyHints.Current, Array.append(added)),
         );
+
         expect(nativeAppend).toEqual(["outer", "added"]);
         expect(before).toEqual(["outer"]);
         expect(outer).toEqual(["outer"]);
@@ -185,15 +212,18 @@ it.effect("snapshots group hints before the first request for later targets", ()
     const release = yield* Deferred.make<void>();
     const seen: DecisionModel.ProviderOptions["state"][] = [];
     const hints = [TaxonomyHint.make("initial")];
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: Effect.fnUntraced(function* ({ state, decisions }) {
           seen.push(state);
+
           if (seen.length === 1) {
             yield* Deferred.succeed(started, undefined);
             yield* Deferred.await(release);
           }
+
           return {
             answers: Record.map(decisions, () =>
               Classify({
@@ -212,16 +242,19 @@ it.effect("snapshots group hints before the first request for later targets", ()
         }),
       }),
     );
+
     const fiber = yield* Taxonomy.groupRecordsByTaxa([subject], [target, other], { hints }).pipe(
       Effect.provide(model),
       Effect.forkChild,
     );
+
     yield* Deferred.await(started);
     hints.push(TaxonomyHint.make("mutated"));
     yield* Deferred.succeed(release, undefined);
     const result = yield* Fiber.join(fiber);
     expect(result.groups).toHaveLength(2);
     expect(seen).toHaveLength(2);
+
     for (const state of seen) expect(state).toMatchObject({ hints: ["initial"] });
   }),
 );
@@ -229,12 +262,14 @@ it.effect("snapshots group hints before the first request for later targets", ()
 it.effect("carries hints through successive quantifier windows", () => {
   const seen: DecisionModel.ProviderOptions["state"][] = [];
   const hints = [TaxonomyHint.make("prior")];
+
   const model = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         seen.push(state);
         hints.push(TaxonomyHint.make("mutated"));
+
         return Effect.succeed({
           answers: Record.map(decisions, () =>
             Classify({
@@ -253,13 +288,16 @@ it.effect("carries hints through successive quantifier windows", () => {
       },
     }),
   );
+
   return Effect.gen(function* () {
     const result = yield* Taxonomy.allRecordsBelongTo([subject, subject], target, {
       hints,
       execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
     });
-    expect(result._tag).toBe("Yes");
+
+    expect(result).toSatisfy(CollectionMembershipJudgment.guards.Yes);
     expect(seen).toHaveLength(2);
+
     for (const state of seen) expect(state).toMatchObject({ hints: ["prior"] });
   }).pipe(Effect.provide(model));
 });
@@ -267,20 +305,25 @@ it.effect("carries hints through successive quantifier windows", () => {
 it.effect("delivers hints across comparison, relation, membership and delegated operations", () => {
   const states: DecisionModel.ProviderOptions["state"][] = [];
   const instructions: string[] = [];
+
   const model = Layer.effect(
     DecisionModel.DecisionModel,
     DecisionModel.make({
       decide: ({ state, decisions }) => {
         states.push(state);
+
         const answers = Record.map(decisions, (decision) => {
-          if (decision._tag !== "Classify") throw new Error("Expected classification");
+          if (!Predicate.isTagged(decision, "Classify")) throw new Error("Expected classification");
           const instruction = Schema.decodeUnknownSync(Schema.String)(decision.instructions);
           instructions.push(instruction);
+
           const probabilities = Record.map(decision.criteria, (_criterion, key) =>
             key === "undetermined" ? 1 : 0,
           );
+
           return Classify({ label: "undetermined", probabilities });
         });
+
         return Effect.succeed({
           answers,
           usage: { inputTokens: undefined, outputTokens: undefined },
@@ -288,8 +331,10 @@ it.effect("delivers hints across comparison, relation, membership and delegated 
       },
     }),
   );
+
   const hint = [TaxonomyHint.make(" \tshared prior\n")];
   const options = { hints: hint };
+
   return Effect.gen(function* () {
     yield* Taxonomy.sameSpecies(subject, subject, options);
     yield* Taxonomy.sameTaxon(TaxonName.make("Fungi"), TaxonName.make("Plants"), options);
@@ -306,7 +351,9 @@ it.effect("delivers hints across comparison, relation, membership and delegated 
     yield* Taxonomy.noRecordBelongsTo([subject], target, options);
     expect(states).toHaveLength(13);
     const quotedHint = yield* TestJson.encode(" \tshared prior\n");
+
     for (const instruction of instructions.slice(0, 3)) expect(instruction).toContain(quotedHint);
+
     for (const state of states.slice(3)) expect(state).toMatchObject({ hints: hint });
   }).pipe(Effect.provide(model));
 });
@@ -315,13 +362,17 @@ it.effect(
   "keeps scalar and delegated empty overrides identical to their unconfigured requests",
   () => {
     const requests: Pick<DecisionModel.ProviderOptions, "state" | "decisions">[] = [];
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: ({ state, decisions }) => {
           requests.push({ state, decisions });
+
           const answers = Record.map(decisions, (decision) => {
-            if (decision._tag !== "Classify") throw new Error("Expected classification");
+            if (!Predicate.isTagged(decision, "Classify"))
+              throw new Error("Expected classification");
+
             return Classify({
               label: "undetermined",
               probabilities: Record.map(decision.criteria, (_value, key) =>
@@ -329,6 +380,7 @@ it.effect(
               ),
             });
           });
+
           return Effect.succeed({
             answers,
             usage: { inputTokens: undefined, outputTokens: undefined },
@@ -336,6 +388,7 @@ it.effect(
         },
       }),
     );
+
     return Effect.gen(function* () {
       yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"));
       yield* Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), { hints: [] }).pipe(
@@ -369,15 +422,18 @@ it.effect("isolates concurrent scopes and snapshots classification batches at ex
     const release = yield* Deferred.make<void>();
     const seen: DecisionModel.ProviderOptions["state"][] = [];
     const direct = [TaxonomyHint.make("before execution")];
+
     const model = Layer.effect(
       DecisionModel.DecisionModel,
       DecisionModel.make({
         decide: Effect.fnUntraced(function* ({ state }) {
           seen.push(state);
+
           if (seen.length === 1) {
             yield* Deferred.succeed(started, undefined);
             yield* Deferred.await(release);
           }
+
           return {
             answers: {
               r0t0: Classify({
@@ -390,10 +446,12 @@ it.effect("isolates concurrent scopes and snapshots classification batches at ex
         }),
       }),
     );
+
     const pending = Taxonomy.classifyRecords([subject, subject], target, {
       hints: direct,
       execution: CollectionExecution.make({ batchSize: 1, concurrency: 1 }),
     });
+
     direct[0] = TaxonomyHint.make("at execution");
     const fiber = yield* pending.pipe(Effect.provide(model), Effect.forkChild);
     yield* Deferred.await(started);
@@ -420,26 +478,32 @@ it.effect("validates hints before transport while preserving literal shortcuts",
       decide: () => Effect.die("unexpected transport"),
     }),
   );
+
   return Effect.gen(function* () {
     for (const hints of [[42], null, 42, "", [""], [" \t\n"]]) {
       const invalidSnapshot = yield* Effect.flip(
         // @ts-expect-error Verify an untyped caller's malformed snapshot inputs.
         TaxonomyHints.snapshot(hints),
       );
-      expect(invalidSnapshot).toMatchObject({ _tag: "InvalidInput" });
+
+      expect(invalidSnapshot).toBeInstanceOf(Errors.InvalidInput);
+
       const invalidClassification = yield* Effect.flip(
         // @ts-expect-error Verify an untyped caller's malformed hints.
         Taxonomy.classifyRecords([subject], target, { hints }),
       );
-      expect(invalidClassification).toMatchObject({ _tag: "InvalidInput" });
+
+      expect(invalidClassification).toBeInstanceOf(Errors.InvalidInput);
+
       const invalidComparison = yield* Effect.flip(
         // @ts-expect-error Verify the scalar request path too.
         Taxonomy.sameTaxon(TaxonName.make("A"), TaxonName.make("B"), { hints }),
       );
-      expect(invalidComparison).toMatchObject({ _tag: "InvalidInput" });
+
+      expect(invalidComparison).toBeInstanceOf(Errors.InvalidInput);
       // @ts-expect-error Literal shortcuts do not need hint validation or a model.
       const empty = yield* Taxonomy.recordBelongsTo(subject, TaxonSet.empty(), { hints });
-      expect(empty._tag).toBe("NotMember");
+      expect(empty).toSatisfy(TaxonMembershipJudgment.guards.NotMember);
       // @ts-expect-error Empty classification does not consume hints.
       const noRecords = yield* Taxonomy.classifyRecords([], target, { hints });
       expect(noRecords.records).toEqual([]);

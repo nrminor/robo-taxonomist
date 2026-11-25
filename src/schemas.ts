@@ -251,6 +251,7 @@ export type CollectionOptions = typeof CollectionOptions.Type;
 class Empty extends Schema.TaggedClass<Empty, { readonly brand: unique symbol }>(
   "robo-taxonomist/TaxonSet/Empty",
 )("Empty", {}) {}
+
 export class Taxon<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
   Taxon,
   { readonly brand: unique symbol }
@@ -267,38 +268,41 @@ export type Expression<R extends TaxonomicRecord = TaxonomicRecord> =
   | Union<R>
   | Intersection<R>
   | Difference<R>;
+
+// Interfaces defer expansion until the recursive class codecs are known.
+interface EncodedJunction extends Schema.Codec.Encoded<
+  Schema.TaggedStruct<
+    Schema.Codec.Encoded<typeof Union.fields._tag | typeof Intersection.fields._tag>,
+    ReturnType<typeof junctionFields>
+  >
+> {}
+
+interface EncodedDifference extends Schema.Codec.Encoded<typeof Difference> {}
+
 type EncodedExpression =
   | typeof Empty.Encoded
   | typeof Taxon.Encoded
-  | {
-      readonly _tag: "Union" | "Intersection";
-      readonly operands: readonly [EncodedExpression, ...EncodedExpression[]];
-    }
-  | {
-      readonly _tag: "Difference";
-      readonly left: EncodedExpression;
-      readonly right: EncodedExpression;
-    };
+  | EncodedJunction
+  | EncodedDifference;
 
 const expressionRef: Schema.Codec<Expression, EncodedExpression> = Schema.suspend(
   () => taxonSetSchema,
 );
 
+const junctionFields = () =>
+  Schema.Struct({ operands: Schema.NonEmptyArray(expressionRef) }).fields;
+
 export class Union<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
   Union,
   { readonly brand: unique symbol }
->("robo-taxonomist/TaxonSet/Union")("Union", {
-  operands: Schema.NonEmptyArray(expressionRef),
-}) {
+>("robo-taxonomist/TaxonSet/Union")("Union", junctionFields()) {
   declare readonly operands: readonly [Expression<R>, ...Expression<R>[]];
 }
 
 export class Intersection<R extends TaxonomicRecord = TaxonomicRecord> extends Schema.TaggedClass<
   Intersection,
   { readonly brand: unique symbol }
->("robo-taxonomist/TaxonSet/Intersection")("Intersection", {
-  operands: Schema.NonEmptyArray(expressionRef),
-}) {
+>("robo-taxonomist/TaxonSet/Intersection")("Intersection", junctionFields()) {
   declare readonly operands: readonly [Expression<R>, ...Expression<R>[]];
 }
 

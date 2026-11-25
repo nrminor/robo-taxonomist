@@ -21,20 +21,25 @@ afterEach(async () => {
 
 const fixture = (panelId: PanelId) =>
   Effect.runPromise(classifyPanel(panelId).pipe(Effect.provide(PanelResults.layer)));
+
 const wire = (response: PanelResponse) =>
   Schema.encodeSync(Schema.toCodecJson(PanelResponse))(response);
+
 const renderDemo = async (response: PanelResponse) => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const request = Schema.decodeUnknownSync(ClassifyRequest)(
       await new Request(input, init).json(),
     );
+
     return Response.json(
       wire(request.panelId === response.panelId ? response : await fixture(request.panelId)),
     );
   };
+
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
@@ -42,15 +47,19 @@ const renderDemo = async (response: PanelResponse) => {
       </RegistryProvider>
     </StrictMode>,
   );
+
   await expect
     .element(view.getByRole("region", { name: "Broad groups", exact: true }))
     .toBeVisible();
+
   if (response.panelId !== "broad") {
     const name =
       response.panelId === "nested" ? "Groups and subgroups" : "Families, genera and species";
+
     await view.getByRole("radio", { name, exact: true }).click();
     await expect.element(view.getByRole("region", { name, exact: true })).toBeVisible();
   }
+
   return view;
 };
 
@@ -59,22 +68,28 @@ it("paints full record shares in catalog order and selects only actual contribut
   const fungi = view.getByRole("img", { name: /^Fungi · kingdom/ });
   await expect.element(fungi).toBeVisible();
   const plot = fungi.element().querySelector("[data-plot]");
+
   if (plot === null) throw new Error("Fungi plot is missing");
   const width = plot.getBoundingClientRect().width;
   const left = plot.getBoundingClientRect().left;
+
   const examples = [
     { id: "r01", share: 0.35, offset: 0 },
     { id: "r02", share: 0.2, offset: 0.35 },
     { id: "r03", share: 0.125, offset: 0.55 },
     { id: "r19", share: 0.1, offset: 0.675 },
   ];
+
   for (const { id, share, offset } of examples) {
     const segment = fungi.element().querySelector(`[data-record-id="${id}"]`);
+
     if (segment === null) throw new Error(`Fungi segment ${id} is missing`);
     expect(segment.getBoundingClientRect().width).toBeCloseTo(width * share, 1);
     expect(segment.getBoundingClientRect().left - left).toBeCloseTo(width * offset, 1);
   }
+
   const segment = fungi.element().querySelector('[data-record-id="r02"]');
+
   if (segment === null) throw new Error("Fungi segment r02 is missing");
   expect(getComputedStyle(segment).backgroundColor).toBe("rgb(37, 99, 235)");
   const before = segment.getBoundingClientRect().width;
@@ -136,6 +151,7 @@ it("retains keyed rows and segments across absence, with active rows in panel ke
 
 it("expands its axis for actual response judgments and never contracts on the next panel", async () => {
   const broad = await fixture("broad");
+
   const expanded = Schema.decodeUnknownSync(PanelResponse)({
     ...broad,
     rows: broad.rows.map((row) => ({
@@ -155,6 +171,7 @@ it("expands its axis for actual response judgments and never contracts on the ne
       ),
     })),
   });
+
   const view = await renderDemo(expanded);
   const fungi = view.getByRole("img", { name: /^Fungi · kingdom/ });
   await expect
@@ -162,6 +179,7 @@ it("expands its axis for actual response judgments and never contracts on the ne
     .toHaveAttribute("aria-label", expect.stringContaining("100% of sample · 24 matching records"));
   const plot = fungi.element().querySelector("[data-plot]");
   const first = fungi.element().querySelector('[data-record-id="r01"]');
+
   if (plot === null || first === null) throw new Error("Fungi composition is missing");
   expect(first.getBoundingClientRect().width).toBeCloseTo(
     plot.getBoundingClientRect().width * 0.14,
@@ -172,6 +190,7 @@ it("expands its axis for actual response judgments and never contracts on the ne
   await expect.element(genus).toBeVisible();
   const nextPlot = genus.element().querySelector("[data-plot]");
   const nextSegment = genus.element().querySelector('[data-record-id="r01"]');
+
   if (nextPlot === null || nextSegment === null)
     throw new Error("Saccharomyces composition is missing");
   expect(nextSegment.getBoundingClientRect().width).toBeCloseTo(
@@ -185,6 +204,7 @@ it("expands its axis for actual response judgments and never contracts on the ne
 
 it("provides bounded hover and keyboard tooltips at desktop and narrow widths", async () => {
   const view = await renderDemo(await fixture("nested"));
+
   for (const width of [1440, 390]) {
     await page.viewport(width, 1000);
     const fungi = view.getByRole("img", { name: /^Fungi · kingdom/ });
@@ -195,10 +215,12 @@ it("provides bounded hover and keyboard tooltips at desktop and narrow widths", 
     await expect
       .poll(() => {
         const tip = tooltip.element().getBoundingClientRect();
+
         const workspace = view
           .getByRole("region", { name: "Groups and subgroups", exact: true })
           .element()
           .getBoundingClientRect();
+
         return (
           tip.left >= Math.max(0, workspace.left) &&
           tip.right <= Math.min(width, workspace.right) + 1 &&

@@ -10,8 +10,24 @@ bun = "1.4.4"
 
 [tasks]
 bootstrap = { description = "Install locked package dependencies", run = "pnpm install --frozen-lockfile" }
-check = { description = "Run all repository checks and build the library", run = "pnpm run check" }
+check = { description = "Run all automated repository checks, including Clef", depends = [
+  "check:offline",
+  "review:clef",
+] }
+"check:offline" = { description = "Run repository checks and builds without model credentials", run = "pnpm run check" }
 "check:fast" = { description = "Run lint, TypeScript, and Effect feedback between edits", run = "pnpm run check:fast" }
+"review:clef" = { description = "Review changed source and tests with Clef (sends selected files to Cloudflare)", run = "pnpm --filter @robo-taxonomist/demo exec varlock run --inject vars --filter CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN -- node ../../tools/clef/cli.ts" }
+"traits:credentials:key" = { description = "Store the Traits OpenAI key in macOS Keychain using a masked prompt", run = "pnpm --filter @robo-taxonomist/demo exec varlock keychain set OPENAI_API_KEY --project robo-taxonomist --profile local", interactive = true }
+"traits:credentials:check" = { description = "Validate the Traits OpenAI and Clef credentials locally without inference", run = [
+  "pnpm --filter @robo-taxonomist/demo exec varlock load --path ../../ --agent",
+  "mise run demo:credentials:check",
+] }
+"traits:mcp" = { description = "Serve Traits using Clef and OpenAI", run = "pnpm --filter @robo-taxonomist/demo exec varlock run --inject vars --filter CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN -- varlock run --path ../../ --inject vars --filter OPENAI_API_KEY -- pnpm -C ../.. exec traits" }
+"traits:connect" = { description = "Connect Traits to this repository in the running OpenCode service without writing a config file", run = '''
+location=$(node -p 'encodeURIComponent(process.cwd())')
+opencode api put "/api/experimental/mcp/traits?location%5Bdirectory%5D=$location" \
+  --data '{"config":{"type":"local","command":["mise","run","--raw","--quiet","traits:mcp"]}}'
+''' }
 "check:package" = { description = "Check an existing tarball in an isolated consumer", run = "pnpm run check:package" }
 pack = { description = "Pack the already-built library without rebuilding", run = "pnpm --config.ignore-scripts=true pack --pack-destination artifacts" }
 build = { description = "Build ESM and TypeScript declarations", run = "pnpm run build" }
@@ -20,6 +36,7 @@ fmt = { description = "Format project files", run = "pnpm run fmt" }
 lint = { description = "Build the library and run type-aware Oxlint", run = "pnpm run lint" }
 typecheck = { description = "Check TypeScript and Effect diagnostics", run = "pnpm run typecheck" }
 test = { description = "Run tests", run = "pnpm run test" }
+"test:lint-rules" = { description = "Test the local Oxlint rules", run = "pnpm run test:lint-rules" }
 "test:watch" = { description = "Run tests in watch mode", run = "pnpm run test:watch", interactive = true }
 knip = { description = "Check unused code and dependencies", run = "pnpm run knip" }
 "demo:dev" = { description = "Run the demo locally with supplied answers", run = "pnpm run build && pnpm --filter @robo-taxonomist/demo dev" }

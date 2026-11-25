@@ -39,6 +39,7 @@ const SuccessfulResults = ({
   useLayoutEffect(() => {
     onCommit(candidate);
   }, [candidate, onCommit]);
+
   return (
     <section className={styles.workspace} aria-label={findings.panel.name}>
       <RecordMatches findings={findings} />
@@ -100,6 +101,7 @@ const InitialReader = ({
 }) => {
   const result = useAtomValue(initialQueryAtom);
   useLayoutEffect(() => reportInitial(token, result), [token, result, reportInitial]);
+
   return null;
 };
 
@@ -113,12 +115,14 @@ const CommittedFeedback = ({
   readonly children: ReactNode;
 }) => {
   useLayoutEffect(() => onCommit(token), [token, onCommit]);
+
   return children;
 };
 
 /** Classifies catalog panels while retaining committed results and record inspection. */
 export const Demo = () => {
   const selectedPanel = useRef<HTMLInputElement>(null);
+
   const {
     initialActive,
     awaitingInitial,
@@ -135,24 +139,31 @@ export const Demo = () => {
     feedbackCommitted,
     displayCommitted,
   } = usePanelPresentation();
+
   const response =
     pending || failure !== undefined || initialActive
       ? undefined
       : Option.getOrUndefined(candidate)?.display.response;
+
   const requestedPanel = Option.getOrThrow(
     Array.findFirst(panels, (panel) => panel.id === request.panelId),
   );
+
   const requestedName = requestedPanel.name;
+
   const retained = Option.match(committed, {
     onNone: () => "No panel results have been displayed yet.",
     onSome: ({ display }) => `Still showing ${display.findings.panel.name}.`,
   });
+
   const progress = `${retrying ? "Retrying" : request.refresh ? "Reclassifying with" : "Updating to"} ${requestedName}. ${retained}${request.hints !== undefined && request.hints.length > 0 ? " Using supplied taxonomic hints for this request." : ""}`;
+
   const feedback = visible ? (
     <CommittedFeedback token={token} onCommit={feedbackCommitted}>
       <p>{progress}</p>
     </CommittedFeedback>
   ) : undefined;
+
   return (
     <main className={styles.shell}>
       <header>

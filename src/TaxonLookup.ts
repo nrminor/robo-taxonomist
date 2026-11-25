@@ -13,6 +13,7 @@ export const TaxonSummary = Schema.Struct({
   rank: Schema.optionalKey(TaxonomicRank),
   sourceRank: Schema.optionalKey(Schema.String),
 });
+
 /** A taxon with its identifier, recorded name, and available rank information. */
 export type TaxonSummary = typeof TaxonSummary.Type;
 
@@ -21,6 +22,7 @@ export const TaxonEntry = Schema.Struct({
   taxon: TaxonSummary,
   ancestors: Schema.Array(TaxonSummary),
 });
+
 /** A taxon and its recorded ancestry. */
 export type TaxonEntry = typeof TaxonEntry.Type;
 
@@ -31,6 +33,7 @@ export const IdLookup = Schema.TaggedUnion({
   Deleted: { requested: TaxonId },
   NotFound: { requested: TaxonId },
 });
+
 /** The outcome of ID resolution in the configured taxonomy view. */
 export type IdLookup = typeof IdLookup.Type;
 
@@ -40,6 +43,7 @@ export const NameHit = Schema.Struct({
   matchedName: TaxonName,
   nameClass: Schema.optionalKey(Schema.String),
 });
+
 /** A candidate taxon with its matching recorded name. */
 export type NameHit = typeof NameHit.Type;
 
@@ -65,83 +69,110 @@ export const servesId = (source: TaxonSource, id: TaxonId) =>
 export const sameResolvedId = (left: TaxonId, right: TaxonId) =>
   left.taxonomy === right.taxonomy && left.id === right.id;
 
-/** Query the taxonomy view provided in the current Effect scope. */
-export class TaxonLookup extends Context.Service<
-  TaxonLookup,
-  {
-    readonly source: TaxonSource;
-    readonly byId: (id: TaxonId) => Effect.Effect<IdLookup, Errors.TaxonIdQueryError>;
-    readonly byName: (name: TaxonName) => Effect.Effect<readonly NameHit[], Errors.TaxonQueryError>;
-  }
->()("robo-taxonomist/TaxonLookup") {
-  /** Resolve an identifier in the configured taxonomy view. */
-  static byId = (id: TaxonId) => TaxonLookup.use((lookup) => lookup.byId(id));
+type LookupProvider = {
+  readonly source: TaxonSource;
+  readonly byId: (id: TaxonId) => Effect.Effect<IdLookup, Errors.TaxonIdQueryError>;
+  readonly byName: (name: TaxonName) => Effect.Effect<readonly NameHit[], Errors.TaxonQueryError>;
+};
 
-  /** Find candidates with an exact recorded scientific name or synonym. */
-  static byName = (name: TaxonName) => TaxonLookup.use((lookup) => lookup.byName(name));
+const makeLookup = (provider: LookupProvider) => {
+  const checkName = Effect.fn("TaxonLookup.checkName")(function* (id: TaxonId, name: TaxonName) {
+    const { source } = provider;
 
-  /** Find exact scientific names or synonyms recorded for an ID in a fixed view. */
-  static checkName = Effect.fn("TaxonLookup.checkName")(function* (id: TaxonId, name: TaxonName) {
-    const lookup = yield* TaxonLookup;
-    const { source } = lookup;
     if (TaxonSource.guards.Live(source)) {
       return yield* new Errors.TaxonSnapshotRequired({ source });
     }
 
-    const resolved = yield* lookup.byId(id);
+    const resolved = yield* provider.byId(id);
+
     if (IdLookup.guards.Deleted(resolved) || IdLookup.guards.NotFound(resolved)) {
       return yield* Effect.fail(resolved);
     }
 
     const canonicalId = resolved.entry.taxon.taxonId;
-    const hits = yield* lookup.byName(name);
+    const hits = yield* provider.byName(name);
 
     return hits.filter(({ taxon }) => sameResolvedId(taxon.taxonId, canonicalId));
   });
 
-  /** Check whether a fixed view records the name for the resolved ID. */
-  static hasName = (id: TaxonId, name: TaxonName) =>
-    TaxonLookup.checkName(id, name).pipe(Effect.map(Array.isReadonlyArrayNonEmpty));
-
-  /** Return the matching names or use the caller's failure for a completed mismatch. */
-  static requireName = <E>(id: TaxonId, name: TaxonName, onNoMatch: () => E) => {
-    const check = TaxonLookup.checkName(id, name);
-
-    return Effect.filterOrFail(check, Array.isReadonlyArrayNonEmpty, onNoMatch);
-  };
-
-  /** Find the recorded taxon at a rank, including the starting taxon itself. */
-  static ancestorAtRank = Effect.fn("TaxonLookup.ancestorAtRank")(function* (
+  const ancestorAtRank = Effect.fn("TaxonLookup.ancestorAtRank")(function* (
     id: TaxonId,
     rank: TaxonomicRank,
   ) {
-    const result = yield* TaxonLookup.byId(id);
+    const result = yield* provider.byId(id);
     const entry = entryFromLookup(result);
 
     return Option.flatMap(entry, (recorded) => taxonAtRank(recorded, rank));
   });
 
-  /** Find the recorded domain, if the source supplies one. */
-  static domainOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "domain");
+  return {
+    /** Read the source of the configured taxonomy view. */
+    get source() {
+      return provider.source;
+    },
+    /** Resolve an identifier in the configured taxonomy view. */
+    byId: (id: TaxonId) => provider.byId(id),
+    /** Find candidates with an exact recorded scientific name or synonym. */
+    byName: (name: TaxonName) => provider.byName(name),
+    /** Find exact scientific names or synonyms recorded for an ID in a fixed view. */
+    checkName,
+    /** Check whether a fixed view records the name for the resolved ID. */
+    hasName: (id: TaxonId, name: TaxonName) =>
+      checkName(id, name).pipe(Effect.map(Array.isReadonlyArrayNonEmpty)),
+    /** Return the matching names or use the caller's failure for a completed mismatch. */
+    requireName: <E>(id: TaxonId, name: TaxonName, onNoMatch: () => E) => {
+      const check = checkName(id, name);
 
-  /** Find the recorded kingdom, if the source supplies one. */
-  static kingdomOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "kingdom");
+      return Effect.filterOrFail(check, Array.isReadonlyArrayNonEmpty, onNoMatch);
+    },
+    /** Find the recorded taxon at a rank, including the starting taxon itself. */
+    ancestorAtRank,
+    /** Find the recorded domain, if the source supplies one. */
+    domainOf: (id: TaxonId) => ancestorAtRank(id, "domain"),
+    /** Find the recorded kingdom, if the source supplies one. */
+    kingdomOf: (id: TaxonId) => ancestorAtRank(id, "kingdom"),
+    /** Find the recorded phylum, if the source supplies one. */
+    phylumOf: (id: TaxonId) => ancestorAtRank(id, "phylum"),
+    /** Find the recorded class, if the source supplies one. */
+    classOf: (id: TaxonId) => ancestorAtRank(id, "class"),
+    /** Find the recorded order, if the source supplies one. */
+    orderOf: (id: TaxonId) => ancestorAtRank(id, "order"),
+    /** Find the recorded family, if the source supplies one. */
+    familyOf: (id: TaxonId) => ancestorAtRank(id, "family"),
+    /** Find the taxon's recorded genus, if supplied by the source. */
+    genusOf: (id: TaxonId) => ancestorAtRank(id, "genus"),
+    /** Find the taxon's recorded species, if supplied by the source. */
+    speciesOf: (id: TaxonId) => ancestorAtRank(id, "species"),
+  } as const;
+};
 
-  /** Find the recorded phylum, if the source supplies one. */
-  static phylumOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "phylum");
-
-  /** Find the recorded class, if the source supplies one. */
-  static classOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "class");
-
-  /** Find the recorded order, if the source supplies one. */
-  static orderOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "order");
-
-  /** Find the recorded family, if the source supplies one. */
-  static familyOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "family");
-
-  /** Find the taxon's recorded genus, if supplied by the source. */
-  static genusOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "genus");
-
-  /** Find the taxon's recorded species, if supplied by the source. */
-  static speciesOf = (id: TaxonId) => TaxonLookup.ancestorAtRank(id, "species");
+/**
+ * Query the taxonomy view provided in the current Effect scope.
+ * Yield this service to resolve IDs, match names, or find recorded ranks.
+ *
+ * @category models
+ * @since 0.7.0
+ */
+export class TaxonLookup extends Context.Service<TaxonLookup, ReturnType<typeof makeLookup>>()(
+  "robo-taxonomist/TaxonLookup",
+) {
+  /**
+   * Build a lookup from a source and its ID and name queries.
+   * Supply the taxonomy view as `source`. Let `byId` distinguish current, merged,
+   * deleted, and unknown IDs, and let `byName` return exact recorded names and
+   * synonyms. The returned service adds rank lookups and name checks.
+   *
+   * @category constructors
+   * @since 0.8.0
+   * @example
+   * import { Effect, Layer } from "effect";
+   * import { IdLookup, TaxonLookup, TaxonSource } from "robo-taxonomist";
+   * const empty = TaxonLookup.fromProvider({
+   *   source: TaxonSource.cases.Snapshot.make({ taxonomy: "example" }),
+   *   byId: (requested) => Effect.succeed(IdLookup.cases.NotFound.make({ requested })),
+   *   byName: () => Effect.succeed([]),
+   * });
+   * export const EmptyLookup = Layer.succeed(TaxonLookup, empty);
+   */
+  static fromProvider = makeLookup;
 }

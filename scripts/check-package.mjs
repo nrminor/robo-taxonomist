@@ -13,12 +13,45 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { Schema } from "effect";
 import { buildSync } from "esbuild";
 
 const root = dirname(import.meta.dirname);
-const require = createRequire(import.meta.url);
-const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
+const require = createRequire(import.meta.url);
+
+const peerDependencies = Schema.StructWithRest(Schema.Struct({ effect: Schema.String }), [
+  Schema.Record(Schema.String, Schema.String),
+]);
+
+const packageManifest = Schema.Struct({
+  name: Schema.String,
+  version: Schema.String,
+  type: Schema.String,
+  types: Schema.String,
+  exports: Schema.Json,
+  peerDependencies,
+});
+
+const packageManifestJson = Schema.fromJsonString(packageManifest);
+
+const decodeManifest = Schema.decodeSync(packageManifestJson);
+
+const configJson = Schema.fromJsonString(Schema.JsonObject);
+
+const decodeConfig = Schema.decodeSync(configJson);
+
+const manifestPath = join(root, "package.json");
+
+const manifestText = readFileSync(manifestPath, "utf8");
+
+const manifest = decodeManifest(manifestText);
+
+/**
+ * @param {string} command
+ * @param {readonly string[]} args
+ * @param {string} cwd
+ */
 function run(command, args, cwd) {
   execFileSync(command, args, { cwd, stdio: "inherit" });
 }
@@ -28,6 +61,7 @@ function check() {
   const tarball = resolve(process.argv[2]);
   assert(tarball.endsWith(".tgz") && lstatSync(tarball).isFile(), "Expected a .tgz package file");
   const consumer = mkdtempSync(join(tmpdir(), "robo-taxonomist-consumer-"));
+
   try {
     writeFileSync(
       join(consumer, "package.json"),
@@ -60,10 +94,14 @@ function check() {
       "dist",
       "package.json",
     ]);
+
     for (const file of ["LICENSE", "README.md", "dist/index.js", "dist/index.d.ts"]) {
       assert(lstatSync(join(installed, file)).size > 0, `Artifact missing or empty: ${file}`);
     }
-    const packed = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+
+    const packedManifestPath = join(installed, "package.json");
+    const packedManifestText = readFileSync(packedManifestPath, "utf8");
+    const packed = decodeManifest(packedManifestText);
     assert.equal(packed.name, manifest.name);
     assert.equal(packed.version, manifest.version);
     assert.equal(packed.type, "module");
@@ -72,12 +110,16 @@ function check() {
     assert.deepEqual(packed.peerDependencies, manifest.peerDependencies);
 
     const fixtures = join(root, "test/fixtures/consumer");
+
     for (const file of ["contracts.ts", "smoke.mjs"]) {
       copyFileSync(join(fixtures, file), join(consumer, file));
     }
-    const config = JSON.parse(readFileSync(join(fixtures, "tsconfig.json"), "utf8"));
-    config.extends = join(root, "tsconfig.json");
-    writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify(config));
+
+    const configPath = join(fixtures, "tsconfig.json");
+    const configText = readFileSync(configPath, "utf8");
+    const config = decodeConfig(configText);
+    const consumerConfig = { ...config, extends: join(root, "tsconfig.json") };
+    writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify(consumerConfig));
     const compiler = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
     run(process.execPath, [compiler, "--project", join(consumer, "tsconfig.json")], consumer);
     run(process.execPath, [join(consumer, "smoke.mjs")], consumer);

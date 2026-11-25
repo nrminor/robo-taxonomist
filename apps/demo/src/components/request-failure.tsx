@@ -153,6 +153,7 @@ export const RequestFailureView = ({
   readonly onRetry: (animate: boolean) => void;
 }) => {
   const details = describeFailure(error);
+
   return (
     <div className={styles.failure} role={pending === undefined ? "alert" : undefined}>
       <p aria-hidden={pending !== undefined}>{pending ?? context}</p>

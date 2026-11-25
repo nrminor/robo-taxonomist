@@ -24,17 +24,21 @@ it("uses the keyboard retry's motion policy after a pointer-initiated failure", 
   await cdp().send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
   });
+
   const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
     ClassificationFailure.cases.ModelFailure.make({
       reason: PublicModelReason.cases.RateLimitError.make({}),
       retryable: true,
     }),
   );
+
   const focused = await replyFor("focused");
+
   const interactiveFetch = vi
     .fn<() => Promise<Response>>()
     .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
     .mockResolvedValueOnce(Response.json(focused));
+
   const view = await renderDemo(interactiveFetch);
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
   await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
@@ -67,9 +71,11 @@ const renderDemo = async (
   onRender?: ProfilerOnRenderCallback,
 ) => {
   const fetch = initialBroadReplyThenFetch(await replyFor("broad"), interactiveFetch);
+
   const layer = FetchHttpClient.layer.pipe(
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fetch)),
   );
+
   const view = await render(
     <StrictMode>
       <RegistryProvider initialValues={[Atom.initialValue(browserRuntime.layer, layer)]}>
@@ -83,7 +89,9 @@ const renderDemo = async (
       </RegistryProvider>
     </StrictMode>,
   );
+
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
+
   return view;
 };
 
@@ -132,7 +140,9 @@ it.each([320, 390, 1000, 1440])(
     const top = targets.element().getBoundingClientRect().top;
     const broad = view.getByRole("region", { name: "Broad groups", exact: true });
     const workspace = broad.element().parentElement;
+
     if (workspace === null) throw new Error("Results workspace missing");
+
     const message = targets.getByText(
       "Updating to Families, genera and species. Still showing Broad groups.",
       { exact: true },
@@ -152,6 +162,7 @@ it.each([320, 390, 1000, 1440])(
     expect(bounds.right).toBeLessThanOrEqual(region.right);
     expect(bounds.top).toBeGreaterThanOrEqual(region.top);
     expect(bounds.bottom).toBeLessThanOrEqual(originalFigure.getBoundingClientRect().top);
+
     for (
       let node: Element | null = message.element();
       node !== targets.element();
@@ -160,6 +171,7 @@ it.each([320, 390, 1000, 1440])(
       if (node === null) throw new Error("Update message must be inside Panel targets");
       expect(["absolute", "fixed"]).not.toContain(getComputedStyle(node).position);
     }
+
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
     await expect
       .element(view.getByRole("status"))
@@ -192,6 +204,7 @@ it("clears the inline chart update on failure while retaining Broad groups and o
       retryable: true,
     }),
   );
+
   const pending = Promise.withResolvers<Response>();
   const view = await renderDemo(() => pending.promise);
   const targets = view.getByRole("region", { name: "Panel targets" });
@@ -199,11 +212,14 @@ it("clears the inline chart update on failure while retaining Broad groups and o
   const originalFigure = figure.element();
   const broad = view.getByRole("region", { name: "Broad groups", exact: true });
   const workspace = broad.element().parentElement;
+
   if (workspace === null) throw new Error("Results workspace missing");
+
   const message = targets.getByText(
     "Updating to Families, genera and species. Still showing Broad groups.",
     { exact: true },
   );
+
   await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
   await expect.element(message).toBeVisible();
 
@@ -229,6 +245,7 @@ it("keeps the old results busy for a full visible update before publishing a rea
   const pending = Promise.withResolvers<Response>();
   const shown = Promise.withResolvers<number>();
   const published = Promise.withResolvers<number>();
+
   const observeCommit: ProfilerOnRenderCallback = (
     _id,
     _phase,
@@ -238,14 +255,18 @@ it("keeps the old results busy for a full visible update before publishing a rea
     committedAt,
   ) => {
     const status = document.querySelector('main [role="status"]');
+
     if (status?.textContent?.startsWith("Updating to")) shown.resolve(committedAt);
+
     if (document.querySelector('section[aria-label="Families, genera and species"]'))
       published.resolve(committedAt);
   };
+
   const view = await renderDemo(() => pending.promise, observeCommit);
   const broad = view.getByRole("region", { name: "Broad groups", exact: true });
   await expect.element(broad).toBeVisible();
   const workspace = broad.element().parentElement;
+
   if (workspace === null) throw new Error("Results workspace missing");
   await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
   const shownAt = await shown.promise;
@@ -265,13 +286,17 @@ it("publishes a fast reply without briefly announcing an update", async () => {
   const view = await renderDemo(async () => Response.json(focused));
   await expect.element(view.getByRole("region", { name: "Panel targets" })).toBeVisible();
   const messages: string[] = [];
+
   const observer = new MutationObserver(() => {
     for (const status of document.querySelectorAll('main [role="status"]')) {
       const text = status.textContent?.trim();
+
       if (text && /^(Classifying|Updating|Retrying)/.test(text)) messages.push(text);
     }
   });
+
   observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+
   try {
     await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
     await expect
@@ -290,13 +315,17 @@ it("holds an immediately successful retry for a full committed update and restor
       retryable: true,
     }),
   );
+
   const focused = await replyFor("focused");
+
   const interactiveFetch = vi
     .fn<() => Promise<Response>>()
     .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
     .mockResolvedValueOnce(Response.json(focused));
+
   const shown = Promise.withResolvers<number>();
   const published = Promise.withResolvers<number>();
+
   const observeCommit: ProfilerOnRenderCallback = (
     _id,
     _phase,
@@ -306,10 +335,13 @@ it("holds an immediately successful retry for a full committed update and restor
     committedAt,
   ) => {
     const status = document.querySelector('main [role="status"]');
+
     if (status?.textContent?.startsWith("Retrying")) shown.resolve(committedAt);
+
     if (document.querySelector('section[aria-label="Families, genera and species"]'))
       published.resolve(committedAt);
   };
+
   const view = await renderDemo(interactiveFetch, observeCommit);
   const panel = view.getByRole("radio", { name: "Families, genera and species", exact: true });
   await panel.click();
@@ -332,20 +364,25 @@ it("discards a held success when another panel replaces it, preserving the commi
   const nested = await replyFor("nested");
   const first = Promise.withResolvers<Response>();
   const second = Promise.withResolvers<Response>();
+
   const interactiveFetch = vi
     .fn<() => Promise<Response>>()
     .mockImplementationOnce(() => first.promise)
     .mockImplementationOnce(() => second.promise);
+
   const view = await renderDemo(interactiveFetch);
   const broad = view.getByRole("region", { name: "Broad groups", exact: true });
   await expect.element(broad).toBeVisible();
   const published: string[] = [];
+
   const observer = new MutationObserver(() => {
     for (const name of ["Families, genera and species", "Groups and subgroups"]) {
       if (document.querySelector(`section[aria-label="${name}"]`)) published.push(name);
     }
   });
+
   observer.observe(document.body, { childList: true, attributes: true, subtree: true });
+
   try {
     await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
     await expect
@@ -382,6 +419,7 @@ it.each([
   "keeps long failures bounded and preserves retry focus at $width px ($focus)",
   async ({ width, focus }) => {
     await page.viewport(width, 1000);
+
     const failure = Schema.encodeSync(Schema.toCodecJson(ClassificationFailure))(
       ClassificationFailure.cases.ModelFailure.make({
         reason: PublicModelReason.cases.RateLimitError.make({}),
@@ -389,12 +427,15 @@ it.each([
         requestId: `req-${"x".repeat(2000)}`,
       }),
     );
+
     const focused = await replyFor("focused");
     const retried = Promise.withResolvers<Response>();
+
     const interactiveFetch = vi
       .fn<() => Promise<Response>>()
       .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
       .mockImplementationOnce(() => retried.promise);
+
     const view = await renderDemo(interactiveFetch);
     const current = view.getByRole("region", { name: "Current record" });
     await expect.element(current).toBeVisible();
@@ -420,9 +461,11 @@ it.each([
     await userEvent.keyboard("{Enter}");
     expect(interactiveFetch).toHaveBeenCalledTimes(2);
     const record = view.getByRole("button", { name: /^Saccharomyces cerevisiae, / });
+
     if (focus === "record") {
       record.element().focus({ preventScroll: true });
     }
+
     retried.resolve(Response.json(focused));
     await expect
       .element(view.getByRole("region", { name: "Families, genera and species", exact: true }))
@@ -446,11 +489,14 @@ it("announces a new retry failure even when its request details were collapsed",
       retryable: true,
     }),
   );
+
   const pending = Promise.withResolvers<Response>();
+
   const interactiveFetch = vi
     .fn<() => Promise<Response>>()
     .mockResolvedValueOnce(Response.json(failure, { status: 503 }))
     .mockImplementationOnce(() => pending.promise);
+
   const view = await renderDemo(interactiveFetch);
   await view.getByRole("radio", { name: "Families, genera and species", exact: true }).click();
   await expect.element(view.getByRole("alert")).toBeVisible();

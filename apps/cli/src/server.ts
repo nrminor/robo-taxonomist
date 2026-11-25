@@ -1,17 +1,19 @@
 import * as NodeHttp from "node:http";
-import { MIMEType } from "node:util";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { ByteSize, Effect, Layer, Logger, Match, Predicate, Result, Schema } from "effect";
+import { Effect, Layer, Logger, Match, Predicate, Schema } from "effect";
 import { DecisionModel } from "effect/ai";
 import { CliError, Command, Flag } from "effect/cli";
-import { HttpIncomingMessage, HttpRouter, HttpServerError, HttpServerRequest } from "effect/http";
+import { HttpRouter } from "effect/http";
 import { HttpApiBuilder, HttpApiScalar } from "effect/http-api";
 import { CollectionExecution, TaxonSet, Taxonomy, type Errors } from "robo-taxonomist";
 import * as Api from "./api.ts";
 import * as Documents from "./documents.ts";
 import * as Model from "./model.ts";
+import { defaultRequestLimits, requestBounds } from "./request-bounds.ts";
 
-const defaultRequestLimits = { maxBodyBytes: 1_048_576, timeoutMs: 60_000, maxJsonDepth: 64 };
+/** Limit body size and JSON depth. The deadline covers body reads and endpoint execution. */
+export { requestBounds } from "./request-bounds.ts";
+
 const defaultCollectionLimits = {
   maxRecords: 1000,
   maxTargets: 100,
@@ -21,6 +23,7 @@ const defaultCollectionLimits = {
 };
 
 const positiveInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+
 /** Validate the server's bind address, request limits and collection execution settings. */
 export const Options = Schema.Struct({
   host: Schema.NonEmptyString,
@@ -34,79 +37,6 @@ export const Options = Schema.Struct({
   batchSize: CollectionExecution.schema.fields.batchSize,
   concurrency: CollectionExecution.schema.fields.concurrency,
 });
-
-const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
-
-const exceedsJsonDepth = (value: unknown, maximum: number): boolean => {
-  const pending: Array<Iterator<unknown>> = [[value][Symbol.iterator]()];
-
-  while (pending.length > 0) {
-    const level = pending[pending.length - 1];
-    if (level === undefined) return false;
-    const next = level.next();
-
-    if (next.done) {
-      pending.pop();
-    } else if (Predicate.isObjectOrArray(next.value)) {
-      if (pending.length > maximum) return true;
-      const children = Object.values(next.value);
-      pending.push(children[Symbol.iterator]());
-    }
-  }
-
-  return false;
-};
-
-const requestReadFailure = (error: HttpServerError.HttpServerError, maxBodyBytes: number) =>
-  Match.value(error.reason).pipe(
-    Match.when(
-      { _tag: "RequestParseError", reason: "BodyTooLarge" },
-      () => new Api.RequestTooLarge({ maxBodyBytes }),
-    ),
-    Match.orElse(() => new Api.RequestReadFailure({ message: "Cannot read the request body" })),
-  );
-
-/** Check depth before endpoint validation; let the API handle syntax and content-type errors. */
-const checkJsonDepth = Effect.fnUntraced(function* (
-  text: string,
-  header: string | undefined,
-  maximum: number,
-) {
-  if (text === "") return;
-
-  const contentType = header ?? "application/json";
-  const mediaType = Result.try(() => new MIMEType(contentType.trim()));
-  if (Result.isFailure(mediaType) || mediaType.success.essence !== "application/json") return;
-
-  const parsed = yield* decodeJson(text).pipe(Effect.result);
-  if (Result.isSuccess(parsed) && exceedsJsonDepth(parsed.success, maximum)) {
-    return yield* new Api.RequestTooDeep({ maxJsonDepth: maximum });
-  }
-});
-
-/** Enforce byte, JSON-depth and time limits around endpoint decoding and execution. */
-export const requestBounds = (limits = defaultRequestLimits) => {
-  const maxBodySize = ByteSize.bytes(limits.maxBodyBytes);
-
-  return Layer.succeed(Api.RequestBounds, (httpEffect) =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-
-      const text = yield* request.text.pipe(
-        Effect.mapError((error) => requestReadFailure(error, limits.maxBodyBytes)),
-      );
-      yield* checkJsonDepth(text, request.headers["content-type"], limits.maxJsonDepth);
-
-      return yield* httpEffect;
-    }).pipe(
-      Effect.provideService(HttpIncomingMessage.MaxBodySize, maxBodySize),
-      Effect.timeoutOrElse({
-        duration: limits.timeoutMs,
-        orElse: () => new Api.RequestDeadline({ timeoutMs: limits.timeoutMs }),
-      }),
-    ),
-  );
-};
 
 const taxonomyFailure = (error: Errors.TaxonomyError) =>
   Match.value(error).pipe(
@@ -131,13 +61,20 @@ const rankFailure = (error: Errors.TaxonomyError | Errors.TaxonIdQueryError) =>
   );
 
 const setDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetDocument));
+
 const relationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.SetRelationJudgment));
+
 const membershipDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.MembershipJudgment));
+
 const partitionDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.MembershipPartition));
+
 const quantifierDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.QuantifierJudgment));
+
 const classificationDocument = Schema.decodeUnknownEffect(Schema.toType(Documents.Classification));
+
 const outputFailure = () =>
   new Api.OutputFailure({ message: "Cannot encode the operation result" });
+
 const isRecordDocument = Schema.is(Documents.RecordDocument);
 
 const targetCount = (operand: typeof Api.SetOperand.Type): number => {
@@ -165,7 +102,9 @@ const checkCollection = Effect.fnUntraced(function* (
       actual: records,
     });
   }
+
   const targets = targetCount(target);
+
   if (targets > limits.maxTargets) {
     return yield* new Api.CollectionLimit({
       resource: "targets",
@@ -173,7 +112,9 @@ const checkCollection = Effect.fnUntraced(function* (
       actual: targets,
     });
   }
+
   const pairs = records * targets;
+
   if (pairs > limits.maxRecordTargetPairs) {
     return yield* new Api.CollectionLimit({
       resource: "recordTargetPairs",
@@ -205,6 +146,7 @@ export const comparisons = HttpApiBuilder.group(
     return handlers
       .handle("labels", ({ payload }) => {
         const sameLabel = Taxonomy.sameLabel(payload.left, payload.right);
+
         return Effect.succeed(sameLabel);
       })
       .handle("identity", ({ payload }) =>
@@ -239,8 +181,10 @@ export const sets = HttpApiBuilder.group(
       .handle("create", ({ payload }) => {
         const taxa = payload.targets.map((target) => {
           const record = Predicate.isString(target) ? { scientificName: target } : target;
+
           return TaxonSet.of(record);
         });
+
         const result = TaxonSet.unionAll(taxa);
 
         return setDocument(result).pipe(Effect.mapError(outputFailure));
@@ -280,6 +224,7 @@ export const sets = HttpApiBuilder.group(
         Effect.fn("Server.relation")(function* ({ payload, query }) {
           const left = yield* operandSet(payload.left);
           const right = yield* operandSet(payload.right);
+
           const operation = Match.value(query.relation).pipe(
             Match.literalsExhaustive({
               subset: () => TaxonSet.isSubsetOf(left, right),
@@ -289,6 +234,7 @@ export const sets = HttpApiBuilder.group(
               disjoint: () => TaxonSet.disjoint(left, right),
             }),
           );
+
           const result = yield* operation.pipe(
             Effect.provideService(DecisionModel.DecisionModel, model),
             Effect.mapError(taxonomyFailure),
@@ -307,6 +253,7 @@ export const membership = (limits = defaultCollectionLimits) =>
     "membership",
     Effect.fn("Server.membership")(function* (handlers) {
       const model = yield* DecisionModel.DecisionModel;
+
       const execution = CollectionExecution.make({
         batchSize: limits.batchSize,
         concurrency: limits.concurrency,
@@ -318,6 +265,7 @@ export const membership = (limits = defaultCollectionLimits) =>
       ) {
         yield* checkCollection(payload.records.length, payload.target, limits);
         const target = yield* operandSet(payload.target);
+
         const result = yield* operation(payload.records, target, { execution }).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
           Effect.mapError(taxonomyFailure),
@@ -332,6 +280,7 @@ export const membership = (limits = defaultCollectionLimits) =>
           Effect.fn("Server.checkMembership")(function* ({ payload }) {
             yield* checkCollection(1, payload.target, limits);
             const target = yield* operandSet(payload.target);
+
             const result = yield* Taxonomy.recordBelongsTo(payload.record, target).pipe(
               Effect.provideService(DecisionModel.DecisionModel, model),
               Effect.mapError(taxonomyFailure),
@@ -345,6 +294,7 @@ export const membership = (limits = defaultCollectionLimits) =>
           Effect.fn("Server.partitionMembership")(function* ({ payload }) {
             yield* checkCollection(payload.records.length, payload.target, limits);
             const target = yield* operandSet(payload.target);
+
             const result = yield* Taxonomy.partitionRecordsByMembership(payload.records, target, {
               execution,
             }).pipe(
@@ -368,6 +318,7 @@ export const classification = (limits = defaultCollectionLimits) =>
     "classification",
     Effect.fn("Server.classification")(function* (handlers) {
       const model = yield* DecisionModel.DecisionModel;
+
       const execution = CollectionExecution.make({
         batchSize: limits.batchSize,
         concurrency: limits.concurrency,
@@ -378,6 +329,7 @@ export const classification = (limits = defaultCollectionLimits) =>
         Effect.fn("Server.classify")(function* ({ payload }) {
           yield* checkCollection(payload.records.length, payload.panel, limits);
           const panel = yield* operandSet(payload.panel);
+
           const result = yield* Taxonomy.classifyRecords(payload.records, panel, {
             execution,
           }).pipe(
@@ -394,17 +346,21 @@ export const classification = (limits = defaultCollectionLimits) =>
 /** Serve the API and documentation with a scoped Node HTTP server. */
 export const layer = (options: typeof Options.Type) => {
   const bounds = requestBounds(options);
+
   const handlers = Layer.mergeAll(
     comparisons,
     sets,
     membership(options),
     classification(options),
   ).pipe(Layer.provideMerge(bounds));
+
   const apiRoutes = HttpApiBuilder.layer(Api.api, { openapiPath: "/openapi.json" }).pipe(
     Layer.provide(handlers),
   );
+
   const docs = HttpApiScalar.layer(Api.api, { path: "/docs" });
   const routes = Layer.mergeAll(apiRoutes, docs);
+
   const platform = NodeHttpServer.layer(NodeHttp.createServer, {
     host: options.host,
     port: options.port,

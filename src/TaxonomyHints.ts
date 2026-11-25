@@ -85,6 +85,7 @@ export const withHints = (hints: ReadonlyArray<Inputs.TaxonomyHint>) =>
  */
 export const withAddedHints = (hints: ReadonlyArray<Inputs.TaxonomyHint>) => {
   const additions = Array.copy(hints);
+
   return Effect.updateService(Current, Array.appendAll(additions));
 };
 
@@ -106,6 +107,7 @@ export const snapshot = Effect.fnUntraced(function* (
   const inherited = yield* Current;
   const selected = explicit === undefined ? inherited : explicit;
   const copied = Array.isArray(selected) ? Array.copy(selected) : selected;
+
   return yield* Schema.decodeUnknownEffect(Schema.Array(Inputs.TaxonomyHint))(copied).pipe(
     Effect.mapError(Errors.InvalidInput.from),
   );

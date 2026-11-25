@@ -37,16 +37,19 @@ const difference = Command.make(
   { left: Inputs.targetFlags("left-"), right: Inputs.targetFlags("right-") },
   Effect.fn("Cli.difference")(function* ({ left, right }) {
     yield* Inputs.checkStdin([...left.files, ...right.files]);
+
     const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
+
     const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
+
     const set = TaxonSet.difference(leftSet, rightSet);
     yield* Output.writeJson(set, Documents.SetDocument);
   }),
@@ -69,16 +72,19 @@ const union = Command.make(
   { left: Inputs.targetFlags("left-"), right: Inputs.targetFlags("right-") },
   Effect.fn("Cli.union")(function* ({ left, right }) {
     yield* Inputs.checkStdin([...left.files, ...right.files]);
+
     const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
+
     const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
+
     const set = TaxonSet.union(leftSet, rightSet);
     yield* Output.writeJson(set, Documents.SetDocument);
   }),
@@ -98,16 +104,19 @@ const intersection = Command.make(
   { left: Inputs.targetFlags("left-"), right: Inputs.targetFlags("right-") },
   Effect.fn("Cli.intersection")(function* ({ left, right }) {
     yield* Inputs.checkStdin([...left.files, ...right.files]);
+
     const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
+
     const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
+
     const set = TaxonSet.intersection(leftSet, rightSet);
     yield* Output.writeJson(set, Documents.SetDocument);
   }),
@@ -144,16 +153,19 @@ const relation = Command.make(
   },
   Effect.fn("Cli.setRelation")(function* ({ left, right, relation, format, noHeader }) {
     yield* Inputs.checkStdin([...left.files, ...right.files]);
+
     const leftSet = yield* Inputs.loadTargets(
       left.targets,
       left.files,
       Option.getOrUndefined(left.format),
     );
+
     const rightSet = yield* Inputs.loadTargets(
       right.targets,
       right.files,
       Option.getOrUndefined(right.format),
     );
+
     const result = yield* Match.value(relation).pipe(
       Match.literalsExhaustive({
         subset: () => TaxonSet.isSubsetOf(leftSet, rightSet),
@@ -163,12 +175,14 @@ const relation = Command.make(
         disjoint: () => TaxonSet.disjoint(leftSet, rightSet),
       }),
     );
+
     const render = Match.value(format).pipe(
       Match.literalsExhaustive({
         tsv: () => Output.writeRelation(result, noHeader),
         json: () => Output.writeJson(result, Documents.SetRelationJudgment),
       }),
     );
+
     yield* render;
   }, Effect.mapError(Model.cliFailure)),
 ).pipe(
