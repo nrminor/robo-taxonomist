@@ -708,11 +708,14 @@ it.effect("reports a rank lookup failure without exposing the provider response"
     }),
   );
 
-  const lookup = Layer.succeed(TaxonLookup, {
-    source,
-    byId: () => invalidResponse,
-    byName: () => Effect.succeed([]),
-  });
+  const lookup = Layer.succeed(
+    TaxonLookup,
+    TaxonLookup.fromProvider({
+      source,
+      byId: () => invalidResponse,
+      byName: () => Effect.succeed([]),
+    }),
+  );
 
   const rankHandlers = Server.comparisons.pipe(
     Layer.provide(fixtureProvider({})),

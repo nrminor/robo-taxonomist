@@ -92,7 +92,7 @@ const makeTaxonLookup = Effect.gen(function* () {
     return hits;
   });
 
-  return Lookup.TaxonLookup.of({ source, byId, byName });
+  return Lookup.TaxonLookup.fromProvider({ source, byId, byName });
 });
 
 /** Provide TaxonLookup from the configured NCBI dump. */

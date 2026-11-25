@@ -494,14 +494,16 @@ const inspectOak = Effect.gen(function* () {
   yield* Effect.log("Name candidates", candidates);
 
   // lookup within the taxonomic hierarchy is also supported
-  const genus = yield* TaxonLookup.genusOf(oakId);
-  const nameMatches = yield* TaxonLookup.hasName(oakId, oakName);
+  const genus = yield* lookup.genusOf(oakId);
+  const nameMatches = yield* lookup.hasName(oakId, oakName);
 
   yield* Effect.log({ genus, nameMatches });
 });
 
 await Effect.runPromise(inspectOak.pipe(Effect.provide(LookupLive)));
 ```
+
+To use your own taxonomy source, build the service with `TaxonLookup.fromProvider({ source, byId, byName })` and provide it with `Layer.succeed(TaxonLookup, lookup)`. The library adds name checks and rank lookups to those two provider queries.
 
 The `NcbiDump` release property is optional; if you omit it, `robo-taxonomist` can't check to make sure a given taxid is being checked against the right dump release.
 
@@ -523,7 +525,7 @@ await Effect.runPromise(
 
 Let's say you want to provide the lookup at the application level but opt out of it in a particular scope. To force a model-only comparison, use `Effect.updateContext(Context.omit(TaxonLookup))` (with `Context` from `effect`). This hides the service for that comparison, leaving the loaded lookup for use elsewhere.
 
-You can also use the model first when you start with a free-text label. For example, use `classifyRecords` against a panel of known scientific names with taxon IDs. Once you've chosen a match that identifies the taxon, pass its target ID to `TaxonLookup.genusOf` and compare the returned genus ID with the one you're checking. If you only have the selected name, use `byName` to find candidates and resolve any ambiguity before choosing an ID. The model interprets the label; the taxonomy lookup tells you where a known taxon belongs.
+You can also use the model first when you start with a free-text label. For example, use `classifyRecords` against a panel of known scientific names with taxon IDs. Once you've chosen a match that identifies the taxon, yield `TaxonLookup` and pass the target ID to `lookup.genusOf`. Compare the returned genus ID with the one you're checking. If you only have the selected name, use `lookup.byName` to find candidates and resolve any ambiguity before choosing an ID. The model interprets the label; the taxonomy lookup tells you where a known taxon belongs.
 
 ## Choosing an acceptance policy
 

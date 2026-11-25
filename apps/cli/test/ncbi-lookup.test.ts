@@ -75,7 +75,10 @@ it.effect("loads the recorded genus from an unpacked NCBI snapshot", () =>
   Effect.gen(function* () {
     const directory = yield* writeDump();
     const id = ncbiId("3");
-    const genus = yield* TaxonLookup.genusOf(id).pipe(Effect.provide(lookup(directory)));
+
+    const genus = yield* TaxonLookup.use((taxonomy) => taxonomy.genusOf(id)).pipe(
+      Effect.provide(lookup(directory)),
+    );
 
     expect(Option.getOrThrow(genus)).toMatchObject({
       taxonId: { taxonomy: "ncbi", id: "2", release: "fixture" },

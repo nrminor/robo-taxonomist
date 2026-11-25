@@ -1,5 +1,5 @@
 // Compile only, against package exports after build; never executed by Vitest.
-import { Array, Data, Effect, Predicate, Schema, type Types } from "effect";
+import { Array, Data, Effect, Layer, type Option, Predicate, Schema, type Types } from "effect";
 import type { AiError, Decision, DecisionModel } from "effect/ai";
 import * as RoboTaxonomist from "robo-taxonomist";
 import {
@@ -149,6 +149,21 @@ const lookup = Effect.gen(function* () {
 
   return yield* taxonomy.byId(ncbiId);
 });
+
+const customLookup = Layer.succeed(
+  TaxonLookup,
+  TaxonLookup.fromProvider({
+    source: RoboTaxonomist.TaxonSource.cases.Snapshot.make({ taxonomy: "ncbi" }),
+    byId: (requested) => Effect.succeed(RoboTaxonomist.IdLookup.cases.NotFound.make({ requested })),
+    byName: () => Effect.succeed([]),
+  }),
+);
+
+const genusLookup = Effect.gen(function* () {
+  const taxonomy = yield* TaxonLookup;
+
+  return yield* taxonomy.genusOf(ncbiId);
+}).pipe(Effect.provide(customLookup));
 
 const identity = Taxonomy.sameTaxon(name, name, { policy });
 
@@ -507,6 +522,9 @@ export type Contracts = [
   Assert<Equal<Effect.Services<typeof ncbiPanelMatch>, DecisionModel.DecisionModel>>,
   Assert<Equal<Effect.Services<typeof lookup>, TaxonLookup>>,
   Assert<Equal<Effect.Error<typeof lookup>, Errors.TaxonIdQueryError>>,
+  Assert<Equal<Effect.Services<typeof genusLookup>, never>>,
+  Assert<Equal<Effect.Error<typeof genusLookup>, Errors.TaxonIdQueryError>>,
+  Assert<Equal<Effect.Success<typeof genusLookup>, Option.Option<RoboTaxonomist.TaxonSummary>>>,
   Assert<Equal<RankComparisonJudgment, ExpectedRankComparison>>,
   Assert<
     Equal<
