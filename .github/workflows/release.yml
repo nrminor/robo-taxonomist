@@ -43,7 +43,7 @@ jobs:
         run: mise run demo:browser:install
 
       - name: Check source and tooling
-        run: mise run check
+        run: mise run check:offline
 
       - name: Smoke-test standalone CLI
         run: mise run cli:smoke
